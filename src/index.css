@@ -1,0 +1,285 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+
+  /* ── Primary — exact logo gradient: deep teal → bright cyan ── */
+  --color-primary: #0FA5AE;
+  --color-primary-light: #20CFCF;
+  --color-primary-dark: #0B7B85;
+
+  /* ── Backgrounds — deep dark with blue undertone ── */
+  --color-bg: #0A0C11;
+  --color-surface: #111420;
+  --color-surface-hover: #1A1E2E;
+  --color-border: #1C2030;
+
+  /* ── Text ── */
+  --color-text-primary: #EFF1F5;
+  --color-text-secondary: #6E7682;
+
+  /* ── Semantic ── */
+  --color-success: #2DD4A8;
+  --color-warning: #F5A623;
+  --color-danger: #F25757;
+  --color-info: #5B9CF6;
+
+  /* ── Platform ── */
+  --color-meta: #1877F2;
+  --color-google: #34A853;
+}
+
+/* ── Scrollbar ── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #1C2030 transparent;
+}
+
+*::-webkit-scrollbar { width: 5px; height: 5px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: #1C2030; border-radius: 999px; }
+*::-webkit-scrollbar-thumb:hover { background: #2A2F40; }
+
+/* ── Body ── */
+body {
+  margin: 0;
+  background-color: #0A0C11;
+  color: #EFF1F5;
+  min-height: 100vh;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Typography ── */
+h1, h2, h3, h4, h5, h6 { letter-spacing: -0.025em; }
+p, span, td, th, label, li { letter-spacing: -0.01em; }
+
+/* ═══════════════════════════════════════════════════
+   PREMIUM SELECT — glassmorphism with logo glow
+   ═══════════════════════════════════════════════════ */
+select {
+  appearance: none;
+  background-color: rgba(17, 20, 32, 0.85);
+  border: 1px solid rgba(28, 32, 48, 0.8);
+  border-radius: 0.75rem;
+  padding: 0.5rem 1.25rem;
+  padding-right: 2.75rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.3),
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2320CFCF' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 13px;
+}
+
+select:hover {
+  border-color: rgba(15, 165, 174, 0.35);
+  background-color: rgba(17, 20, 32, 0.95);
+  box-shadow:
+    0 4px 12px -2px rgba(0, 0, 0, 0.4),
+    0 0 0 1px rgba(15, 165, 174, 0.08) inset,
+    0 0 20px -8px rgba(15, 165, 174, 0.12);
+  transform: translateY(-1px);
+}
+
+select:focus {
+  outline: none !important;
+  border-color: rgba(15, 165, 174, 0.5) !important;
+  background-color: rgba(17, 20, 32, 1);
+  box-shadow:
+    0 0 0 1px rgba(15, 165, 174, 0.4),
+    0 0 20px -4px rgba(15, 165, 174, 0.2),
+    0 4px 16px -2px rgba(0, 0, 0, 0.4) !important;
+}
+
+select option {
+  background-color: #111420;
+  color: var(--color-text-primary);
+  font-weight: 500;
+  padding: 12px;
+}
+
+/* ═══════════════════════════════════════════════════
+   INPUT STYLES — date pickers, text inputs
+   ═══════════════════════════════════════════════════ */
+input[type="text"],
+input[type="search"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"],
+textarea {
+  font-size: 0.8125rem;
+  -webkit-font-smoothing: antialiased;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+input:focus,
+textarea:focus {
+  outline: none;
+  border-color: rgba(15, 165, 174, 0.5);
+  box-shadow:
+    0 0 0 1px rgba(15, 165, 174, 0.3),
+    0 0 16px -4px rgba(15, 165, 174, 0.15);
+}
+
+/* ── Date inputs — styled calendar ── */
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"] {
+  background-color: rgba(17, 20, 32, 0.85);
+  border: 1px solid rgba(28, 32, 48, 0.8);
+  border-radius: 0.625rem;
+  padding: 0.4rem 0.75rem;
+  color: var(--color-text-primary);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.7) sepia(1) saturate(3) hue-rotate(140deg);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator:hover,
+input[type="time"]::-webkit-calendar-picker-indicator:hover,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+
+/* ── Checkbox ── */
+input[type="checkbox"] {
+  accent-color: var(--color-primary);
+}
+
+/* ═══════════════════════════════════════════════════
+   PAGE TRANSITIONS
+   ═══════════════════════════════════════════════════ */
+main {
+  animation: fadeIn 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ═══════════════════════════════════════════════════
+   CARD HOVER EFFECTS — premium interactive cards
+   ═══════════════════════════════════════════════════ */
+.card-hover {
+  transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.card-hover:hover {
+  transform: translateY(-2px);
+  border-color: rgba(15, 165, 174, 0.15);
+  box-shadow:
+    0 8px 24px -8px rgba(0, 0, 0, 0.4),
+    0 0 0 1px rgba(15, 165, 174, 0.06) inset;
+}
+
+/* ═══════════════════════════════════════════════════
+   GLOW BORDER — animated gradient border
+   ═══════════════════════════════════════════════════ */
+.glow-border {
+  position: relative;
+}
+
+.glow-border::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    transparent 40%,
+    rgba(15, 165, 174, 0.15) 50%,
+    transparent 60%
+  );
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.glow-border:hover::before {
+  opacity: 1;
+}
+
+/* ═══════════════════════════════════════════════════
+   SHIMMER — loading skeleton effect
+   ═══════════════════════════════════════════════════ */
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(28, 32, 48, 0.3) 25%,
+    rgba(28, 32, 48, 0.6) 50%,
+    rgba(28, 32, 48, 0.3) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: 0.5rem;
+}
+
+/* ═══════════════════════════════════════════════════
+   TABLE
+   ═══════════════════════════════════════════════════ */
+table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+th {
+  font-weight: 500;
+  text-transform: uppercase;
+  font-size: 0.6875rem;
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary);
+}
+
+/* ═══════════════════════════════════════════════════
+   FOCUS & SELECTION
+   ═══════════════════════════════════════════════════ */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection {
+  background-color: rgba(15, 165, 174, 0.25);
+  color: white;
+}
+
+/* ═══════════════════════════════════════════════════
+   SUBTLE GRADIENT TEXT UTILITY
+   ═══════════════════════════════════════════════════ */
+.text-gradient {
+  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-light));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
