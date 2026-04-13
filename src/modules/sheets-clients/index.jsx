@@ -109,7 +109,7 @@ export default function SheetsClients() {
       </div>
 
       {/* ── Stats Cards ── */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[
           { label: 'Total', value: stats.total, icon: Users, iconColor: 'text-primary-light', bgColor: 'bg-primary/10' },
           { label: 'Ativos', value: stats.active, icon: CheckCircle2, iconColor: 'text-success', bgColor: 'bg-success/10' },

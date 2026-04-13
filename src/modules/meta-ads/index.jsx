@@ -997,8 +997,8 @@ export default function MetaAdsOverview() {
 
       {/* Table */}
       <div className="bg-surface rounded-2xl border border-border overflow-hidden shadow-[0_2px_12px_-4px_rgba(0,0,0,0.3)]">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto -webkit-overflow-scrolling-touch">
+          <table className="w-full text-sm min-w-[900px]">
             <thead>
               <tr className="border-b border-border bg-bg/40">
                 <th className="w-8 px-2 py-3.5"></th>

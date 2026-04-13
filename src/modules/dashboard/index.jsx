@@ -397,7 +397,9 @@ export default function Dashboard() {
           {focusAccounts.length === 0 ? (
             <p className="text-text-secondary text-sm py-8 text-center">Nenhuma conta ativa para analisar.</p>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+            {/* Mobile: card layout / Desktop: table */}
+            <div className="hidden sm:block overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border">
@@ -433,6 +435,25 @@ export default function Dashboard() {
                 </tbody>
               </table>
             </div>
+
+            {/* Mobile cards */}
+            <div className="sm:hidden space-y-3">
+              {focusAccounts.map(account => (
+                <div key={account.id} className="rounded-xl border border-border/50 bg-bg/20 p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-text-primary truncate mr-2">{account.clientName}</span>
+                    <StatusBadge tone={account.statusTone} label={account.statusLabel} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div><span className="text-text-secondary">Gasto:</span> <span className="text-text-primary font-medium">{formatCurrency(account.spend)}</span></div>
+                    <div><span className="text-text-secondary">Leads:</span> <span className="text-text-primary font-medium">{formatNumber(account.leads)}</span></div>
+                    <div><span className="text-text-secondary">CPL:</span> <span className={`font-medium ${account.cpl > 10 ? 'text-warning' : 'text-primary-light'}`}>{account.cpl > 0 ? formatCurrency(account.cpl) : '—'}</span></div>
+                    <div><span className="text-text-secondary">Saldo:</span> <span className={`font-medium ${account.currentBalance === null ? 'text-text-secondary' : account.currentBalance > 0 && account.currentBalance < 50 ? 'text-danger' : account.currentBalance < 150 ? 'text-warning' : 'text-success'}`}>{account.currentBalance === null ? '—' : formatCurrency(account.currentBalance)}</span></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            </>
           )}
         </div>
       </ScrollReveal>

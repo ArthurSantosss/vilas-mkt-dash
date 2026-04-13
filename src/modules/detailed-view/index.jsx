@@ -772,7 +772,7 @@ export default function DetailedView() {
           )}
 
           {/* ═══ KPI Cards (3) ═══ */}
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <ScrollReveal direction="up" delay={0}><KPICard label="Gasto Total" value={formatCurrency(displayMetrics.spend)} diff={diffs.spend} /></ScrollReveal>
             <ScrollReveal direction="up" delay={100}><KPICard
               label={platform === 'meta' ? 'Conversas' : 'Conversões'}
@@ -836,7 +836,7 @@ export default function DetailedView() {
 
           {/* ═══ Breakdown Charts (Meta only) ═══ */}
           {platform === 'meta' && (
-            <div className="grid grid-cols-3 gap-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
               {/* Region bar chart */}
               <ScrollReveal direction="up" delay={0}>
               <div className="bg-surface/40 rounded-2xl border border-border/50 p-5 shadow-lg shadow-black/10 h-full">
@@ -910,7 +910,7 @@ export default function DetailedView() {
 
           {/* ═══ Gender + Age Charts (Meta only) ═══ */}
           {platform === 'meta' && (genderData.length > 0 || ageData.length > 0) && (
-            <div className="grid grid-cols-2 gap-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
               {/* Gender donut chart */}
               <ScrollReveal direction="up" delay={0}>
               <div className="bg-surface/40 rounded-2xl border border-border/50 p-5 shadow-lg shadow-black/10 h-full">
@@ -947,7 +947,7 @@ export default function DetailedView() {
 
           {/* ═══ Visibility + Video Metrics (Meta only) ═══ */}
           {platform === 'meta' && (
-            <div className="grid grid-cols-2 gap-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
               {/* Visibility */}
               <ScrollReveal direction="left" delay={0}>
               <div className="bg-surface/40 rounded-2xl border border-border/50 p-5 shadow-lg shadow-black/10 h-full">
@@ -1012,7 +1012,7 @@ export default function DetailedView() {
                       </ResponsiveContainer>
 
                       {/* Bottom metrics — CPM, Frequência e CTR */}
-                      <div className="grid grid-cols-3 gap-3 pt-3 border-t border-border/30">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-border/30">
                         <div className="relative rounded-xl p-3 bg-surface/60 border border-border/30 overflow-hidden">
                           <div className="absolute bottom-0 left-0 h-1 bg-gradient-to-r from-primary-light to-emerald-400 rounded-b-xl transition-all duration-700"
                             style={{ width: '100%' }} />
@@ -1116,7 +1116,7 @@ export default function DetailedView() {
                         </ResponsiveContainer>
 
                         {/* Video retention milestone cards */}
-                        <div className="grid grid-cols-3 gap-3 pt-3 border-t border-border/30">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-border/30">
                           {[
                             { label: 'Visualizou 25%', value: videoData.p25, pct: videoData.plays > 0 ? (videoData.p25 / videoData.plays * 100) : 0, color: 'from-primary to-primary-light' },
                             { label: 'Visualizou 50%', value: videoData.p50, pct: videoData.plays > 0 ? (videoData.p50 / videoData.plays * 100) : 0, color: 'from-primary-light to-emerald-400' },

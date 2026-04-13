@@ -231,31 +231,36 @@ export default function PeriodSelector({ selectedPeriod, onPeriodChange, classNa
       {/* Popover */}
       {isOpen && (
         <div
-          className="absolute right-0 top-full mt-2 z-[100] flex flex-col overflow-hidden rounded-2xl
-            bg-surface/95 backdrop-blur-xl border border-border/60
-            shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5),0_0_0_1px_rgba(255,255,255,0.03)]"
+          className="fixed inset-0 z-[100] flex items-end sm:items-start sm:justify-end sm:absolute sm:inset-auto sm:right-0 sm:top-full sm:mt-2"
           style={{ animation: 'fadeIn 200ms ease-out' }}
         >
-          <div className="flex border-b border-border/40">
-            {/* Sidebar Presets */}
-            <div className="w-[170px] border-r border-border/40 p-2 py-3">
+          {/* Mobile backdrop */}
+          <div className="fixed inset-0 bg-black/50 sm:hidden" onClick={() => setIsOpen(false)} />
+
+          <div className="relative w-full sm:w-auto max-h-[85vh] sm:max-h-none overflow-y-auto flex flex-col rounded-t-2xl sm:rounded-2xl
+            bg-surface/95 backdrop-blur-xl border border-border/60
+            shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5),0_0_0_1px_rgba(255,255,255,0.03)]">
+
+          <div className="flex flex-col sm:flex-row border-b border-border/40">
+            {/* Presets — horizontal scroll on mobile, sidebar on desktop */}
+            <div className="sm:w-[170px] sm:border-r border-b sm:border-b-0 border-border/40 p-2 py-3">
               <div className="px-3 pb-2 text-[10px] font-semibold text-text-secondary/50 uppercase tracking-widest">
                 Período
               </div>
-              <ul className="space-y-0.5 mt-1">
+              <ul className="flex sm:flex-col gap-1 sm:gap-0.5 mt-1 overflow-x-auto sm:overflow-x-visible pb-1 sm:pb-0">
                 {PRESETS.map(preset => {
                   const isActive = tempSelection.id === preset.id;
                   return (
-                    <li key={preset.id}>
+                    <li key={preset.id} className="shrink-0">
                       <button
                         onClick={() => handlePresetClick(preset)}
-                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-all duration-200 text-left
+                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-all duration-200 text-left whitespace-nowrap
                           ${isActive
                             ? 'bg-primary/15 text-primary-light font-semibold shadow-[inset_0_0_0_1px_rgba(15,165,174,0.2)]'
                             : 'text-text-primary/80 hover:bg-surface-hover hover:text-text-primary'}
                         `}
                       >
-                        <div className={`w-2 h-2 rounded-full transition-all duration-200 ${isActive ? 'bg-primary-light shadow-[0_0_6px_rgba(32,207,207,0.5)]' : 'bg-text-secondary/20'}`} />
+                        <div className={`w-2 h-2 rounded-full transition-all duration-200 shrink-0 ${isActive ? 'bg-primary-light shadow-[0_0_6px_rgba(32,207,207,0.5)]' : 'bg-text-secondary/20'}`} />
                         {preset.label}
                       </button>
                     </li>
@@ -264,27 +269,27 @@ export default function PeriodSelector({ selectedPeriod, onPeriodChange, classNa
               </ul>
             </div>
 
-            {/* Calendars Area */}
-            <div className="p-5 flex gap-8 relative min-w-[540px]">
+            {/* Calendars Area — single column on mobile, two on desktop */}
+            <div className="p-4 sm:p-5 flex flex-col sm:flex-row gap-4 sm:gap-8 relative sm:min-w-[540px]">
               {/* Nav Buttons */}
               <button
                 onClick={() => shiftMonth(-1)}
-                className="absolute left-4 top-4 p-1.5 rounded-lg bg-surface-hover/50 border border-border/30 text-text-secondary hover:text-primary-light hover:border-primary/30 hover:bg-primary/10 z-20 transition-all duration-200"
+                className="absolute left-3 sm:left-4 top-3 sm:top-4 p-1.5 rounded-lg bg-surface-hover/50 border border-border/30 text-text-secondary hover:text-primary-light hover:border-primary/30 hover:bg-primary/10 z-20 transition-all duration-200"
               >
                 <ChevronLeft size={16} />
               </button>
               <button
                 onClick={() => shiftMonth(1)}
-                className="absolute right-4 top-4 p-1.5 rounded-lg bg-surface-hover/50 border border-border/30 text-text-secondary hover:text-primary-light hover:border-primary/30 hover:bg-primary/10 z-20 transition-all duration-200"
+                className="absolute right-3 sm:right-4 top-3 sm:top-4 p-1.5 rounded-lg bg-surface-hover/50 border border-border/30 text-text-secondary hover:text-primary-light hover:border-primary/30 hover:bg-primary/10 z-20 transition-all duration-200"
               >
                 <ChevronRight size={16} />
               </button>
 
-              {/* Two calendars */}
-              <div className="flex-1">
+              {/* Calendars */}
+              <div className="flex-1 pt-2">
                 {renderCalendar(viewState.year, viewState.month)}
               </div>
-              <div className="w-px bg-border/30 self-stretch my-2" />
+              <div className="hidden sm:block w-px bg-border/30 self-stretch my-2" />
               <div className="flex-1">
                 {renderCalendar(rightYear, rightMonth)}
               </div>
@@ -292,30 +297,30 @@ export default function PeriodSelector({ selectedPeriod, onPeriodChange, classNa
           </div>
 
           {/* Footer */}
-          <div className="p-3.5 px-5 flex items-center justify-between border-t border-border/30 bg-bg/30">
+          <div className="p-3.5 px-4 sm:px-5 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-t border-border/30 bg-bg/30">
             {/* Date Range Display */}
-            <div className="flex gap-2 items-center">
-              <div className="border border-border/40 bg-surface/50 rounded-lg px-3 py-1.5 text-xs font-medium text-text-primary/80 min-w-[120px]">
+            <div className="flex gap-2 items-center justify-center sm:justify-start">
+              <div className="border border-border/40 bg-surface/50 rounded-lg px-3 py-1.5 text-xs font-medium text-text-primary/80 min-w-[100px] sm:min-w-[120px] text-center">
                 {tempSelection.startDate ? formatSelectedRangeForDisplay(tempSelection.startDate, tempSelection.endDate).split(' - ')[0] : '—'}
               </div>
               <span className="text-text-secondary/40 text-xs">→</span>
-              <div className="border border-border/40 bg-surface/50 rounded-lg px-3 py-1.5 text-xs font-medium text-text-primary/80 min-w-[120px]">
+              <div className="border border-border/40 bg-surface/50 rounded-lg px-3 py-1.5 text-xs font-medium text-text-primary/80 min-w-[100px] sm:min-w-[120px] text-center">
                 {tempSelection.endDate ? formatSelectedRangeForDisplay(tempSelection.startDate, tempSelection.endDate).split(' - ')[1] : '—'}
               </div>
             </div>
 
             {/* Actions */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 justify-end">
               <button
                 onClick={() => setIsOpen(false)}
-                className="text-xs font-medium text-text-secondary hover:text-text-primary px-3 py-1.5 rounded-lg hover:bg-surface-hover transition-all duration-200"
+                className="text-xs font-medium text-text-secondary hover:text-text-primary px-3 py-2 rounded-lg hover:bg-surface-hover transition-all duration-200"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleApply}
                 disabled={!tempSelection.startDate || !tempSelection.endDate}
-                className="px-5 py-1.5 rounded-lg text-xs font-semibold text-white
+                className="px-5 py-2 rounded-lg text-xs font-semibold text-white
                   bg-gradient-to-r from-primary to-primary-light
                   shadow-[0_2px_8px_-2px_rgba(15,165,174,0.35)]
                   hover:shadow-[0_4px_16px_-4px_rgba(15,165,174,0.45)] hover:translate-y-[-1px]
@@ -326,6 +331,7 @@ export default function PeriodSelector({ selectedPeriod, onPeriodChange, classNa
                 Aplicar
               </button>
             </div>
+          </div>
           </div>
         </div>
       )}
