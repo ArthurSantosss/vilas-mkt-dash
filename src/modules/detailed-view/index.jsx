@@ -655,14 +655,14 @@ export default function DetailedView() {
         </div>
 
         {/* Selectors */}
-        <div className="relative mt-5 flex flex-wrap items-end justify-center gap-5">
+        <div className="relative mt-5 grid grid-cols-2 sm:flex sm:flex-wrap items-end justify-center gap-3 sm:gap-5">
           {agencies.length > 0 && (
-            <div className="flex flex-col gap-1.5 w-[210px]">
+            <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px]">
               <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Agência</label>
               <select
                 value={selectedAgency}
                 onChange={e => { setSelectedAgency(e.target.value); handleSelectAccount(''); }}
-                className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
+                className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
               >
                 <option value="all">Todas</option>
                 {agencies.map(ag => (
@@ -672,31 +672,31 @@ export default function DetailedView() {
             </div>
           )}
 
-          <div className="flex flex-col gap-1.5 w-[295px]">
+          <div className="flex flex-col gap-1.5 col-span-1 sm:w-[295px]">
             <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Conta</label>
             <select value={selectedAccountId} onChange={e => handleSelectAccount(e.target.value)}
-              className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer">
+              className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer">
               <option value="">Selecione uma conta</option>
               {accounts.map(a => <option key={a.id} value={a.id}>{a.clientName}</option>)}
             </select>
           </div>
 
-          <div className="flex flex-col gap-1.5 w-[295px]">
+          <div className="flex flex-col gap-1.5 col-span-1 sm:w-[295px]">
             <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Campanha</label>
             <div className="flex items-center gap-2">
-              <select 
-                value={selectedCampaignId} 
+              <select
+                value={selectedCampaignId}
                 onChange={e => setSelectedCampaignId(e.target.value)}
                 disabled={!selectedAccountId || activeCampaigns.length === 0}
-                className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <option value="">Todas as campanhas</option>
                 {activeCampaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
               {selectedCampaignId && (
-                <button 
+                <button
                   onClick={() => setSelectedCampaignId('')}
-                  className="p-2 rounded-xl bg-surface/60 border border-border/50 text-text-secondary hover:text-danger hover:border-danger/30 transition-all"
+                  className="p-2 rounded-xl bg-surface/60 border border-border/50 text-text-secondary hover:text-danger hover:border-danger/30 transition-all shrink-0"
                   title="Limpar seleção"
                 >
                   <X size={14} />
@@ -705,7 +705,7 @@ export default function DetailedView() {
             </div>
           </div>
 
-          <div className="flex flex-col gap-1.5 w-[210px]">
+          <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px] z-50">
             <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Período</label>
             <PeriodSelector selectedPeriod={currentPeriod} onPeriodChange={handlePeriodChange} className="w-full" />
           </div>

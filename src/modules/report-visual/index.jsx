@@ -895,9 +895,9 @@ export default function ReportVisual() {
         </div>
 
         {/* Selectors */}
-        <div className="relative mt-5 flex flex-wrap items-end justify-center gap-5">
+        <div className="relative mt-5 grid grid-cols-2 sm:flex sm:flex-wrap items-end justify-center gap-3 sm:gap-5">
           {hasAgencies ? (
-            <div className="flex flex-col gap-1.5 w-[210px]">
+            <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px]">
               <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Agência</label>
               <select
                 value={selectedAgency}
@@ -906,14 +906,14 @@ export default function ReportVisual() {
                   setSelectedAccount('');
                   setSelectedCampaignIds([]);
                 }}
-                className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
+                className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
               >
                 {allowedAgencyList.map(ag => <option key={ag} value={ag}>{ag}</option>)}
               </select>
             </div>
           ) : null}
 
-          <div className="flex flex-col gap-1.5 w-[295px]">
+          <div className="flex flex-col gap-1.5 col-span-1 sm:w-[295px]">
             <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Conta</label>
             <select
               value={selectedAccount}
@@ -921,14 +921,14 @@ export default function ReportVisual() {
                 setSelectedAccount(e.target.value);
                 setSelectedCampaignIds([]);
               }}
-              className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
+              className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
             >
               <option value="">Selecione uma conta</option>
               {filteredAccounts.map(a => <option key={a.id} value={a.id}>{a.clientName}</option>)}
             </select>
           </div>
 
-          <div className="flex flex-col gap-1.5 w-[210px] z-50">
+          <div className="flex flex-col gap-1.5 col-span-2 sm:col-span-1 sm:w-[210px] z-50">
             <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Período</label>
             <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} className="w-full" />
           </div>

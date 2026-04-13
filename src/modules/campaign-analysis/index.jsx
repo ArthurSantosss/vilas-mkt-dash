@@ -732,41 +732,41 @@ export default function CampaignAnalysis() {
         </div>
 
         {/* Selectors */}
-        <div className="relative mt-5 flex flex-wrap items-end justify-center gap-5">
+        <div className="relative mt-5 grid grid-cols-2 sm:flex sm:flex-wrap items-end justify-center gap-3 sm:gap-5">
           {agencies.length > 0 && (
-            <div className="flex flex-col gap-1.5 w-[210px]">
+            <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px]">
               <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Agência</label>
-              <select 
-                value={selectedAgency} 
+              <select
+                value={selectedAgency}
                 onChange={e => setSelectedAgency(e.target.value)}
-                className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
+                className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
               >
                 <option value="">Todas</option>
                 {agencies.map(a => <option key={a} value={a}>{a}</option>)}
               </select>
             </div>
           )}
-          <div className="flex flex-col gap-1.5 w-[295px]">
+          <div className="flex flex-col gap-1.5 col-span-1 sm:w-[295px]">
             <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Conta</label>
-            <select 
-              value={selectedAccountId} 
+            <select
+              value={selectedAccountId}
               onChange={e => setSelectedAccountId(e.target.value)}
-              className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
+              className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
             >
               <option value="">Selecione uma conta</option>
               {filteredAccounts.map(a => <option key={a.id} value={a.id}>{a.clientName}</option>)}
             </select>
           </div>
-          <div className="flex flex-col gap-1.5 w-[295px]">
+          <div className="flex flex-col gap-1.5 col-span-1 sm:w-[295px]">
             <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Campanha</label>
-            <select 
-              value={selectedCampaignId} 
+            <select
+              value={selectedCampaignId}
               onChange={e => setSelectedCampaignId(e.target.value)}
-              className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
+              className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
             >
               <option value="">Selecione uma campanha</option>
               {accountCampaigns.length > 1 && (
-                <option value="__all__">📊 Todas as campanhas ({accountCampaigns.length})</option>
+                <option value="__all__">Todas as campanhas ({accountCampaigns.length})</option>
               )}
               {accountCampaigns.map(c => (
                 <option key={c.id} value={c.id}>
@@ -775,7 +775,7 @@ export default function CampaignAnalysis() {
               ))}
             </select>
           </div>
-          <div className="flex flex-col gap-1.5 w-[210px]">
+          <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px] z-50">
             <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Período</label>
             <PeriodSelector selectedPeriod={currentPeriod} onPeriodChange={setCurrentPeriod} className="w-full" />
           </div>

@@ -634,17 +634,17 @@ export default function MetaBalances() {
             </div>
           </div>
 
-          {/* Filters & Actions inline */}
-          <div className="flex flex-wrap items-end gap-3 lg:gap-4 w-full lg:w-auto">
+          {/* Filters & Actions */}
+          <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-end gap-3 lg:gap-4 w-full lg:w-auto">
             {agencies.length > 0 && (
-              <div className="flex flex-col gap-1 w-[180px] flex-grow lg:flex-grow-0">
+              <div className="flex flex-col gap-1 col-span-1 sm:w-[180px]">
                 <label className="text-[10px] font-medium text-text-secondary uppercase tracking-wider">Agência</label>
                 <select
                   value={selectedAgency}
                   onChange={e => setSelectedAgency(e.target.value)}
                   className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-lg px-3 py-2 text-xs font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer h-[36px]"
                 >
-                  <option value="all">Todas as agências</option>
+                  <option value="all">Todas</option>
                   {agencies.map(ag => (
                     <option key={ag} value={ag}>{ag}</option>
                   ))}
@@ -652,8 +652,8 @@ export default function MetaBalances() {
               </div>
             )}
 
-            <div className="flex flex-col gap-1 w-[200px] flex-grow lg:flex-grow-0">
-              <label className="text-[10px] font-medium text-text-secondary flex items-center gap-1 uppercase tracking-wider"><ArrowUpDown size={10} /> Ordenar por</label>
+            <div className="flex flex-col gap-1 col-span-1 sm:w-[200px]">
+              <label className="text-[10px] font-medium text-text-secondary flex items-center gap-1 uppercase tracking-wider"><ArrowUpDown size={10} /> Ordenar</label>
               <select
                 value={sortBy}
                 onChange={e => setSortBy(e.target.value)}
@@ -670,10 +670,10 @@ export default function MetaBalances() {
                 bg-gradient-to-r from-primary to-primary-light text-white shadow-lg shadow-primary/25
                 hover:shadow-xl hover:shadow-primary/30 hover:scale-[1.02] active:scale-[0.98]
                 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100
-                transition-all duration-300 ease-out h-[36px] flex-grow lg:flex-grow-0"
+                transition-all duration-300 ease-out h-[36px] col-span-2 sm:col-span-1"
             >
               <RefreshCw size={14} className={loading ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'} />
-              {loading ? 'Atualizando...' : 'Atualizar Dados'}
+              {loading ? 'Atualizando...' : 'Atualizar'}
               <div className="absolute inset-0 rounded-lg bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
             </button>
           </div>
