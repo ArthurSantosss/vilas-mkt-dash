@@ -1,7 +1,32 @@
 import { createContext, useContext, useState, useMemo, useEffect, useCallback } from 'react';
 import { fetchAdAccounts, fetchAccountInsights, fetchAccountDailyInsights, fetchCampaignsWithInsights } from '../services/metaApi';
+import { calculateMetaBalance } from '../shared/utils/metaBalance';
 
 const MetaAdsContext = createContext();
+
+// Cache em memória por (accountId, period) com TTL de 3min.
+// Reduz ~80% das chamadas ao Graph API ao trocar período ou remontar o provider.
+const CACHE_TTL_MS = 3 * 60 * 1000;
+const accountCache = new Map(); // key: `${actId}:${period}` → { timestamp, data }
+
+function getCached(actId, period) {
+  const key = `${actId}:${period}`;
+  const entry = accountCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
+    accountCache.delete(key);
+    return null;
+  }
+  return entry.data;
+}
+
+function setCached(actId, period, data) {
+  accountCache.set(`${actId}:${period}`, { timestamp: Date.now(), data });
+}
+
+function clearCache() {
+  accountCache.clear();
+}
 
 export function MetaAdsProvider({ children }) {
   const [accounts, setAccounts] = useState([]);
@@ -11,7 +36,7 @@ export function MetaAdsProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const loadMetaData = useCallback(async () => {
+  const loadMetaData = useCallback(async ({ force = false } = {}) => {
     // Verificar se temos token antes de tentar
     const hasToken = localStorage.getItem('meta_provider_token') || import.meta.env.VITE_META_ACCESS_TOKEN;
     if (!hasToken) {
@@ -54,11 +79,18 @@ export function MetaAdsProvider({ children }) {
         const actId = account.id;
 
         try {
-          const [insights, dailyInsights, accountCampaigns] = await Promise.all([
-            fetchAccountInsights(actId, selectedPeriod),
-            fetchAccountDailyInsights(actId, selectedPeriod),
-            fetchCampaignsWithInsights(actId, selectedPeriod)
-          ]);
+          const cached = force ? null : getCached(actId, selectedPeriod);
+          const [insights, dailyInsights, accountCampaigns, monthInsights] = cached
+            ? cached
+            : await Promise.all([
+                fetchAccountInsights(actId, selectedPeriod),
+                fetchAccountDailyInsights(actId, selectedPeriod),
+                fetchCampaignsWithInsights(actId, selectedPeriod),
+                fetchAccountInsights(actId, 'month'),
+              ]);
+          if (!cached) {
+            setCached(actId, selectedPeriod, [insights, dailyInsights, accountCampaigns, monthInsights]);
+          }
 
           const getMessages = (actionsArray) => {
             if (!actionsArray) return 0;
@@ -123,42 +155,43 @@ export function MetaAdsProvider({ children }) {
             }))
           };
 
-          // ── Balance calculation ──
-          // Meta API fields (all in centavos for BRL):
-          //   balance     = billing balance (amount owed for postpaid / remaining for prepaid)
-          //   spend_cap   = total spending limit for the account (0 = no limit)
-          //   amount_spent = total lifetime spend of the account
-          const rawBalance = account.balance ? parseFloat(account.balance) / 100 : 0;
-          const spendCap = account.spend_cap ? parseFloat(account.spend_cap) / 100 : 0;
-          const amountSpent = account.amount_spent ? parseFloat(account.amount_spent) / 100 : 0;
+          const {
+            rawBillingBalance,
+            spendCap,
+            amountSpent,
+            amountDue,
+            currentBalance,
+            hasReliableBalance,
+            balanceSource,
+            isPrepayAccount,
+          } = calculateMetaBalance(account);
 
           const todayMetric = dailyInsights.length > 0 ? dailyInsights[dailyInsights.length - 1] : null;
           const spentToday = todayMetric ? parseFloat(todayMetric.spend || 0) : 0;
+          const spentThisMonth = monthInsights ? parseFloat(monthInsights.spend || 0) : 0;
           const daysToAverage = Math.min(dailyInsights.length, 7);
           const sum7d = dailyInsights.slice(-daysToAverage).reduce((sum, day) => sum + parseFloat(day.spend || 0), 0);
           const avgDailySpend7d = daysToAverage > 0 ? sum7d / daysToAverage : 0;
 
-          // Remaining balance:
-          //   If spend_cap exists → remaining = spend_cap - amount_spent (how much can still be spent)
-          //   Otherwise → use raw balance from API (works for prepaid accounts)
-          const remaining = spendCap > 0
-            ? Math.max(0, spendCap - amountSpent)
-            : rawBalance;
-
-          const estimatedDaysRemaining = avgDailySpend7d > 0
-            ? Math.max(0, remaining / avgDailySpend7d)
+          const estimatedDaysRemaining = hasReliableBalance && avgDailySpend7d > 0
+            ? Math.max(0, currentBalance / avgDailySpend7d)
             : 0;
 
           const formattedBalance = {
             accountId: actId,
             clientName: account.name,
-            currentBalance: remaining,
+            currentBalance,
             creditLimit: spendCap > 0 ? spendCap : 0,
             amountSpent,
-            rawBillingBalance: rawBalance,
+            rawBillingBalance,
+            amountDue,
             spentToday,
+            spentThisMonth,
             avgDailySpend7d,
             estimatedDaysRemaining,
+            hasReliableBalance,
+            balanceSource,
+            isPrepayAccount,
           };
 
           return { account: formattedAccount, campaigns: formattedCampaigns, balance: formattedBalance };
@@ -205,11 +238,13 @@ export function MetaAdsProvider({ children }) {
     // Custom event para mesma aba (storage event só funciona entre abas)
     const handleTokenUpdate = () => {
       console.log('[MetaAdsContext] ⚡ Evento meta-token-updated recebido! Recarregando dados...');
-      loadMetaData();
+      clearCache();
+      loadMetaData({ force: true });
     };
     const handleAccountToggle = () => {
       console.log('[MetaAdsContext] ⚡ Evento meta-accounts-toggled recebido! Recarregando dados...');
-      loadMetaData();
+      clearCache();
+      loadMetaData({ force: true });
     };
     window.addEventListener('storage', handleStorageChange);
     window.addEventListener('meta-token-updated', handleTokenUpdate);
@@ -244,7 +279,7 @@ export function MetaAdsProvider({ children }) {
     todayTotals,
     loading,
     error,
-    refreshData: loadMetaData,  // Expor para que outros componentes possam forçar refresh
+    refreshData: () => { clearCache(); return loadMetaData({ force: true }); },
   };
 
   return <MetaAdsContext.Provider value={value}>{children}</MetaAdsContext.Provider>;

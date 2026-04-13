@@ -6,13 +6,14 @@ import {
   fetchAgeBreakdown, fetchGenderBreakdown, fetchPlatformBreakdown, fetchPlacementBreakdown,
 } from '../../services/metaApi';
 import { analyzeCampaign as analyzeLocal } from '../../services/campaignAnalysis';
+import { invokeAnalyzeCampaign } from '../../services/aiReports';
 import { supabase } from '../../services/supabase';
 import PeriodSelector from '../../shared/components/PeriodSelector';
 import {
   Activity, AlertTriangle, CheckCircle2, XCircle,
   Copy, Check, Sparkles, Brain, MessageSquareText, Lightbulb,
   Zap, Shield, Target, BarChart3, RefreshCw, WifiOff,
-  FileText
+  FileText, Loader2, ChevronRight, X
 } from 'lucide-react';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -157,6 +158,11 @@ export default function CampaignAnalysis() {
   // Collected data ref (to share between analysis and report generation)
   const collectedDataRef = useRef(null);
 
+  // Deep analysis state (structured AI: diagnosticos, acoes, insights)
+  const [deepResult, setDeepResult] = useState(null);
+  const [loadingDeep, setLoadingDeep] = useState(false);
+  const [deepError, setDeepError] = useState(null);
+
   // Animation state
   const [visibleCards, setVisibleCards] = useState(new Set());
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -209,6 +215,8 @@ export default function CampaignAnalysis() {
     setLocalResult(null);
     setReportResult(null);
     setReportError(null);
+    setDeepResult(null);
+    setDeepError(null);
   }, [selectedAccountId]);
 
   // Reset on campaign/period change
@@ -216,6 +224,8 @@ export default function CampaignAnalysis() {
     setLocalResult(null);
     setReportResult(null);
     setReportError(null);
+    setDeepResult(null);
+    setDeepError(null);
     setVisibleCards(new Set());
     setShowSuggestions(false);
     setShowReport(false);
@@ -547,23 +557,18 @@ export default function CampaignAnalysis() {
         }
       }
 
-      const { data: aiData, error: fnError } = await supabase.functions.invoke('analyze-campaign', {
-        body: {
-          accountName: selectedAccount?.clientName || '',
-          platform: 'Meta Ads',
-          periodLabel: getPeriodLabel(currentPeriod),
-          todayDate: fmtDateBR(new Date()),
-          campaigns: campaignsForAI,
-          previousPeriodCampaigns,
-          breakdowns,
-        },
+      const aiResult = await invokeAnalyzeCampaign({
+        accountName: selectedAccount?.clientName || '',
+        platform: 'Meta Ads',
+        periodLabel: getPeriodLabel(currentPeriod),
+        todayDate: fmtDateBR(new Date()),
+        campaigns: campaignsForAI,
+        previousPeriodCampaigns,
+        breakdowns,
       });
 
-      if (fnError) throw fnError;
-      if (aiData?.error) throw new Error(aiData.error);
-
       const report = {
-        relatorio: aiData.relatorio || '',
+        relatorio: aiResult.analysis || '',
       };
 
       reportCacheRef.current.set(key, report);
@@ -576,6 +581,121 @@ export default function CampaignAnalysis() {
       setGeneratingReport(false);
     }
   }, [selectedCampaign, selectedCampaignId, isAllCampaigns, currentPeriod, selectedAccount]);
+
+  // ── Deep Analysis (structured: diagnosticos, acoes, insights via deep-analysis edge function) ──
+
+  const runDeepAnalysis = useCallback(async () => {
+    if (!selectedAccountId || (!isAllCampaigns && !selectedCampaign)) return;
+    if (!collectedDataRef.current) return;
+
+    setLoadingDeep(true);
+    setDeepError(null);
+    setDeepResult(null);
+
+    try {
+      const { parsedPrevDaily, parsedVideo, siblingCampaigns, rawAge, rawGender, rawPlatform, rawPlacement } = collectedDataRef.current;
+
+      // Build breakdowns
+      const genderLabelMap = { male: 'Masculino', female: 'Feminino', unknown: 'Desconhecido' };
+      const parseSegments = (raw, getLabel) => {
+        if (!raw || raw.length === 0) return null;
+        const segments = raw.map(row => {
+          const msgs = getMessagesFromActions(row.actions);
+          const spend = parseFloat(row.spend || 0);
+          return { label: getLabel(row), messages: msgs, spend, costPerMessage: msgs > 0 ? spend / msgs : 0 };
+        }).filter(s => s.spend > 0);
+        return segments.length > 0 ? segments : null;
+      };
+
+      const breakdowns = {
+        age: parseSegments(rawAge, r => r.age || 'Desconhecido'),
+        gender: parseSegments(rawGender, r => genderLabelMap[r.gender] || r.gender || 'Desconhecido'),
+        platform: parseSegments(rawPlatform, r => r.publisher_platform || 'Desconhecido'),
+        placement: parseSegments(rawPlacement, r => {
+          const platform = r.publisher_platform || '';
+          const position = r.platform_position || '';
+          return position ? `${platform} — ${position}` : platform;
+        }),
+      };
+
+      // Build metrics from campaigns
+      const allCamps = isAllCampaigns
+        ? (collectedDataRef.current.allCampaigns || siblingCampaigns)
+        : [selectedCampaign];
+
+      const activeWithData = allCamps.filter(c => {
+        const m = c.metrics || {};
+        return (m.spend ?? 0) > 0 || (m.impressions ?? 0) > 0;
+      });
+
+      const totalSpend = activeWithData.reduce((s, c) => s + (c.metrics?.spend ?? 0), 0);
+      const totalImpressions = activeWithData.reduce((s, c) => s + (c.metrics?.impressions ?? 0), 0);
+      const totalReach = activeWithData.reduce((s, c) => s + (c.metrics?.reach ?? 0), 0);
+      const totalMessages = activeWithData.reduce((s, c) => s + (c.metrics?.messages ?? 0), 0);
+
+      const metrics = {
+        spend: totalSpend,
+        messages: totalMessages,
+        costPerMessage: totalMessages > 0 ? totalSpend / totalMessages : 0,
+        impressions: totalImpressions,
+        reach: totalReach,
+        cpm: totalImpressions > 0 ? (totalSpend / totalImpressions) * 1000 : 0,
+        ctr: activeWithData.length > 0 ? activeWithData.reduce((s, c) => s + (c.metrics?.ctr ?? 0), 0) / activeWithData.length : 0,
+        frequency: activeWithData.length > 0 ? activeWithData.reduce((s, c) => s + (c.metrics?.frequency ?? 0), 0) / activeWithData.length : 0,
+      };
+
+      // Previous period metrics
+      let previousMetrics = null;
+      if (parsedPrevDaily && parsedPrevDaily.length > 0) {
+        const prevSpend = parsedPrevDaily.reduce((s, d) => s + parseFloat(d.spend || 0), 0);
+        const prevImp = parsedPrevDaily.reduce((s, d) => s + parseInt(d.impressions || 0, 10), 0);
+        const prevMsgs = parsedPrevDaily.reduce((s, d) => s + (d.messages || 0), 0);
+        previousMetrics = {
+          spend: prevSpend,
+          messages: prevMsgs,
+          costPerMessage: prevMsgs > 0 ? prevSpend / prevMsgs : 0,
+          impressions: prevImp,
+          cpm: prevImp > 0 ? (prevSpend / prevImp) * 1000 : 0,
+        };
+      }
+
+      // Video data
+      let videoPayload = null;
+      if (parsedVideo && parsedVideo.plays > 0) {
+        videoPayload = {
+          plays: parsedVideo.plays,
+          hookRate: parsedVideo.p25 ? (parsedVideo.p25 / parsedVideo.plays * 100) : 0,
+          holdRate: parsedVideo.p75 ? (parsedVideo.p75 / parsedVideo.plays * 100) : 0,
+        };
+      }
+
+      // All campaigns context
+      const allCampsForAI = activeWithData
+        .map(c => ({ name: c.name, spend: c.metrics?.spend ?? 0, messages: c.metrics?.messages ?? 0 }));
+
+      const body = {
+        accountName: selectedAccount?.clientName || '',
+        campaignName: isAllCampaigns ? null : selectedCampaign?.name,
+        periodLabel: getPeriodLabel(currentPeriod),
+        todayDate: fmtDateBR(new Date()),
+        metrics,
+        previousMetrics,
+        breakdowns,
+        videoData: videoPayload,
+        allCampaigns: allCampsForAI,
+      };
+
+      const { data, error } = await supabase.functions.invoke('deep-analysis', { body });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      setDeepResult(data);
+    } catch (err) {
+      console.error('Erro na análise profunda:', err);
+      setDeepError(err.message || 'Erro ao gerar análise profunda.');
+    } finally {
+      setLoadingDeep(false);
+    }
+  }, [selectedAccountId, selectedAccount, selectedCampaign, isAllCampaigns, currentPeriod]);
 
   // ── Severity counts ──
 
@@ -605,8 +725,8 @@ export default function CampaignAnalysis() {
               <Brain size={22} className="text-white" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-text-primary tracking-tight">Analise detalhada</h1>
-              <p className="text-sm text-text-secondary">Diagnóstico inteligente de desempenho</p>
+              <h1 className="text-2xl font-bold text-text-primary tracking-tight">Análise com IA</h1>
+              <p className="text-sm text-text-secondary">Diagnósticos, relatórios e insights gerados por inteligência artificial</p>
             </div>
           </div>
         </div>
@@ -677,6 +797,25 @@ export default function CampaignAnalysis() {
             ) : (
               <><Sparkles size={18} className="group-hover:rotate-12 transition-transform duration-300" /> {isAllCampaigns ? 'Analisar Todas' : 'Analisar Campanha'}</>
             )}
+            <div className="absolute inset-0 rounded-xl bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+          </button>
+
+          <button
+            onClick={runDeepAnalysis}
+            disabled={!selectedCampaignId || !collectedDataRef.current || loadingDeep}
+            className="group relative inline-flex items-center gap-2.5 px-6 py-3 rounded-xl font-semibold text-sm
+              bg-gradient-to-r from-violet-600 to-purple-500 text-white shadow-lg shadow-violet-500/25
+              hover:shadow-xl hover:shadow-violet-500/30 hover:scale-[1.02] active:scale-[0.98]
+              disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100
+              transition-all duration-300 ease-out"
+            title="Requer análise prévia — clique primeiro em Analisar"
+          >
+            {loadingDeep ? (
+              <Loader2 size={18} className="animate-spin" />
+            ) : (
+              <Brain size={18} className="group-hover:scale-110 transition-transform duration-300" />
+            )}
+            {loadingDeep ? 'Analisando...' : 'Análise Profunda IA'}
             <div className="absolute inset-0 rounded-xl bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
           </button>
         </div>
@@ -1042,6 +1181,174 @@ export default function CampaignAnalysis() {
             )}
           </section>
 
+        </div>
+      )}
+
+      {/* ═══ DEEP ANALYSIS RESULT ═══ */}
+      {loadingDeep && (
+        <div className="flex flex-col items-center justify-center py-16 gap-4">
+          <div className="relative">
+            <div className="h-16 w-16 rounded-full border-4 border-violet-500/20 border-t-violet-500 animate-spin" />
+            <Brain size={24} className="absolute inset-0 m-auto text-violet-400 animate-pulse" />
+          </div>
+          <p className="text-text-secondary text-sm animate-pulse">Gerando análise profunda com IA...</p>
+        </div>
+      )}
+
+      {deepError && !loadingDeep && (
+        <div className="bg-danger/10 border border-danger/30 rounded-2xl p-5 text-danger text-sm">
+          <strong>Erro na análise profunda:</strong> {deepError}
+        </div>
+      )}
+
+      {deepResult && !loadingDeep && (
+        <div className="space-y-5">
+          {/* Deep Analysis Header */}
+          <div className="relative overflow-hidden bg-gradient-to-br from-violet-950/40 via-surface/60 to-purple-950/30 rounded-2xl border border-violet-500/30 p-6 shadow-lg">
+            <div className="absolute inset-0 overflow-hidden rounded-2xl pointer-events-none">
+              <div className="absolute -top-10 -right-10 h-40 w-40 rounded-full bg-violet-500/10 blur-3xl" />
+              <div className="absolute -bottom-10 -left-10 h-32 w-32 rounded-full bg-purple-500/10 blur-3xl" />
+            </div>
+            <div className="relative">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-500 shadow-lg shadow-violet-500/25">
+                  <Brain size={20} className="text-white" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-text-primary">Análise Profunda</h2>
+                  <p className="text-xs text-violet-300/70">Powered by Claude AI</p>
+                </div>
+                <button
+                  onClick={() => setDeepResult(null)}
+                  className="ml-auto p-2 rounded-lg text-text-secondary hover:text-danger hover:bg-danger/10 transition-all"
+                  title="Fechar análise"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <p className="text-sm text-text-secondary leading-relaxed">{deepResult.resumo}</p>
+            </div>
+          </div>
+
+          {/* Diagnósticos IA */}
+          {deepResult.diagnosticos?.length > 0 && (
+            <div className="bg-surface/40 rounded-2xl border border-border/50 p-5 shadow-lg">
+              <div className="flex items-center gap-2.5 mb-5">
+                <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500/20 to-violet-600/10 border border-violet-500/20">
+                  <Activity size={16} className="text-violet-400" />
+                </div>
+                <h2 className="text-lg font-bold text-text-primary">Diagnósticos IA</h2>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-300 border border-violet-500/20">
+                  {deepResult.diagnosticos.length}
+                </span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {deepResult.diagnosticos.map((diag, i) => {
+                  const sevMap = {
+                    critico: { border: 'border-red-500/40', bg: 'from-red-500/15 to-transparent', icon: XCircle, iconColor: 'text-red-400', badge: 'bg-red-500/20 text-red-300 border-red-500/30', label: 'Crítico', accent: 'bg-gradient-to-b from-red-400 to-red-600' },
+                    atencao: { border: 'border-amber-500/40', bg: 'from-amber-500/15 to-transparent', icon: AlertTriangle, iconColor: 'text-amber-400', badge: 'bg-amber-500/20 text-amber-300 border-amber-500/30', label: 'Atenção', accent: 'bg-gradient-to-b from-amber-400 to-amber-600' },
+                    positivo: { border: 'border-emerald-500/40', bg: 'from-emerald-500/15 to-transparent', icon: CheckCircle2, iconColor: 'text-emerald-400', badge: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30', label: 'Positivo', accent: 'bg-gradient-to-b from-emerald-400 to-emerald-600' },
+                  };
+                  const cfg = sevMap[diag.severidade] || sevMap.atencao;
+                  const Icon = cfg.icon;
+                  return (
+                    <div key={i} className={`relative overflow-hidden rounded-2xl border ${cfg.border} bg-gradient-to-br ${cfg.bg} backdrop-blur-sm shadow-lg hover:scale-[1.01] transition-all duration-300`}>
+                      <div className={`absolute left-0 top-0 bottom-0 w-1 ${cfg.accent}`} />
+                      <div className="p-5 pl-6">
+                        <div className="flex items-start justify-between gap-3 mb-3">
+                          <div className="flex items-center gap-2.5">
+                            <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-black/20">
+                              <Icon size={18} className={cfg.iconColor} />
+                            </div>
+                            <h3 className="font-semibold text-text-primary text-sm leading-tight">{diag.titulo}</h3>
+                          </div>
+                          <span className={`shrink-0 text-xs font-semibold px-2.5 py-1 rounded-lg border ${cfg.badge}`}>{cfg.label}</span>
+                        </div>
+                        <p className="text-sm text-text-secondary leading-relaxed mb-2">{diag.analise}</p>
+                        {diag.impacto && <p className="text-xs text-violet-300/80 font-medium">💡 {diag.impacto}</p>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Ações Recomendadas */}
+          {deepResult.acoes?.length > 0 && (
+            <div className="bg-surface/40 rounded-2xl border border-border/50 p-5 shadow-lg">
+              <div className="flex items-center gap-2.5 mb-5">
+                <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500/20 to-amber-600/10 border border-amber-500/20">
+                  <Zap size={16} className="text-amber-400" />
+                </div>
+                <h2 className="text-lg font-bold text-text-primary">Ações Recomendadas</h2>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-300 border border-violet-500/20">
+                  {deepResult.acoes.length}
+                </span>
+              </div>
+              <div className="space-y-3">
+                {deepResult.acoes.map((acao, i) => {
+                  const prioMap = {
+                    alta: { color: 'text-red-300', bg: 'bg-red-500/10 border-red-500/30', icon: Zap },
+                    media: { color: 'text-amber-300', bg: 'bg-amber-500/10 border-amber-500/30', icon: Target },
+                    baixa: { color: 'text-sky-300', bg: 'bg-sky-500/10 border-sky-500/30', icon: Shield },
+                  };
+                  const difMap = {
+                    facil: { label: 'Fácil', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' },
+                    medio: { label: 'Médio', color: 'text-amber-400 bg-amber-500/10 border-amber-500/20' },
+                    complexo: { label: 'Complexo', color: 'text-red-400 bg-red-500/10 border-red-500/20' },
+                  };
+                  const pCfg = prioMap[acao.prioridade] || prioMap.media;
+                  const dCfg = difMap[acao.dificuldade] || difMap.medio;
+                  const PIcon = pCfg.icon;
+                  return (
+                    <div key={i} className="group relative overflow-hidden rounded-2xl border border-border bg-surface/80 backdrop-blur-sm hover:border-violet-500/30 hover:bg-surface transition-all duration-300">
+                      <div className="p-5">
+                        <div className="flex items-start gap-4">
+                          <div className="flex items-center justify-center w-8 h-8 rounded-full bg-violet-500/10 border border-violet-500/20 shrink-0">
+                            <span className="text-sm font-bold text-violet-300">{i + 1}</span>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-3 mb-2">
+                              <h3 className="font-semibold text-text-primary text-sm">{acao.acao}</h3>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md border ${dCfg.color}`}>{dCfg.label}</span>
+                                <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg border ${pCfg.bg} ${pCfg.color}`}>
+                                  <PIcon size={12} /> {acao.prioridade === 'alta' ? 'Alta' : acao.prioridade === 'media' ? 'Média' : 'Baixa'}
+                                </span>
+                              </div>
+                            </div>
+                            <p className="text-sm text-text-secondary leading-relaxed">{acao.motivo}</p>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="absolute inset-y-0 left-0 w-1 bg-violet-500/0 group-hover:bg-violet-500/60 transition-all duration-300" />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Insights */}
+          {deepResult.insights?.length > 0 && (
+            <div className="bg-surface/40 rounded-2xl border border-border/50 p-5 shadow-lg">
+              <div className="flex items-center gap-2.5 mb-4">
+                <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500/20 to-cyan-600/10 border border-cyan-500/20">
+                  <Sparkles size={16} className="text-cyan-400" />
+                </div>
+                <h2 className="text-lg font-bold text-text-primary">Insights</h2>
+              </div>
+              <div className="space-y-3">
+                {deepResult.insights.map((insight, i) => (
+                  <div key={i} className="flex items-start gap-3 p-3.5 rounded-xl bg-surface/60 border border-border/30 hover:border-cyan-500/20 transition-all">
+                    <ChevronRight size={16} className="text-cyan-400 shrink-0 mt-0.5" />
+                    <p className="text-sm text-text-secondary leading-relaxed">{insight}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

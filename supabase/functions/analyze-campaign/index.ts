@@ -1,4 +1,8 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
+import {
+    buildCampaignAnalysisContextNotes,
+    buildCampaignAnalysisFallback,
+} from "../../../src/shared/utils/aiReport.js";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -100,6 +104,7 @@ function buildUserPrompt(data: any): string {
         previousPeriodCampaigns,
         breakdowns,
     } = data;
+    const contextNotes = buildCampaignAnalysisContextNotes(data);
 
     const fmtCampaignMetrics = (c: any) => {
         const lines = [];
@@ -171,9 +176,33 @@ function buildUserPrompt(data: any): string {
         }
     }
 
+    if (contextNotes) {
+        prompt += `\nLEITURAS CALCULADAS ANTES DA IA (use como apoio, sem copiar mecanicamente):\n${contextNotes}\n`;
+    }
+
     prompt += `\nGere apenas o relatório completo no JSON solicitado.`;
 
     return prompt;
+}
+
+function extractJsonPayload(text: string) {
+    let jsonText = text.trim();
+    if (jsonText.startsWith("```")) {
+        jsonText = jsonText
+            .replace(/^```(?:json)?\s*\n?/, "")
+            .replace(/\n?```\s*$/, "");
+    }
+
+    try {
+        return JSON.parse(jsonText);
+    } catch {
+        const firstBrace = jsonText.indexOf("{");
+        const lastBrace = jsonText.lastIndexOf("}");
+        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+            return JSON.parse(jsonText.slice(firstBrace, lastBrace + 1));
+        }
+        throw new Error("No JSON object found");
+    }
 }
 
 // ─── Edge Function handler ───────────────────────────────────────────────────
@@ -184,19 +213,13 @@ serve(async (req) => {
         return new Response("ok", { headers: corsHeaders });
     }
 
+    let body: any = null;
+
     try {
         const anthropicApiKey = Deno.env.get("ANTHROPIC_API_KEY");
-        if (!anthropicApiKey) {
-            return new Response(
-                JSON.stringify({ error: "ANTHROPIC_API_KEY not configured" }),
-                {
-                    status: 500,
-                    headers: { ...corsHeaders, "Content-Type": "application/json" },
-                }
-            );
-        }
+        const anthropicModel = Deno.env.get("ANTHROPIC_MODEL") || "claude-sonnet-4-20250514";
 
-        const body = await req.json();
+        body = await req.json();
 
         // Validate required fields
         if (!body.campaigns || !body.periodLabel) {
@@ -212,6 +235,17 @@ serve(async (req) => {
         }
 
         const userPrompt = buildUserPrompt(body);
+        const fallbackResponse = {
+            relatorio: buildCampaignAnalysisFallback(body),
+            source: "fallback",
+        };
+
+        if (!anthropicApiKey) {
+            console.warn("ANTHROPIC_API_KEY not configured. Returning local fallback report.");
+            return new Response(JSON.stringify(fallbackResponse), {
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+        }
 
         // Call Claude API
         const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -222,7 +256,7 @@ serve(async (req) => {
                 "anthropic-version": "2023-06-01",
             },
             body: JSON.stringify({
-                model: "claude-sonnet-4-20250514",
+                model: anthropicModel,
                 max_tokens: 3000,
                 system: SYSTEM_PROMPT,
                 messages: [
@@ -237,16 +271,12 @@ serve(async (req) => {
         if (!response.ok) {
             const errorText = await response.text();
             console.error("Claude API error:", response.status, errorText);
-            return new Response(
-                JSON.stringify({
-                    error: `Claude API error: ${response.status}`,
-                    details: errorText,
-                }),
-                {
-                    status: 502,
-                    headers: { ...corsHeaders, "Content-Type": "application/json" },
-                }
-            );
+            return new Response(JSON.stringify({
+                ...fallbackResponse,
+                fallbackReason: `Claude API error: ${response.status}`,
+            }), {
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
         }
 
         const claudeResponse = await response.json();
@@ -256,58 +286,60 @@ serve(async (req) => {
             (c: any) => c.type === "text"
         );
         if (!textContent?.text) {
-            return new Response(
-                JSON.stringify({ error: "Empty response from Claude" }),
-                {
-                    status: 502,
-                    headers: { ...corsHeaders, "Content-Type": "application/json" },
-                }
-            );
+            return new Response(JSON.stringify({
+                ...fallbackResponse,
+                fallbackReason: "Empty response from Claude",
+            }), {
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
         }
 
-        // Parse JSON from Claude's response (strip potential markdown code fences)
         let resultJson;
         try {
-            let jsonText = textContent.text.trim();
-            if (jsonText.startsWith("```")) {
-                jsonText = jsonText
-                    .replace(/^```(?:json)?\s*\n?/, "")
-                    .replace(/\n?```\s*$/, "");
-            }
-            resultJson = JSON.parse(jsonText);
+            resultJson = extractJsonPayload(textContent.text);
         } catch (_parseError) {
             console.error("Failed to parse Claude JSON:", textContent.text);
-            return new Response(
-                JSON.stringify({
-                    error: "Failed to parse AI response as JSON",
-                    rawResponse: textContent.text,
-                }),
-                {
-                    status: 502,
-                    headers: { ...corsHeaders, "Content-Type": "application/json" },
-                }
-            );
+            return new Response(JSON.stringify({
+                ...fallbackResponse,
+                fallbackReason: "Failed to parse AI response as JSON",
+            }), {
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
         }
 
         // Validate expected structure
         if (!resultJson.relatorio) {
+            return new Response(JSON.stringify({
+                ...fallbackResponse,
+                fallbackReason: "AI response missing 'relatorio' field",
+            }), {
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+        }
+
+        return new Response(JSON.stringify({
+            ...resultJson,
+            source: "anthropic",
+        }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+    } catch (err) {
+        console.error("Edge Function error:", err);
+        const fallbackReport = body ? buildCampaignAnalysisFallback(body) : null;
+
+        if (fallbackReport) {
             return new Response(
                 JSON.stringify({
-                    error: "AI response missing 'relatorio' field",
-                    rawResponse: resultJson,
+                    relatorio: fallbackReport,
+                    source: "fallback",
+                    fallbackReason: "Internal server error",
                 }),
                 {
-                    status: 502,
                     headers: { ...corsHeaders, "Content-Type": "application/json" },
                 }
             );
         }
 
-        return new Response(JSON.stringify(resultJson), {
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-    } catch (err) {
-        console.error("Edge Function error:", err);
         return new Response(
             JSON.stringify({ error: "Internal server error", details: String(err) }),
             {

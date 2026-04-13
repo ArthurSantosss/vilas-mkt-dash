@@ -12,15 +12,14 @@ import { ChangeLogProvider } from './contexts/ChangeLogContext';
 const LoginPage = lazy(() => import('./modules/login'));
 const AuthCallback = lazy(() => import('./modules/auth/AuthCallback'));
 const Dashboard = lazy(() => import('./modules/dashboard'));
-const Agenda = lazy(() => import('./modules/agenda'));
 const MetaAdsOverview = lazy(() => import('./modules/meta-ads'));
 const MetaBalances = lazy(() => import('./modules/meta-balances'));
 const DetailedView = lazy(() => import('./modules/detailed-view'));
 const Settings = lazy(() => import('./modules/settings'));
 const ReportText = lazy(() => import('./modules/report-text'));
 const ReportVisual = lazy(() => import('./modules/report-visual'));
+const CampaignAnalysis = lazy(() => import('./modules/campaign-analysis'));
 const AutoAlerts = lazy(() => import('./modules/auto-alerts'));
-const CampaignRules = lazy(() => import('./modules/campaign-rules'));
 
 function PageLoader() {
   return (
@@ -59,14 +58,13 @@ export default function App() {
                       }
                     >
                       <Route index element={<Dashboard />} />
-                      <Route path="agenda" element={<Agenda />} />
                       <Route path="meta-ads" element={<MetaAdsOverview />} />
                       <Route path="saldos-meta" element={<MetaBalances />} />
                       <Route path="visao-detalhada" element={<DetailedView />} />
                       <Route path="relatorio-texto" element={<ReportText />} />
                       <Route path="relatorio-visual" element={<ReportVisual />} />
+                      <Route path="analise-ia" element={<CampaignAnalysis />} />
                       <Route path="avisos" element={<AutoAlerts />} />
-                      <Route path="regras-campanha" element={<CampaignRules />} />
                       <Route path="configuracoes" element={<Settings />} />
                     </Route>
 

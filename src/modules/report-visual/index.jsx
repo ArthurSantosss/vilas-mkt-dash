@@ -1,8 +1,10 @@
-import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef, createElement } from 'react';
+import { createRoot } from 'react-dom/client';
+import { supabase } from '../../services/supabase';
 import { useMetaAds } from '../../contexts/MetaAdsContext';
 import { useAgency } from '../../contexts/AgencyContext';
 import { formatCurrency, formatNumber } from '../../shared/utils/format';
-import { Image, Download, Loader2, Sparkles, Copy, Check, Zap } from 'lucide-react';
+import { Image, Download, Loader2, Sparkles, Copy, Check, Send, CheckCircle2 } from 'lucide-react';
 import PeriodSelector from '../../shared/components/PeriodSelector';
 import {
   fetchAccountInsights, fetchCampaignsWithInsights,
@@ -13,7 +15,8 @@ import { toPng } from 'html-to-image';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip,
 } from 'recharts';
-import { supabase } from '../../services/supabase';
+
+const SLACK_WEBHOOK_TAG = import.meta.env.VITE_SLACK_WEBHOOK_TAG;
 
 // ── Allowed agencies for visual reports ──
 const ALLOWED_AGENCIES_VISUAL = ['vilasmkt', 'tag'];
@@ -68,18 +71,61 @@ function calcDiff(current, previous) {
   return ((current - previous) / previous * 100).toFixed(1);
 }
 
+const LEAD_ACTION_TYPES = [
+  'onsite_conversion.messaging_conversation_started_7d',
+  'messaging_conversation_started_7d',
+  'onsite_conversion.messaging_first_reply',
+];
+
+const ENGAGEMENT_ACTION_TYPES = ['post_engagement', 'page_engagement'];
+
+function aggregateCampaignMetrics(campaigns = []) {
+  const summary = campaigns.reduce((acc, campaign) => {
+    const insight = campaign.insights?.data?.[0];
+    const actions = insight?.actions || [];
+
+    acc.spend += parseFloat(insight?.spend || 0);
+    acc.impressions += parseInt(insight?.impressions || 0, 10);
+    acc.reach += parseInt(insight?.reach || 0, 10);
+    acc.clicks += parseInt(insight?.inline_link_clicks || 0, 10);
+    acc.leads += getActionValueMulti(actions, LEAD_ACTION_TYPES);
+    acc.engagements += getActionValueMulti(actions, ENGAGEMENT_ACTION_TYPES);
+
+    return acc;
+  }, {
+    spend: 0,
+    impressions: 0,
+    reach: 0,
+    clicks: 0,
+    leads: 0,
+    engagements: 0,
+  });
+
+  return {
+    ...summary,
+    costPerLead: summary.leads > 0 ? summary.spend / summary.leads : 0,
+    costPerEngagement: summary.engagements > 0 ? summary.spend / summary.engagements : 0,
+  };
+}
+
+function buildCampaignScopeLabel(selectedCampaigns, totalCampaignCount) {
+  if (!selectedCampaigns.length) {
+    return `Todas as campanhas (${totalCampaignCount})`;
+  }
+
+  if (selectedCampaigns.length === 1) {
+    return `Campanha filtrada: ${selectedCampaigns[0].name}`;
+  }
+
+  return `${selectedCampaigns.length} campanhas filtradas`;
+}
+
 // (pie chart palette and gender labels removed — pies replaced by extended bar chart)
 
 // Meta Ads logo is rendered as an <img> from /meta-ads-logo.png (converted to base64 at generate time)
 
-// ── KPI Card with comparison ──
-function ReportKPI({ label, value, diff, color = '#2196F3', invertColors = false }) {
-  const diffNum = diff ? parseFloat(diff) : null;
-  const isPositive = diffNum > 0;
-  const isGood = invertColors ? isPositive : !isPositive;
-  const diffColor = diffNum === null ? '#6b7f8e' : isGood ? '#34D399' : '#F87171';
-  const diffArrow = diffNum > 0 ? '▲' : diffNum < 0 ? '▼' : '';
-
+// ── KPI Card ──
+function ReportKPI({ label, value, color = '#2196F3' }) {
   return (
     <div style={{
       background: 'linear-gradient(135deg, #1a2a3d, #1e2d3d)',
@@ -94,14 +140,6 @@ function ReportKPI({ label, value, diff, color = '#2196F3', invertColors = false
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: `linear-gradient(90deg, ${color}, ${color}60)` }} />
       <div style={{ fontSize: 10, color: '#8899aa', marginBottom: 6, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase' }}>{label}</div>
       <div style={{ fontSize: 22, fontWeight: 700, color: '#fff', fontFamily: 'Inter, system-ui, sans-serif', lineHeight: 1.2 }}>{value}</div>
-      {diffNum !== null && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 8 }}>
-          <span style={{ fontSize: 10, fontWeight: 700, color: diffColor }}>
-            {diffArrow} {Math.abs(diffNum)}%
-          </span>
-          <span style={{ fontSize: 9, color: '#6b7f8e' }}>vs período anterior</span>
-        </div>
-      )}
     </div>
   );
 }
@@ -252,6 +290,7 @@ function getExportCacheKey(reportData) {
   if (!reportData) return '';
   return JSON.stringify({
     accountName: reportData.accountName,
+    scopeLabel: reportData.scopeLabel,
     start: reportData.period?.startShort,
     end: reportData.period?.endShort,
     spend: reportData.spend,
@@ -262,18 +301,121 @@ function getExportCacheKey(reportData) {
   });
 }
 
+// ── Standalone report card for off-screen rendering ──
+function ReportCard({ data, agencyLogoB64, metaLogoB64, agencyLabel: agLabel }) {
+  const d = data;
+  return (
+    <div
+      style={{
+        width: 1200,
+        minHeight: 750,
+        background: 'linear-gradient(180deg, #0d1520 0%, #111827 100%)',
+        borderRadius: 16,
+        padding: 28,
+        fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
+        color: '#fff',
+      }}
+    >
+      {/* Header */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        background: 'linear-gradient(135deg, #1a2538, #1e2d3d)',
+        borderRadius: 14, padding: '18px 28px', marginBottom: 22,
+        border: '1px solid #2a3a4d', boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
+          <div style={{ display: 'flex', alignItems: 'center', minHeight: 44 }}>
+            {agencyLogoB64 ? (
+              <img src={agencyLogoB64} alt={agLabel} style={{ height: 44, width: 'auto', maxWidth: 180, objectFit: 'contain', display: 'block' }} />
+            ) : (
+              <span style={{ fontSize: 18, fontWeight: 700, color: '#ffffff', letterSpacing: 0.4 }}>{agLabel}</span>
+            )}
+          </div>
+          <div style={{ height: 32, width: 1, background: '#2a3a4d', flexShrink: 0 }} />
+          {metaLogoB64 && <img src={metaLogoB64} alt="Meta" width={38} height={38} style={{ width: 38, height: 38, objectFit: 'contain', display: 'block' }} />}
+        </div>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          background: '#243044', borderRadius: 10, padding: '10px 18px', border: '1px solid #2a3a4d',
+        }}>
+          <span style={{ fontSize: 13, color: '#b0bec5', fontWeight: 500 }}>{d.period.start} — {d.period.end}</span>
+        </div>
+      </div>
+
+      {/* Account name */}
+      <div style={{
+        fontSize: 20, fontWeight: 700, color: '#fff', marginBottom: 18,
+        padding: '12px 20px', background: 'linear-gradient(135deg, #1a2a3d, #1e2d3d)',
+        borderRadius: 12, border: '1px solid #2a3a4d',
+      }}>
+        📊 {d.accountName}
+      </div>
+
+      {/* KPIs */}
+      <div style={{ display: 'flex', gap: 14, marginBottom: 22 }}>
+        <ReportKPI label="Investimento" value={formatCurrency(d.spend)} color="#0FA5AE" />
+        <ReportKPI label="Leads / Conversas" value={formatNumber(d.leads)} color="#1B8EC2" />
+        <ReportKPI label="Custo por Lead" value={formatCurrency(d.costPerLead)} color="#2196F3" />
+        <ReportKPI label="Engajamentos" value={formatNumber(d.engagements)} color="#42A5F5" />
+        <ReportKPI label="Custo / Engajamento" value={formatCurrency(d.costPerEngagement)} color="#64B5F6" />
+      </div>
+
+      {/* Funnel */}
+      <div style={{
+        background: 'linear-gradient(135deg, #1a2a3d, #1e2d3d)',
+        borderRadius: 14, border: '1px solid #2a3a4d', padding: '20px 20px',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+      }}>
+        <div style={{ fontSize: 11, color: '#8899aa', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 14, textAlign: 'center' }}>
+          Funil de Conversão
+        </div>
+        <SVGFunnel stages={[
+          { label: 'Impressões', value: d.impressions, widthPct: 100, color: '#0B6E75' },
+          { label: 'Alcance', value: d.reach, widthPct: Math.max(40, Math.min(82, (d.reach / Math.max(d.impressions, 1)) * 100)), color: '#0FA5AE' },
+          { label: 'Cliques', value: d.clicks, widthPct: Math.max(24, Math.min(50, (d.clicks / Math.max(d.reach, 1)) * 100 + 20)), color: '#1B8EC2' },
+          { label: 'Leads', value: d.leads, widthPct: Math.max(14, Math.min(30, (d.leads / Math.max(d.clicks, 1)) * 100 + 10)), color: '#2196F3' },
+        ]} />
+      </div>
+    </div>
+  );
+}
+
+async function renderCardToPng(reportCardProps) {
+  const container = document.createElement('div');
+  container.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1200px;z-index:-1;';
+  document.body.appendChild(container);
+
+  const root = createRoot(container);
+  root.render(createElement(ReportCard, reportCardProps));
+
+  // Wait for render + images
+  await new Promise(r => setTimeout(r, 500));
+  await waitForImages(container);
+  await new Promise(r => requestAnimationFrame(r));
+
+  const opts = { quality: 1, pixelRatio: 1.15, backgroundColor: '#0d1520', cacheBust: false, skipFonts: true };
+  // Warm-up pass
+  await toPng(container.firstChild, opts).catch(() => {});
+  await new Promise(r => requestAnimationFrame(r));
+  const dataUrl = await toPng(container.firstChild, opts);
+
+  root.unmount();
+  document.body.removeChild(container);
+
+  return dataUrlToBlob(dataUrl);
+}
+
 export default function ReportVisual() {
-  const { accounts, selectedPeriod, setSelectedPeriod } = useMetaAds();
+  const { accounts, campaigns, selectedPeriod, setSelectedPeriod } = useMetaAds();
   const { agencies, accountAgencies } = useAgency();
   const [selectedAccount, setSelectedAccount] = useState('');
   const [selectedAgency, setSelectedAgency] = useState('');
+  const [selectedCampaignIds, setSelectedCampaignIds] = useState([]);
   const [reportData, setReportData] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [copying, setCopying] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [aiAnalysis, setAiAnalysis] = useState(null);
-  const [loadingAI, setLoadingAI] = useState(false);
   const reportRef = useRef(null);
   const exportCacheRef = useRef({ key: '', canvas: null, blob: null });
 
@@ -323,11 +465,45 @@ export default function ReportVisual() {
     return accounts.filter(a => accountAgencies[a.id] === selectedAgency);
   }, [accounts, selectedAgency, accountAgencies]);
 
+  const accountCampaigns = useMemo(() => {
+    if (!selectedAccount) return [];
+
+    return campaigns
+      .filter(campaign => campaign.accountId === selectedAccount)
+      .sort((a, b) => {
+        const spendDiff = (b.metrics?.spend || 0) - (a.metrics?.spend || 0);
+        if (spendDiff !== 0) return spendDiff;
+        return a.name.localeCompare(b.name, 'pt-BR');
+      });
+  }, [campaigns, selectedAccount]);
+
+  const selectedCampaigns = useMemo(() => {
+    if (!selectedCampaignIds.length) return [];
+    const selectedSet = new Set(selectedCampaignIds);
+    return accountCampaigns.filter(campaign => selectedSet.has(campaign.id));
+  }, [accountCampaigns, selectedCampaignIds]);
+
+  const hasCampaignFilter = selectedCampaignIds.length > 0;
+  const campaignScopeLabel = useMemo(
+    () => buildCampaignScopeLabel(selectedCampaigns, accountCampaigns.length),
+    [selectedCampaigns, accountCampaigns.length]
+  );
+
   useEffect(() => {
     if (filteredAccounts.length > 0 && !filteredAccounts.find(a => a.id === selectedAccount)) {
       setSelectedAccount(filteredAccounts[0].id);
     }
   }, [filteredAccounts, selectedAccount]);
+
+  useEffect(() => {
+    if (!selectedAccount) {
+      setSelectedCampaignIds([]);
+      return;
+    }
+
+    const availableIds = new Set(accountCampaigns.map(campaign => campaign.id));
+    setSelectedCampaignIds(prev => prev.filter(id => availableIds.has(id)));
+  }, [selectedAccount, accountCampaigns]);
 
   const handleGenerate = useCallback(async () => {
     if (!selectedAccount) return;
@@ -337,45 +513,84 @@ export default function ReportVisual() {
 
     try {
       const prevPeriod = getPreviousPeriodRange(selectedPeriod);
-      const [insights, prevInsights, campData] = await Promise.all([
-        fetchAccountInsights(selectedAccount, selectedPeriod),
-        fetchAccountInsights(selectedAccount, prevPeriod),
-        fetchCampaignsWithInsights(selectedAccount, selectedPeriod),
-      ]);
+      let spend = 0;
+      let impressions = 0;
+      let reach = 0;
+      let clicks = 0;
+      let leads = 0;
+      let engagements = 0;
+      let costPerLead = 0;
+      let costPerEngagement = 0;
+      let prevSpend = 0;
+      let prevLeads = 0;
+      let prevEngagements = 0;
+      let prevCostPerLead = 0;
+      let prevCostPerEngagement = 0;
+      let campData = [];
+      let selectedCampaignNames = [];
 
-      if (!insights) {
-        setReportData({ error: 'Sem dados para o período selecionado.' });
-        return;
+      if (hasCampaignFilter) {
+        const selectedCampaignSet = new Set(selectedCampaignIds);
+        const [currentCampaigns, previousCampaigns] = await Promise.all([
+          fetchCampaignsWithInsights(selectedAccount, selectedPeriod),
+          fetchCampaignsWithInsights(selectedAccount, prevPeriod),
+        ]);
+
+        campData = currentCampaigns.filter(campaign => selectedCampaignSet.has(campaign.id));
+        const prevCampData = previousCampaigns.filter(campaign => selectedCampaignSet.has(campaign.id));
+
+        if (!campData.length) {
+          setReportData({ error: 'Nenhuma das campanhas selecionadas teve dados no período escolhido.' });
+          return;
+        }
+
+        const currentSummary = aggregateCampaignMetrics(campData);
+        const previousSummary = aggregateCampaignMetrics(prevCampData);
+
+        spend = currentSummary.spend;
+        impressions = currentSummary.impressions;
+        reach = currentSummary.reach;
+        clicks = currentSummary.clicks;
+        leads = currentSummary.leads;
+        engagements = currentSummary.engagements;
+        costPerLead = currentSummary.costPerLead;
+        costPerEngagement = currentSummary.costPerEngagement;
+        prevSpend = previousSummary.spend;
+        prevLeads = previousSummary.leads;
+        prevEngagements = previousSummary.engagements;
+        prevCostPerLead = previousSummary.costPerLead;
+        prevCostPerEngagement = previousSummary.costPerEngagement;
+        selectedCampaignNames = selectedCampaigns.map(campaign => campaign.name);
+      } else {
+        const [insights, prevInsights, currentCampaigns] = await Promise.all([
+          fetchAccountInsights(selectedAccount, selectedPeriod),
+          fetchAccountInsights(selectedAccount, prevPeriod),
+          fetchCampaignsWithInsights(selectedAccount, selectedPeriod),
+        ]);
+
+        if (!insights) {
+          setReportData({ error: 'Sem dados para o período selecionado.' });
+          return;
+        }
+
+        const actions = insights.actions || [];
+        const prevActions = prevInsights?.actions || [];
+
+        spend = parseFloat(insights.spend || 0);
+        impressions = parseInt(insights.impressions || 0, 10);
+        reach = parseInt(insights.reach || 0, 10);
+        clicks = parseInt(insights.inline_link_clicks || 0, 10);
+        prevSpend = parseFloat(prevInsights?.spend || 0);
+        leads = getActionValueMulti(actions, LEAD_ACTION_TYPES);
+        prevLeads = getActionValueMulti(prevActions, LEAD_ACTION_TYPES);
+        engagements = getActionValueMulti(actions, ENGAGEMENT_ACTION_TYPES);
+        prevEngagements = getActionValueMulti(prevActions, ENGAGEMENT_ACTION_TYPES);
+        costPerLead = leads > 0 ? spend / leads : 0;
+        prevCostPerLead = prevLeads > 0 ? prevSpend / prevLeads : 0;
+        costPerEngagement = engagements > 0 ? spend / engagements : 0;
+        prevCostPerEngagement = prevEngagements > 0 ? prevSpend / prevEngagements : 0;
+        campData = currentCampaigns;
       }
-
-      const actions = insights.actions || [];
-      const prevActions = prevInsights?.actions || [];
-
-      const spend = parseFloat(insights.spend || 0);
-      const impressions = parseInt(insights.impressions || 0, 10);
-      const reach = parseInt(insights.reach || 0, 10);
-      const clicks = parseInt(insights.inline_link_clicks || 0, 10);
-
-      const prevSpend = parseFloat(prevInsights?.spend || 0);
-
-      const leads = getActionValueMulti(actions, [
-        'onsite_conversion.messaging_conversation_started_7d',
-        'messaging_conversation_started_7d',
-        'onsite_conversion.messaging_first_reply',
-      ]);
-      const prevLeads = getActionValueMulti(prevActions, [
-        'onsite_conversion.messaging_conversation_started_7d',
-        'messaging_conversation_started_7d',
-        'onsite_conversion.messaging_first_reply',
-      ]);
-
-      const engagements = getActionValueMulti(actions, ['post_engagement', 'page_engagement']);
-      const prevEngagements = getActionValueMulti(prevActions, ['post_engagement', 'page_engagement']);
-
-      const costPerLead = leads > 0 ? spend / leads : 0;
-      const prevCostPerLead = prevLeads > 0 ? prevSpend / prevLeads : 0;
-      const costPerEngagement = engagements > 0 ? spend / engagements : 0;
-      const prevCostPerEngagement = prevEngagements > 0 ? prevSpend / prevEngagements : 0;
 
       const diffs = {
         spend: calcDiff(spend, prevSpend),
@@ -390,18 +605,14 @@ export default function ReportVisual() {
       if (campData.length > 0) {
         try {
           const allDaily = await Promise.all(
-            campData.slice(0, 5).map(c => fetchCampaignDailyInsights(c.id, selectedPeriod))
+            campData.map(c => fetchCampaignDailyInsights(c.id, selectedPeriod))
           );
           const dayMap = {};
           for (const daily of allDaily) {
             for (const d of daily) {
               const date = d.date_start;
               if (!dayMap[date]) dayMap[date] = { date, leads: 0 };
-              dayMap[date].leads += getActionValueMulti(d.actions || [], [
-                'onsite_conversion.messaging_conversation_started_7d',
-                'messaging_conversation_started_7d',
-                'onsite_conversion.messaging_first_reply',
-              ]);
+              dayMap[date].leads += getActionValueMulti(d.actions || [], LEAD_ACTION_TYPES);
             }
           }
           dailyLeads = Object.values(dayMap).sort((a, b) => a.date.localeCompare(b.date))
@@ -420,6 +631,9 @@ export default function ReportVisual() {
 
       setReportData({
         accountName: account?.clientName || 'Conta',
+        scopeLabel: hasCampaignFilter ? campaignScopeLabel : 'Conta inteira',
+        selectedCampaignNames,
+        filteredCampaignCount: hasCampaignFilter ? selectedCampaignIds.length : 0,
         period: periodDates,
         spend, impressions, reach, clicks, leads, engagements,
         costPerLead, costPerEngagement,
@@ -431,7 +645,16 @@ export default function ReportVisual() {
     } finally {
       setGenerating(false);
     }
-  }, [selectedAccount, selectedPeriod, accounts, logoSrc]);
+  }, [
+    selectedAccount,
+    selectedPeriod,
+    accounts,
+    logoSrc,
+    hasCampaignFilter,
+    selectedCampaignIds,
+    selectedCampaigns,
+    campaignScopeLabel,
+  ]);
 
   const buildExportAsset = useCallback(async () => {
     if (!reportRef.current || !reportData) return null;
@@ -451,6 +674,10 @@ export default function ReportVisual() {
       cacheBust: false,
       skipFonts: true,
     };
+
+    // First call warms up browser image cache inside html-to-image clone
+    await toPng(reportRef.current, opts).catch(() => {});
+    await new Promise((resolve) => requestAnimationFrame(resolve));
 
     const dataUrl = await withTimeout(
       toPng(reportRef.current, opts),
@@ -508,56 +735,142 @@ export default function ReportVisual() {
     }
   }, [reportData, buildExportAsset]);
 
-  // Generate AI Analysis
-  const handleGenerateAI = useCallback(async () => {
-    if (!selectedAccount) return;
-    setLoadingAI(true);
-    setAiAnalysis(null);
-    try {
-      const account = accounts.find(a => a.id === selectedAccount);
-      const periodLabel = formatPeriodLabel(selectedPeriod);
-      const campaignsData = await fetchCampaignsWithInsights(selectedAccount, selectedPeriod);
+  // ── Tag: send all accounts report to Slack ──
+  const [sendingTag, setSendingTag] = useState(false);
+  const [tagSent, setTagSent] = useState(false);
+  const [tagError, setTagError] = useState(null);
 
-      const campaignsForAI = (campaignsData || [])
-        .filter(c => c.insights?.data?.[0])
-        .map(c => {
-          const insight = c.insights.data[0];
-          return {
-            id: c.id,
-            name: c.name,
-            spend: parseFloat(insight.spend || 0),
-            impressions: parseInt(insight.impressions || 0, 10),
-            reach: parseInt(insight.reach || 0, 10),
-            cpm: parseFloat(insight.cpm || 0),
-          };
+  const tagAccounts = useMemo(() => {
+    return accounts.filter(a => {
+      const ag = accountAgencies[a.id];
+      return ag && matchAgencyVisual(ag) === 'tag';
+    });
+  }, [accounts, accountAgencies]);
+
+  const handleSendTagSlack = useCallback(async () => {
+    if (tagAccounts.length === 0) {
+      setTagError('Nenhuma conta Tag encontrada. Verifique as agências nas Configurações.');
+      return;
+    }
+    setSendingTag(true);
+    setTagSent(false);
+    setTagError(null);
+
+    try {
+      const periodDates = formatPeriodLabel(selectedPeriod);
+
+      // Pre-load logos as base64
+      const [agencyLogoB64, metaLogoB64] = await Promise.all([
+        toBase64('/logotag.png'),
+        toBase64('/logometa.png'),
+      ]);
+
+      let sentCount = 0;
+
+      for (const account of tagAccounts) {
+        const accountCamps = campaigns.filter(c => c.accountId === account.id && Number(c.metrics?.spend || 0) > 0);
+        if (accountCamps.length === 0) continue;
+
+        const totalSpend = accountCamps.reduce((s, c) => s + Number(c.metrics?.spend || 0), 0);
+        const totalImpressions = accountCamps.reduce((s, c) => s + Number(c.metrics?.impressions || 0), 0);
+        const totalReach = accountCamps.reduce((s, c) => s + Number(c.metrics?.reach || 0), 0);
+        const totalClicks = accountCamps.reduce((s, c) => s + Number(c.metrics?.clicks || c.metrics?.linkClicks || 0), 0);
+        const totalLeads = accountCamps.reduce((s, c) => s + Number(c.metrics?.messages || 0), 0);
+        const totalEngagements = accountCamps.reduce((s, c) => s + Number(c.metrics?.engagements || 0), 0);
+        const costPerLead = totalLeads > 0 ? totalSpend / totalLeads : 0;
+        const costPerEngagement = totalEngagements > 0 ? totalSpend / totalEngagements : 0;
+
+        const cardData = {
+          accountName: account.clientName || 'Conta',
+          period: periodDates,
+          spend: totalSpend,
+          impressions: totalImpressions,
+          reach: totalReach,
+          clicks: totalClicks,
+          leads: totalLeads,
+          engagements: totalEngagements,
+          costPerLead,
+          costPerEngagement,
+        };
+
+        // Render card to PNG blob
+        const pngBlob = await renderCardToPng({
+          data: cardData,
+          agencyLogoB64,
+          metaLogoB64,
+          agencyLabel: 'Grupo Tag',
         });
 
-      if (campaignsForAI.length === 0) {
-        setAiAnalysis({ error: 'Sem campanhas com dados para análise.' });
+        // Upload to Supabase Storage
+        const fileName = `tag-${account.id}-${Date.now()}.png`;
+        const { error: uploadError } = await supabase.storage
+          .from('report-images')
+          .upload(fileName, pngBlob, { contentType: 'image/png', upsert: true });
+
+        if (uploadError) {
+          console.error('[ReportVisual] Upload error:', uploadError);
+          throw new Error(`Falha ao fazer upload da imagem: ${uploadError.message}`);
+        }
+
+        // Get public URL
+        const { data: urlData } = supabase.storage
+          .from('report-images')
+          .getPublicUrl(fileName);
+
+        const publicUrl = urlData?.publicUrl;
+        if (!publicUrl) throw new Error('Não foi possível obter URL pública da imagem');
+
+        // Send image to Slack via webhook
+        const slackPayload = {
+          text: `📊 Relatório Visual — ${account.clientName} (${periodDates.start} a ${periodDates.end})`,
+          blocks: [
+            {
+              type: 'section',
+              text: {
+                type: 'mrkdwn',
+                text: `⭐ *Relatório Visual — ${account.clientName}*\n📅 ${periodDates.start} a ${periodDates.end}`,
+              },
+            },
+            {
+              type: 'image',
+              image_url: publicUrl,
+              alt_text: `Relatório ${account.clientName}`,
+            },
+          ],
+        };
+
+        await fetch(SLACK_WEBHOOK_TAG, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: `payload=${encodeURIComponent(JSON.stringify(slackPayload))}`,
+        });
+
+        sentCount++;
+
+        // Clean up uploaded image after sending (async, no need to wait)
+        supabase.storage.from('report-images').remove([fileName]).catch(() => {});
+      }
+
+      if (sentCount === 0) {
+        setTagError('Nenhuma conta Tag com dados de campanhas no período selecionado.');
         return;
       }
 
-      const { data: aiData, error: fnError } = await supabase.functions.invoke('analyze-campaign', {
-        body: {
-          accountName: account?.clientName || '',
-          platform: 'Meta Ads',
-          periodLabel: `${periodLabel.start} a ${periodLabel.end}`,
-          todayDate: new Date().toLocaleDateString('pt-BR'),
-          campaigns: campaignsForAI,
-        },
-      });
-
-      if (fnError) throw fnError;
-      if (aiData?.error) throw new Error(aiData.error);
-
-      setAiAnalysis({ analysis: aiData.relatorio || aiData || 'Análise gerada com sucesso.' });
+      setTagSent(true);
+      setTimeout(() => setTagSent(false), 4000);
     } catch (err) {
-      console.error('Erro ao gerar análise com IA:', err);
-      setAiAnalysis({ error: `Erro: ${err.message}` });
+      console.error('[ReportVisual] Erro ao enviar relatórios Tag para Slack:', err);
+      const msg = err.message || 'Erro desconhecido';
+      if (msg.includes('Load failed') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+        setTagError('Erro de rede: não foi possível conectar ao Slack.');
+      } else {
+        setTagError(`Erro: ${msg}`);
+      }
     } finally {
-      setLoadingAI(false);
+      setSendingTag(false);
     }
-  }, [selectedAccount, selectedPeriod, accounts]);
+  }, [tagAccounts, campaigns, selectedPeriod]);
 
   const d = reportData;
 
@@ -588,7 +901,11 @@ export default function ReportVisual() {
               <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Agência</label>
               <select
                 value={selectedAgency}
-                onChange={e => { setSelectedAgency(e.target.value); setSelectedAccount(''); }}
+                onChange={e => {
+                  setSelectedAgency(e.target.value);
+                  setSelectedAccount('');
+                  setSelectedCampaignIds([]);
+                }}
                 className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
               >
                 {allowedAgencyList.map(ag => <option key={ag} value={ag}>{ag}</option>)}
@@ -600,7 +917,10 @@ export default function ReportVisual() {
             <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Conta</label>
             <select
               value={selectedAccount}
-              onChange={e => setSelectedAccount(e.target.value)}
+              onChange={e => {
+                setSelectedAccount(e.target.value);
+                setSelectedCampaignIds([]);
+              }}
               className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
             >
               <option value="">Selecione uma conta</option>
@@ -613,6 +933,97 @@ export default function ReportVisual() {
             <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} className="w-full" />
           </div>
         </div>
+
+        {selectedAccount && (
+          <div className="relative mt-5 rounded-2xl border border-border/60 bg-surface/45 p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-text-primary">Filtro por campanhas</h3>
+                <p className="mt-1 text-xs text-text-secondary">
+                  Deixe vazio para considerar a conta inteira ou marque apenas as campanhas que quer incluir no relatório visual.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedCampaignIds([])}
+                  className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${
+                    !hasCampaignFilter
+                      ? 'bg-primary/15 text-primary-light border border-primary/30'
+                      : 'bg-bg/60 text-text-secondary border border-border hover:text-text-primary hover:border-primary/20'
+                  }`}
+                >
+                  Todas as campanhas ({accountCampaigns.length})
+                </button>
+                {hasCampaignFilter && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCampaignIds([])}
+                    className="rounded-xl border border-border bg-bg/60 px-3 py-2 text-xs font-medium text-text-secondary transition hover:border-primary/20 hover:text-text-primary"
+                  >
+                    Limpar filtro
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {accountCampaigns.length > 0 ? (
+              <>
+                <div className="mt-4 grid max-h-56 gap-2 overflow-y-auto pr-1 md:grid-cols-2 xl:grid-cols-3">
+                  {accountCampaigns.map((campaign) => {
+                    const checked = selectedCampaignIds.includes(campaign.id);
+                    return (
+                      <label
+                        key={campaign.id}
+                        className={`flex cursor-pointer items-start gap-3 rounded-xl border px-3 py-3 transition ${
+                          checked
+                            ? 'border-primary/35 bg-primary/10'
+                            : 'border-border/70 bg-bg/50 hover:border-primary/20'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            setSelectedCampaignIds((prev) => (
+                              prev.includes(campaign.id)
+                                ? prev.filter(id => id !== campaign.id)
+                                : [...prev, campaign.id]
+                            ));
+                          }}
+                          className="mt-0.5 h-4 w-4 rounded border-border bg-bg text-primary focus:ring-primary/40"
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium text-text-primary">
+                            {campaign.name}
+                          </span>
+                          <span className="mt-1 block text-[11px] text-text-secondary">
+                            Investimento: {formatCurrency(campaign.metrics?.spend || 0)}
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-text-secondary">
+                  <span className="rounded-full border border-border bg-bg/50 px-2.5 py-1">
+                    Escopo atual: <span className="font-semibold text-text-primary">{campaignScopeLabel}</span>
+                  </span>
+                  {hasCampaignFilter && selectedCampaigns.length > 0 && (
+                    <span className="rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-primary-light">
+                      {selectedCampaigns.length} selecionada(s)
+                    </span>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="mt-4 rounded-xl border border-dashed border-border bg-bg/35 px-4 py-5 text-sm text-text-secondary">
+                Nenhuma campanha encontrada para esta conta no período atual.
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Action Row */}
         <div className="relative mt-6 flex items-center justify-center gap-4">
@@ -627,20 +1038,6 @@ export default function ReportVisual() {
           >
             {generating ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
             {generating ? 'Gerando...' : 'Gerar Relatório'}
-            <div className="absolute inset-0 rounded-xl bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-          </button>
-
-          <button
-            onClick={handleGenerateAI}
-            disabled={!selectedAccount || loadingAI}
-            className="group relative inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl font-semibold text-sm
-              bg-gradient-to-r from-warning to-warning/80 text-black shadow-lg shadow-warning/25
-              hover:shadow-xl hover:shadow-warning/30 hover:scale-[1.02] active:scale-[0.98]
-              disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100
-              transition-all duration-300 ease-out"
-          >
-            {loadingAI ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />}
-            {loadingAI ? 'Gerando...' : 'Gerar Análise com IA'}
             <div className="absolute inset-0 rounded-xl bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
           </button>
 
@@ -673,7 +1070,29 @@ export default function ReportVisual() {
               {copying ? 'Copiando...' : copied ? 'Copiado!' : 'Copiar Relatório'}
             </button>
           )}
+
+          {agencyType === 'tag' && (
+            <button
+              onClick={handleSendTagSlack}
+              disabled={sendingTag || tagAccounts.length === 0}
+              className="group relative inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl font-semibold text-sm
+                bg-gradient-to-r from-[#4A154B] to-[#611f69] text-white shadow-lg shadow-[#4A154B]/25
+                hover:shadow-xl hover:shadow-[#4A154B]/30 hover:scale-[1.02] active:scale-[0.98]
+                disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100
+                transition-all duration-300 ease-out"
+            >
+              {sendingTag ? <Loader2 size={16} className="animate-spin" /> : tagSent ? <CheckCircle2 size={16} /> : <Send size={16} />}
+              {sendingTag ? 'Enviando...' : tagSent ? 'Enviado ao Slack!' : `Todos Tag → Slack (${tagAccounts.length})`}
+              <div className="absolute inset-0 rounded-xl bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+            </button>
+          )}
         </div>
+
+        {tagError && agencyType === 'tag' && (
+          <div className="relative mt-3 mx-auto max-w-lg rounded-lg bg-danger/10 border border-danger/30 px-4 py-2.5 text-center">
+            <p className="text-sm text-danger">{tagError}</p>
+          </div>
+        )}
       </div>
 
       {/* REPORT CANVAS */}
@@ -741,13 +1160,13 @@ export default function ReportVisual() {
               </div>
             </div>
 
-            {/* ROW 2: KPI Cards with comparison */}
+            {/* ROW 2: KPI Cards */}
             <div style={{ display: 'flex', gap: 14, marginBottom: 22 }}>
-              <ReportKPI label="Investimento" value={formatCurrency(d.spend)} diff={d.diffs.spend} color="#0FA5AE" />
-              <ReportKPI label="Leads / Conversas" value={formatNumber(d.leads)} diff={d.diffs.leads} color="#1B8EC2" invertColors={true} />
-              <ReportKPI label="Custo por Lead" value={formatCurrency(d.costPerLead)} diff={d.diffs.costPerLead} color="#2196F3" />
-              <ReportKPI label="Engajamentos" value={formatNumber(d.engagements)} diff={d.diffs.engagements} color="#42A5F5" invertColors={true} />
-              <ReportKPI label="Custo / Engajamento" value={formatCurrency(d.costPerEngagement)} diff={d.diffs.costPerEngagement} color="#64B5F6" />
+              <ReportKPI label="Investimento" value={formatCurrency(d.spend)} color="#0FA5AE" />
+              <ReportKPI label="Leads / Conversas" value={formatNumber(d.leads)} color="#1B8EC2" />
+              <ReportKPI label="Custo por Lead" value={formatCurrency(d.costPerLead)} color="#2196F3" />
+              <ReportKPI label="Engajamentos" value={formatNumber(d.engagements)} color="#42A5F5" />
+              <ReportKPI label="Custo / Engajamento" value={formatCurrency(d.costPerEngagement)} color="#64B5F6" />
             </div>
 
             {/* ROW 3: Funnel + Full-width Bar Chart */}
@@ -848,29 +1267,6 @@ export default function ReportVisual() {
         </div>
       )}
 
-      {/* AI ANALYSIS */}
-      {aiAnalysis && (
-        <div className="relative bg-gradient-to-br from-warning/10 to-warning/5 rounded-2xl border border-warning/30 overflow-hidden">
-          <div className="absolute inset-0 pointer-events-none">
-            <div className="absolute top-0 right-0 h-40 w-40 rounded-full bg-warning/5 blur-3xl" />
-          </div>
-          <div className="relative p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <Zap size={20} className="text-warning" />
-              <h3 className="text-lg font-bold text-text-primary">Análise com IA</h3>
-            </div>
-            {aiAnalysis.error ? (
-              <div className="text-danger text-sm">{aiAnalysis.error}</div>
-            ) : (
-              <div className="prose prose-invert max-w-none">
-                <div className="whitespace-pre-wrap text-sm text-text-primary leading-relaxed font-sans">
-                  {aiAnalysis.analysis}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

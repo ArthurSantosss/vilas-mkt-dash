@@ -54,22 +54,22 @@ export default function Checklist() {
   return (
     <div className="space-y-6 max-w-3xl">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-success/10">
-            <CheckSquare size={24} className="text-success" />
+      <div className="section-header flex items-center justify-between">
+        <div className="relative flex items-center gap-3">
+          <div className="flex items-center justify-center w-11 h-11 rounded-xl bg-gradient-to-br from-success to-emerald-400 shadow-lg shadow-success/20">
+            <CheckSquare size={22} className="text-white" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-text-primary">Checklist</h1>
-            <p className="text-sm text-text-secondary">Tarefas personalizadas por agência</p>
+            <h1 className="text-xl lg:text-2xl font-bold text-text-primary tracking-tight">Checklist</h1>
+            <p className="text-xs lg:text-sm text-text-secondary">Tarefas personalizadas por agência</p>
           </div>
         </div>
         {totalCount > 0 && (
           <button
             onClick={clearAllTasks}
-            className="flex items-center gap-2 px-3 py-1.5 bg-surface border border-border rounded-lg text-sm text-text-secondary hover:text-danger hover:border-danger/30 transition-all"
+            className="relative flex items-center gap-2 px-3.5 py-2 bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl text-xs font-medium text-text-secondary hover:text-danger hover:border-danger/30 transition-all"
           >
-            <RotateCcw size={14} /> Limpar Tudo
+            <RotateCcw size={13} /> Limpar Tudo
           </button>
         )}
       </div>

@@ -102,7 +102,7 @@ const postMeta = async (path, body = {}) => {
  */
 export const fetchAdAccounts = async () => {
     const data = await fetchMeta('/me/adaccounts', {
-        fields: 'id,account_id,name,account_status,currency,balance,amount_spent,spend_cap',
+        fields: 'id,account_id,name,account_status,currency,balance,amount_spent,spend_cap,is_prepay_account,funding_source_details',
         limit: 1000
     });
     return data.data || [];
@@ -350,8 +350,18 @@ export function getPreviousPeriodRange(period) {
     let days;
     switch (period) {
         case 'today': days = 1; break;
+        case 'yesterday': days = 1; break;
         case '7d': days = 7; break;
+        case '14d': days = 14; break;
         case '30d': days = 30; break;
+        case 'today_yesterday': days = 2; break;
+        case 'last_month': {
+            const startOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+            const prevEnd = new Date(startOfLastMonth);
+            prevEnd.setDate(prevEnd.getDate() - 1);
+            const prevStart = new Date(prevEnd.getFullYear(), prevEnd.getMonth(), 1);
+            return { type: 'custom', startDate: fmt(prevStart), endDate: fmt(prevEnd) };
+        }
         case 'month': {
             const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
             days = Math.round((today - firstOfMonth) / 86400000) + 1;

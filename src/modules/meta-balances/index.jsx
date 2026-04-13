@@ -2,7 +2,9 @@ import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useMetaAds } from '../../contexts/MetaAdsContext';
 import { useAgency } from '../../contexts/AgencyContext';
 import { formatCurrency } from '../../shared/utils/format';
-import { Wallet, AlertTriangle, Clock, CreditCard, ArrowUpDown, RefreshCw, Edit3, Target, TrendingUp, CalendarClock, Repeat } from 'lucide-react';
+import { isCreditCardPaymentMethod, getAccountPaymentMethod } from '../../shared/utils/paymentMethod';
+import { supabase } from '../../services/supabase';
+import { Wallet, AlertTriangle, Clock, CreditCard, ArrowUpDown, RefreshCw, Edit3, Target, CalendarClock, Repeat } from 'lucide-react';
 
 const sortOptions = [
   { value: 'balance_asc', label: 'Menor saldo primeiro' },
@@ -74,6 +76,7 @@ function buildBalanceSnapshot(balance) {
     creditLimit: roundMoney(balance.creditLimit),
     amountSpent: roundMoney(balance.amountSpent),
     avgDailySpend7d: roundMoney(balance.avgDailySpend7d),
+    hasReliableBalance: balance.hasReliableBalance !== false,
   };
 }
 
@@ -84,7 +87,8 @@ function hasSnapshotChanged(previousSnapshot, nextSnapshot) {
     previousSnapshot.rawBillingBalance !== nextSnapshot.rawBillingBalance ||
     previousSnapshot.creditLimit !== nextSnapshot.creditLimit ||
     previousSnapshot.amountSpent !== nextSnapshot.amountSpent ||
-    previousSnapshot.avgDailySpend7d !== nextSnapshot.avgDailySpend7d
+    previousSnapshot.avgDailySpend7d !== nextSnapshot.avgDailySpend7d ||
+    previousSnapshot.hasReliableBalance !== nextSnapshot.hasReliableBalance
   );
 }
 
@@ -99,6 +103,7 @@ function getDetectionThreshold(previousSnapshot, currentSnapshot) {
 
 function detectLastPayment(previousSnapshot, currentSnapshot) {
   if (!previousSnapshot || !currentSnapshot) return null;
+  if (!previousSnapshot.hasReliableBalance || !currentSnapshot.hasReliableBalance) return null;
 
   const threshold = getDetectionThreshold(previousSnapshot, currentSnapshot);
   const currentBalanceIncrease = currentSnapshot.currentBalance - previousSnapshot.currentBalance;
@@ -205,8 +210,8 @@ function SpendProgressBar({ balance, monthlyGoal }) {
   const now = new Date();
   const dayOfMonth = now.getDate();
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const estimatedMonthSpend = balance.avgDailySpend7d * daysInMonth;
-  const currentMonthSpend = balance.avgDailySpend7d * dayOfMonth;
+  const currentMonthSpend = balance.spentThisMonth || 0;
+  const estimatedMonthSpend = dayOfMonth > 0 ? (currentMonthSpend / dayOfMonth) * daysInMonth : 0;
   const remainingDaysInMonth = Math.max(daysInMonth - dayOfMonth, 1);
 
   if (!monthlyGoal || monthlyGoal <= 0) {
@@ -228,7 +233,7 @@ function SpendProgressBar({ balance, monthlyGoal }) {
   return (
     <div>
       <div className="flex justify-between text-xs text-text-secondary mb-1">
-        <span>Gasto est. mês: {formatCurrency(currentMonthSpend)}</span>
+        <span>Gasto no mês: {formatCurrency(currentMonthSpend)}</span>
         <span>{pct.toFixed(0)}%</span>
       </div>
       <div className="h-2 bg-border rounded-full overflow-hidden">
@@ -237,6 +242,12 @@ function SpendProgressBar({ balance, monthlyGoal }) {
       <div className="flex justify-between text-[10px] text-text-secondary mt-0.5">
         <span>Meta: {formatCurrency(monthlyGoal)}</span>
         {isOver && <span className="text-danger font-medium">Projeção: {projectedPct.toFixed(0)}%</span>}
+      </div>
+      <div className="flex justify-between text-[10px] mt-0.5">
+        <span className="text-text-secondary">Restante</span>
+        <span className={`font-medium ${remainingToGoal > 0 ? 'text-text-primary' : 'text-success'}`}>
+          {remainingToGoal > 0 ? formatCurrency(remainingToGoal) : 'Meta atingida'}
+        </span>
       </div>
       <div className="flex justify-between text-[10px] mt-1">
         <span className="text-text-secondary">Recomendado por dia</span>
@@ -262,8 +273,9 @@ function BalanceCard({
   setBillingFrequency,
 }) {
   const monthlyGoal = goals[balance.accountId] || 0;
-  const selectedPaymentMethod = paymentMethods[balance.accountId] || 'credit_card';
-  const ignoresLastPayment = selectedPaymentMethod === 'credit_card';
+  const selectedPaymentMethod = getAccountPaymentMethod(paymentMethods, balance.accountId) || 'credit_card';
+  const isCreditCard = isCreditCardPaymentMethod(selectedPaymentMethod);
+  const ignoresLastPayment = isCreditCard;
   const lastPaymentDate = lastPayments[balance.accountId] || '';
   const lastPaymentSource = lastPaymentSources[balance.accountId] || (lastPaymentDate ? 'manual' : '');
   const selectedFrequency = billingFrequencies[balance.accountId] || 'monthly';
@@ -272,61 +284,86 @@ function BalanceCard({
   const daysUntilPayment = getDaysUntil(nextPaymentDate);
   const isPaymentSoon = daysUntilPayment !== null && daysUntilPayment <= 2;
   const isPaymentOverdue = daysUntilPayment !== null && daysUntilPayment < 0;
+  const hasReliableBalance = balance.hasReliableBalance !== false;
+  const shouldShowAvailableBalance = hasReliableBalance && !isCreditCard;
+  const shouldShowUnavailableBalance = !hasReliableBalance && !isCreditCard;
 
-  const pct = balance.creditLimit > 0 ? (balance.currentBalance / balance.creditLimit) * 100 : 0;
-  const isUrgent = balance.estimatedDaysRemaining > 0 && balance.estimatedDaysRemaining < 2;
-  const isCritical = balance.currentBalance > 0 && balance.currentBalance < 50;
-  const isWarning = balance.currentBalance >= 50 && balance.currentBalance < 150;
+  const pct = shouldShowAvailableBalance && balance.creditLimit > 0 ? (balance.currentBalance / balance.creditLimit) * 100 : 0;
+  const isUrgent = shouldShowAvailableBalance && balance.estimatedDaysRemaining > 0 && balance.estimatedDaysRemaining < 2;
+  const isZero = shouldShowAvailableBalance && balance.currentBalance <= 0;
+  const isCritical = shouldShowAvailableBalance && !isZero && balance.currentBalance < 50;
+  const isWarning = shouldShowAvailableBalance && balance.currentBalance >= 50 && balance.currentBalance <= 100;
 
   let borderClass = 'border-border';
-  if (isCritical) borderClass = 'border-danger/60 shadow-[0_0_15px_rgba(239,68,68,0.15)]';
-  else if (isWarning) borderClass = 'border-warning/40';
+  if (isZero) borderClass = 'border-danger/60 shadow-[0_0_15px_rgba(239,68,68,0.15)]';
+  else if (isCritical) borderClass = 'border-warning/40';
+  else if (isWarning) borderClass = 'border-orange-500/40';
 
   let barColor = 'bg-success';
-  if (pct < 15) barColor = 'bg-danger';
-  else if (pct < 35) barColor = 'bg-warning';
+  if (isZero) barColor = 'bg-danger';
+  else if (isCritical) barColor = 'bg-warning';
+  else if (isWarning) barColor = 'bg-orange-500';
 
   return (
-    <div className={`bg-surface rounded-xl border ${borderClass} p-5 transition-all hover:bg-surface-hover`}>
+    <div className={`card-hover bg-surface rounded-2xl border ${borderClass} p-5 transition-all`}>
       {/* Header */}
       <div className="flex items-start justify-between mb-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <h3 className="text-sm font-semibold text-text-primary truncate">{balance.clientName}</h3>
           </div>
-          <p className="text-xs text-text-secondary mt-0.5">ID: {balance.accountId}</p>
+          <p className="text-[11px] text-text-secondary/60 mt-0.5 font-mono">ID: {balance.accountId}</p>
         </div>
-        {(isUrgent || isCritical) && (
-          <span className="flex items-center gap-1 text-xs font-bold text-danger bg-danger/10 px-2 py-0.5 rounded-full animate-pulse shrink-0 ml-2">
-            <AlertTriangle size={12} /> URGENTE
+        {(isUrgent || isZero) && (
+          <span className="flex items-center gap-1 text-[11px] font-bold text-danger bg-danger/10 px-2.5 py-1 rounded-full animate-pulse shrink-0 ml-2 border border-danger/20">
+            <AlertTriangle size={11} /> URGENTE
           </span>
         )}
       </div>
 
-      {/* Balance bar — shown when credit limit is set */}
-      {balance.creditLimit > 0 && (
+      {/* Balance summary */}
+      {isCreditCard ? (
+        <div className="mb-3 rounded-lg border border-border/60 bg-bg/20 px-3 py-2">
+          <div className="flex justify-between gap-3 text-sm">
+            <span className="text-text-secondary">Saldo disponível</span>
+            <span className="font-medium text-text-secondary">Oculto para cartão</span>
+          </div>
+        </div>
+      ) : shouldShowAvailableBalance ? (
         <div className="mb-3">
           <div className="flex justify-between text-sm mb-1">
             <span className="text-text-secondary">Saldo</span>
-            <span className={`font-bold ${isCritical ? 'text-danger' : isWarning ? 'text-warning' : 'text-success'}`}>
+            <span className={`font-bold ${isZero ? 'text-danger' : isCritical ? 'text-warning' : isWarning ? 'text-orange-500' : 'text-success'}`}>
               {formatCurrency(balance.currentBalance)}
             </span>
           </div>
-          <div className="h-2 bg-border rounded-full overflow-hidden">
-            <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${Math.min(pct, 100)}%` }} />
-          </div>
-          <div className="flex justify-end text-xs text-text-secondary mt-1">
-            <span>{pct.toFixed(0)}%</span>
-          </div>
+          {balance.creditLimit > 0 && (
+            <>
+              <div className="h-2 bg-border rounded-full overflow-hidden">
+                <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+              </div>
+              <div className="flex justify-end text-xs text-text-secondary mt-1">
+                <span>{pct.toFixed(0)}%</span>
+              </div>
+            </>
+          )}
         </div>
-      )}
+      ) : shouldShowUnavailableBalance ? (
+        <div className="mb-3 rounded-lg border border-border/60 bg-bg/20 px-3 py-2">
+          <div className="flex justify-between gap-3 text-sm">
+            <span className="text-text-secondary">Saldo disponível</span>
+            <span className="font-medium text-text-secondary">Não disponível via API</span>
+          </div>
+          {balance.amountDue > 0 && (
+            <p className="text-[11px] text-text-secondary mt-1">
+              Em cobrança: {formatCurrency(balance.amountDue)}
+            </p>
+          )}
+        </div>
+      ) : null}
 
       {/* Spend metrics (both modes) */}
       <div className="space-y-2 text-sm">
-        <div className="flex justify-between">
-          <span className="text-text-secondary flex items-center gap-1"><TrendingUp size={12} /> Gasto hoje</span>
-          <span className="text-text-primary">{formatCurrency(balance.spentToday)}</span>
-        </div>
         <div className="flex justify-between items-center">
           <span className="text-text-secondary flex items-center gap-1"><Target size={12} /> Meta mensal</span>
           <MonthlyGoalInput accountId={balance.accountId} goals={goals} setGoal={setGoal} />
@@ -340,7 +377,13 @@ function BalanceCard({
 
       {/* Extra fields: days remaining, payment method, last payment */}
       <div className="space-y-2 text-sm mt-3 pt-3 border-t border-border">
-        {!ignoresLastPayment && (
+        {!isCreditCard && balance.amountDue > 0 && (
+          <div className="flex justify-between">
+            <span className="text-text-secondary">Em cobrança</span>
+            <span className="font-medium text-warning">{formatCurrency(balance.amountDue)}</span>
+          </div>
+        )}
+        {!ignoresLastPayment && hasReliableBalance && (
           <div className="flex justify-between">
             <span className="text-text-secondary flex items-center gap-1"><Clock size={12} /> Dias restantes</span>
             <span className={`font-bold ${balance.estimatedDaysRemaining < 2 ? 'text-danger' : balance.estimatedDaysRemaining < 4 ? 'text-warning' : 'text-success'}`}>
@@ -399,7 +442,7 @@ function BalanceCard({
                 />
               </div>
             </div>
-            {!lastPaymentDate && (
+            {!lastPaymentDate && hasReliableBalance && (
               <p className="text-[10px] text-text-secondary/80">
                 A data ser&aacute; preenchida automaticamente quando o sistema detectar recarga ou quita&ccedil;&atilde;o.
               </p>
@@ -441,7 +484,15 @@ export default function MetaBalances() {
   const [sortBy, setSortBy] = useState('balance_asc');
   const [selectedAgency, setSelectedAgency] = useState('all');
   const [goals, setGoal] = useLocalStorageMap('account_monthly_goals');
-  const [paymentMethods, setPaymentMethod] = useLocalStorageMap('account_payment_methods');
+  const [paymentMethods, setPaymentMethodLocal] = useLocalStorageMap('account_payment_methods');
+
+  // Sync payment method to Supabase for cron usage
+  const setPaymentMethod = useCallback((accountId, value) => {
+    setPaymentMethodLocal(accountId, value);
+    supabase.from('account_configs')
+      .upsert({ account_id: accountId, payment_method: value, updated_at: new Date().toISOString() }, { onConflict: 'account_id' })
+      .then(({ error: err }) => { if (err) console.warn('[MetaBalances] Erro ao sincronizar payment method:', err); });
+  }, [setPaymentMethodLocal]);
   const [lastPayments, setLastPayment, mergeLastPayments] = useLocalStorageMap('account_last_payments');
   const [lastPaymentSources, setLastPaymentSource, mergeLastPaymentSources] = useLocalStorageMap('account_last_payment_sources');
   const [billingFrequencies, setBillingFrequency] = useLocalStorageMap('account_billing_frequencies');
@@ -458,13 +509,13 @@ export default function MetaBalances() {
       const accountId = balance.accountId;
       const previousSnapshot = balanceSnapshots[accountId];
       const currentSnapshot = buildBalanceSnapshot(balance);
-      const selectedPaymentMethod = paymentMethods[accountId] || 'credit_card';
+      const selectedPaymentMethod = getAccountPaymentMethod(paymentMethods, accountId) || 'credit_card';
 
       if (hasSnapshotChanged(previousSnapshot, currentSnapshot)) {
         nextSnapshotUpdates[accountId] = currentSnapshot;
       }
 
-      if (selectedPaymentMethod === 'credit_card') {
+      if (isCreditCardPaymentMethod(selectedPaymentMethod)) {
         return;
       }
 
@@ -494,11 +545,15 @@ export default function MetaBalances() {
       ? balances
       : balances.filter(b => accountAgencies[b.accountId] === selectedAgency);
     const list = [...filtered];
+    const compareReliableFirst = (a, b) => {
+      if (a.hasReliableBalance === b.hasReliableBalance) return 0;
+      return a.hasReliableBalance ? -1 : 1;
+    };
     switch (sortBy) {
-      case 'balance_asc': return list.sort((a, b) => a.currentBalance - b.currentBalance);
-      case 'balance_desc': return list.sort((a, b) => b.currentBalance - a.currentBalance);
+      case 'balance_asc': return list.sort((a, b) => compareReliableFirst(a, b) || a.currentBalance - b.currentBalance);
+      case 'balance_desc': return list.sort((a, b) => compareReliableFirst(a, b) || b.currentBalance - a.currentBalance);
       case 'name': return list.sort((a, b) => a.clientName.localeCompare(b.clientName));
-      case 'days': return list.sort((a, b) => a.estimatedDaysRemaining - b.estimatedDaysRemaining);
+      case 'days': return list.sort((a, b) => compareReliableFirst(a, b) || a.estimatedDaysRemaining - b.estimatedDaysRemaining);
       default: return list;
     }
   }, [balances, sortBy, selectedAgency, accountAgencies]);

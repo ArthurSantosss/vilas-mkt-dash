@@ -9,20 +9,20 @@
   --color-primary-dark: #0B7B85;
 
   /* ── Backgrounds — deep dark with blue undertone ── */
-  --color-bg: #0A0C11;
-  --color-surface: #111420;
-  --color-surface-hover: #1A1E2E;
-  --color-border: #1C2030;
+  --color-bg: #080A0F;
+  --color-surface: #0F1219;
+  --color-surface-hover: #161A26;
+  --color-border: #1A1E2C;
 
   /* ── Text ── */
-  --color-text-primary: #EFF1F5;
-  --color-text-secondary: #6E7682;
+  --color-text-primary: #F0F2F5;
+  --color-text-secondary: #5C6370;
 
   /* ── Semantic ── */
-  --color-success: #2DD4A8;
-  --color-warning: #F5A623;
-  --color-danger: #F25757;
-  --color-info: #5B9CF6;
+  --color-success: #34D399;
+  --color-warning: #FBBF24;
+  --color-danger: #F87171;
+  --color-info: #60A5FA;
 
   /* ── Platform ── */
   --color-meta: #1877F2;
@@ -43,8 +43,8 @@
 /* ── Body ── */
 body {
   margin: 0;
-  background-color: #0A0C11;
-  color: #EFF1F5;
+  background-color: #080A0F;
+  color: #F0F2F5;
   min-height: 100vh;
   font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
   -webkit-font-smoothing: antialiased;
@@ -52,8 +52,8 @@ body {
 }
 
 /* ── Typography ── */
-h1, h2, h3, h4, h5, h6 { letter-spacing: -0.025em; }
-p, span, td, th, label, li { letter-spacing: -0.01em; }
+h1, h2, h3, h4, h5, h6 { letter-spacing: -0.02em; font-weight: 700; }
+p, span, td, th, label, li { letter-spacing: -0.005em; }
 
 /* ═══════════════════════════════════════════════════
    PREMIUM SELECT — glassmorphism with logo glow
@@ -182,15 +182,17 @@ main {
    CARD HOVER EFFECTS — premium interactive cards
    ═══════════════════════════════════════════════════ */
 .card-hover {
-  transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  transition: all 0.35s cubic-bezier(0.22, 0.61, 0.36, 1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .card-hover:hover {
-  transform: translateY(-2px);
-  border-color: rgba(15, 165, 174, 0.15);
+  transform: translateY(-3px);
+  border-color: rgba(15, 165, 174, 0.18);
   box-shadow:
-    0 8px 24px -8px rgba(0, 0, 0, 0.4),
-    0 0 0 1px rgba(15, 165, 174, 0.06) inset;
+    0 12px 32px -8px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(15, 165, 174, 0.08) inset,
+    0 0 24px -12px rgba(15, 165, 174, 0.08);
 }
 
 /* ═══════════════════════════════════════════════════
@@ -253,11 +255,16 @@ table {
 }
 
 th {
-  font-weight: 500;
+  font-weight: 600;
   text-transform: uppercase;
   font-size: 0.6875rem;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
   color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+tbody tr {
+  transition: background-color 0.15s ease;
 }
 
 /* ═══════════════════════════════════════════════════
@@ -282,4 +289,57 @@ th {
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+}
+
+/* ═══════════════════════════════════════════════════
+   BADGE — semantic status pills
+   ═══════════════════════════════════════════════════ */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+/* ═══════════════════════════════════════════════════
+   SECTION HEADER — reusable gradient header
+   ═══════════════════════════════════════════════════ */
+.section-header {
+  position: relative;
+  border-radius: 1rem;
+  border: 1px solid var(--color-border);
+  background: linear-gradient(135deg, var(--color-surface) 0%, #151820 50%, #0d0f14 100%);
+  padding: 1.25rem 1.5rem;
+  overflow: hidden;
+}
+
+.section-header::before {
+  content: '';
+  position: absolute;
+  top: -4rem;
+  right: -4rem;
+  width: 12rem;
+  height: 12rem;
+  border-radius: 50%;
+  background: rgba(15, 165, 174, 0.04);
+  filter: blur(48px);
+  pointer-events: none;
+}
+
+.section-header::after {
+  content: '';
+  position: absolute;
+  bottom: -2rem;
+  left: -2rem;
+  width: 8rem;
+  height: 8rem;
+  border-radius: 50%;
+  background: rgba(32, 207, 207, 0.03);
+  filter: blur(48px);
+  pointer-events: none;
 }

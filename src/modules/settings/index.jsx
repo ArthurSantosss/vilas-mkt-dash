@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Settings as SettingsIcon, Link2, Unlink, AlertCircle, RefreshCw,
-  ToggleLeft, ToggleRight, Shield, Building2, Plus, Trash2, Calendar, LogOut
+  ToggleLeft, ToggleRight, Shield, Building2, Plus, Trash2, LogOut
 } from 'lucide-react';
 import { useAgency } from '../../contexts/AgencyContext';
 import { useAuth } from '../../contexts/AuthContext';
+import { calculateMetaBalance } from '../../shared/utils/metaBalance';
+import { isCreditCardPaymentMethod, readSavedPaymentMethods, getAccountPaymentMethod } from '../../shared/utils/paymentMethod';
 
 function FacebookIcon({ className = 'w-5 h-5' }) {
   return (
@@ -14,16 +16,6 @@ function FacebookIcon({ className = 'w-5 h-5' }) {
   );
 }
 
-function GoogleIcon({ className = 'w-5 h-5' }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className}>
-      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
-      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-      <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-    </svg>
-  );
-}
 
 function StatusBadge({ connected }) {
   return connected ? (
@@ -37,7 +29,6 @@ const STORAGE_KEYS = {
   META_TOKEN: 'meta_provider_token',
   META_USER: 'meta_user_info',
   META_ACCOUNTS: 'meta_ad_accounts',
-  GOOGLE_CALENDAR_TOKEN: 'google_calendar_token',
   DISABLED_ACCOUNTS: 'disabled_ad_accounts',
 };
 
@@ -56,11 +47,7 @@ export default function Settings() {
   });
   const [loadingMeta, setLoadingMeta] = useState(false);
 
-  const [googleCalendarToken, setGoogleCalendarToken] = useState(
-    () => localStorage.getItem(STORAGE_KEYS.GOOGLE_CALENDAR_TOKEN) || localStorage.getItem('google_provider_token')
-  );
-  const [loadingCalendar] = useState(false);
-  const [error, setError] = useState(null);
+  const [paymentMethods, setPaymentMethods] = useState(() => readSavedPaymentMethods());
 
   const [disabledAccounts, setDisabledAccounts] = useState(() => {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.DISABLED_ACCOUNTS)) || []; } catch { return []; }
@@ -91,7 +78,7 @@ export default function Settings() {
       localStorage.setItem(STORAGE_KEYS.META_USER, JSON.stringify(userData));
 
       const accountsRes = await fetch(
-        `https://graph.facebook.com/v22.0/me/adaccounts?access_token=${token}&fields=id,name,account_id,account_status,balance,currency,business_name,amount_spent&limit=100`
+        `https://graph.facebook.com/v22.0/me/adaccounts?access_token=${token}&fields=id,name,account_id,account_status,balance,currency,business_name,amount_spent,spend_cap,is_prepay_account&limit=100`
       );
       const accountsData = await accountsRes.json();
       if (accountsData.error) throw new Error(accountsData.error.message);
@@ -112,6 +99,23 @@ export default function Settings() {
       fetchMetaAccounts(metaToken);
     }
   }, [fetchMetaAccounts, metaAccounts.length, metaToken]);
+
+  useEffect(() => {
+    const syncPaymentMethods = () => setPaymentMethods(readSavedPaymentMethods());
+    const handleLocalStorageMapUpdated = (event) => {
+      if (event?.detail?.key === 'account_payment_methods') {
+        setPaymentMethods(event.detail.value || {});
+      }
+    };
+    window.addEventListener('storage', syncPaymentMethods);
+    window.addEventListener('focus', syncPaymentMethods);
+    window.addEventListener('local-storage-map-updated', handleLocalStorageMapUpdated);
+    return () => {
+      window.removeEventListener('storage', syncPaymentMethods);
+      window.removeEventListener('focus', syncPaymentMethods);
+      window.removeEventListener('local-storage-map-updated', handleLocalStorageMapUpdated);
+    };
+  }, []);
 
   const handleConnectMeta = async () => {
     setError(null);
@@ -149,21 +153,6 @@ export default function Settings() {
     localStorage.removeItem(STORAGE_KEYS.META_TOKEN);
     localStorage.removeItem(STORAGE_KEYS.META_USER);
     localStorage.removeItem(STORAGE_KEYS.META_ACCOUNTS);
-  };
-
-  const handleConnectGoogleCalendar = () => {
-    setError(null);
-    const token = window.prompt('Cole o token de acesso do Google Calendar:');
-    if (token && token.trim()) {
-      const trimmed = token.trim();
-      setGoogleCalendarToken(trimmed);
-      localStorage.setItem(STORAGE_KEYS.GOOGLE_CALENDAR_TOKEN, trimmed);
-    }
-  };
-
-  const handleDisconnectGoogleCalendar = () => {
-    setGoogleCalendarToken(null);
-    localStorage.removeItem(STORAGE_KEYS.GOOGLE_CALENDAR_TOKEN);
   };
 
   const toggleAccount = (accountId) => {
@@ -293,54 +282,6 @@ export default function Settings() {
             )}
           </div>
         </div>
-
-        <div className="bg-surface rounded-xl border border-border overflow-hidden">
-          <div className="bg-gradient-to-r from-[#4285F4]/5 to-transparent px-6 py-4 border-b border-border/50 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-[#4285F4]/10 flex items-center justify-center">
-                <Calendar size={20} className="text-[#4285F4]" />
-              </div>
-              <div>
-                <h2 className="text-base font-bold text-text-primary">Google Calendar</h2>
-                <p className="text-xs text-text-secondary">Eventos e agenda</p>
-              </div>
-            </div>
-            <StatusBadge connected={!!googleCalendarToken} />
-          </div>
-          <div className="p-5 space-y-4">
-            {googleCalendarToken ? (
-              <>
-                <div className="flex items-center gap-3 bg-bg/30 rounded-lg p-3 border border-border/50">
-                  <div className="w-9 h-9 rounded-full bg-success/10 flex items-center justify-center">
-                    <Calendar size={18} className="text-success" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-text-primary">Agenda sincronizada</p>
-                    <p className="text-xs text-success">Eventos sendo carregados</p>
-                  </div>
-                </div>
-                <button
-                  onClick={handleDisconnectGoogleCalendar}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-danger/10 border border-danger/20 text-danger rounded-lg text-sm font-medium hover:bg-danger/20 transition-colors"
-                >
-                  <Unlink size={13} /> Desconectar Calendar
-                </button>
-              </>
-            ) : (
-              <div className="text-center py-5">
-                <p className="text-sm text-text-secondary mb-4">Conecte o Google Calendar para visualizar compromissos.</p>
-                <button
-                  onClick={handleConnectGoogleCalendar}
-                  disabled={loadingCalendar}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-white text-gray-800 border border-gray-200 rounded-xl text-sm font-bold hover:bg-gray-50 transition-colors disabled:opacity-50"
-                >
-                  {loadingCalendar ? <span className="w-4 h-4 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" /> : <GoogleIcon className="w-4 h-4" />}
-                  Conectar Calendar
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
       </div>
 
       {metaAccounts.length > 0 && (
@@ -374,7 +315,9 @@ export default function Settings() {
               {displayedMetaAccounts.map((account) => {
                 const status = getAccountStatusLabel(account.account_status);
                 const isEnabled = !disabledAccounts.includes(account.id);
-                const balance = account.balance ? (parseFloat(account.balance) / 100).toFixed(2) : null;
+                const metaBalance = calculateMetaBalance(account);
+                const paymentMethod = getAccountPaymentMethod(paymentMethods, account.id, account.account_id) || 'credit_card';
+                const isCreditCard = isCreditCardPaymentMethod(paymentMethod);
                 return (
                   <div key={account.id} className={`px-6 py-4 flex items-center justify-between transition-colors ${isEnabled ? 'hover:bg-surface-hover/50' : 'opacity-50'}`}>
                     <div className="flex items-center gap-4 min-w-0">
@@ -388,7 +331,8 @@ export default function Settings() {
                           <span>•</span>
                           <span className={status.color}>{status.label}</span>
                           {account.currency && <><span>•</span><span>{account.currency}</span></>}
-                          {balance && <><span>•</span><span>Saldo: R$ {balance}</span></>}
+                          {!isCreditCard && metaBalance.hasReliableBalance && <><span>•</span><span>Disponível: {metaBalance.currentBalance.toLocaleString('pt-BR', { style: 'currency', currency: account.currency || 'BRL' })}</span></>}
+                          {!isCreditCard && !metaBalance.hasReliableBalance && metaBalance.amountDue > 0 && <><span>•</span><span>Em cobrança: {metaBalance.amountDue.toLocaleString('pt-BR', { style: 'currency', currency: account.currency || 'BRL' })}</span></>}
                         </div>
                       </div>
                     </div>
@@ -459,19 +403,6 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* Segurança */}
-      <div className="bg-surface/50 rounded-xl border border-border/50 px-6 py-4">
-        <div className="flex items-start gap-3">
-          <Shield size={18} className="text-primary-light shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm font-medium text-text-primary mb-1">Segurança</p>
-            <p className="text-xs text-text-secondary leading-relaxed">
-              Os tokens são salvos localmente no navegador. A conexão com Meta usa permissões de leitura e pode ser removida a qualquer momento.
-            </p>
-          </div>
-        </div>
-      </div>
-
       {/* Logout */}
       <div className="bg-surface/50 rounded-xl border border-danger/20 px-6 py-5">
         <div className="flex items-center justify-between">
@@ -494,6 +425,19 @@ export default function Settings() {
             <LogOut size={14} />
             Sair
           </button>
+        </div>
+      </div>
+
+      {/* Segurança */}
+      <div className="bg-surface/50 rounded-xl border border-border/50 px-6 py-4">
+        <div className="flex items-start gap-3">
+          <Shield size={18} className="text-primary-light shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium text-text-primary mb-1">Segurança</p>
+            <p className="text-xs text-text-secondary leading-relaxed">
+              Os tokens são salvos localmente no navegador. A conexão com Meta usa permissões de leitura e pode ser removida a qualquer momento.
+            </p>
+          </div>
         </div>
       </div>
     </div>

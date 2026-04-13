@@ -2,11 +2,15 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { useMetaAds } from '../../contexts/MetaAdsContext';
 import { useAgency } from '../../contexts/AgencyContext';
 import { formatCurrency, formatNumber } from '../../shared/utils/format';
-import { FileText, Copy, Check, Loader2, Sparkles, MessageSquare, Zap } from 'lucide-react';
+import { FileText, Copy, Check, Loader2, Sparkles, MessageSquare, Send, CheckCircle2 } from 'lucide-react';
 import PeriodSelector from '../../shared/components/PeriodSelector';
-import { fetchAccountInsights, fetchCampaignsWithInsights } from '../../services/metaApi';
+import { fetchAccountInsights, fetchCampaignsWithInsights, getPreviousPeriodRange } from '../../services/metaApi';
+
 import { PRESETS } from '../../shared/utils/dateUtils';
-import { supabase } from '../../services/supabase';
+import { simplifyCampaignName, simplifyLaquilaCampaignName } from '../../shared/utils/campaignName';
+
+const SLACK_WEBHOOK_LAQUILA = import.meta.env.VITE_SLACK_WEBHOOK_LAQUILA;
+const SLACK_WEBHOOK_GDM = import.meta.env.VITE_SLACK_WEBHOOK_GDM;
 
 // ── Allowed agencies for text reports ──
 const ALLOWED_AGENCIES = ['gdm', 'laquila'];
@@ -58,15 +62,6 @@ function formatPeriodLabel(period) {
   return { start: '??/??', end: '??/??' };
 }
 
-// ── Simplify campaign name ──
-function simplifyCampaignName(fullName) {
-  let name = fullName;
-  name = name.replace(/^C\d+\s*-\s*GDM\s*/i, '');
-  name = name.replace(/\[.*?\]/g, '').trim();
-  if (!name || name.length < 3) return fullName;
-  return name.replace(/\s+/g, ' ').trim();
-}
-
 // ── Build report from insight data ──
 function buildReportFromInsights(data, campaignName, periodDates) {
   const actions = data.actions || [];
@@ -74,6 +69,8 @@ function buildReportFromInsights(data, campaignName, periodDates) {
   const impressions = parseInt(data.impressions || 0, 10);
   const reach = parseInt(data.reach || 0, 10);
   const cpm = parseFloat(data.cpm || 0);
+  const ctr = parseFloat(data.ctr || 0);
+  const clicks = parseInt(data.inline_link_clicks || data.clicks || 0, 10);
 
   const conversations = getActionValueMulti(actions, [
     'onsite_conversion.messaging_conversation_started_7d',
@@ -92,34 +89,75 @@ function buildReportFromInsights(data, campaignName, periodDates) {
     periodEnd: periodDates.end,
     campaignName,
     spend, conversations, engagements,
-    impressions, reach, costPerConversation, costPerEngagement, cpm,
+    impressions, reach, costPerConversation, costPerEngagement, cpm, ctr, clicks,
   };
 }
 
+// ── Helper: calcula variação percentual ──
+function pctChange(current, previous) {
+  if (!previous || previous === 0) return null;
+  return ((current - previous) / previous) * 100;
+}
+
+// ── Helper: formata variação positiva ──
+function formatImprovement(label, current, previous, formatter, invertedBetter = false) {
+  const change = pctChange(current, previous);
+  if (change === null) return null;
+  // Para métricas onde menor é melhor (custo), inversão: queda = melhoria
+  const improved = invertedBetter ? change < -5 : change > 5;
+  if (!improved) return null;
+  const pct = Math.abs(change).toFixed(0);
+  const direction = invertedBetter ? 'reduziu' : 'aumentou';
+  return `   ↳ ${label} ${direction} ${pct}% (antes: ${formatter(previous)})`;
+}
+
 // ── GDM text template ──
-function buildTextGDM(d, showCampaignName = true) {
+function buildTextGDM(d, showCampaignName = true, prev = null) {
   const campaignLine = showCampaignName ? `\n\uD83D\uDCCC ${d.campaignName}\n` : '';
+
+  // Monta linhas de melhoria (só quando melhorou)
+  const improvements = [];
+  if (prev) {
+    const checks = [
+      formatImprovement('Custo por mensagem', d.costPerConversation, prev.costPerConversation, formatCurrency, true),
+      formatImprovement('Conversas iniciadas', d.conversations, prev.conversations, formatNumber, false),
+      formatImprovement('Engajamentos', d.engagements, prev.engagements, formatNumber, false),
+      formatImprovement('CTR', d.ctr, prev.ctr, v => `${v.toFixed(2)}%`, false),
+      formatImprovement('CPM', d.cpm, prev.cpm, formatCurrency, true),
+      formatImprovement('Custo por engajamento', d.costPerEngagement, prev.costPerEngagement, formatCurrency, true),
+      formatImprovement('Alcance', d.reach, prev.reach, formatNumber, false),
+    ];
+    for (const line of checks) {
+      if (line) improvements.push(line);
+    }
+  }
+
+  const improvementBlock = improvements.length > 0
+    ? `\n\n📊 Comparação com período anterior:\n${improvements.join('\n')}`
+    : '';
+
   return `Excelente dia pessoal!
 
 Segue relatório semanal 👇
 
-\u2B50 Relatório de Desempenho \u2B50
+⭐ Relatório de Desempenho ⭐
 
-\uD83D\uDCC5 Período Analisado: ${d.periodStart} a ${d.periodEnd}
+📅 Período Analisado: ${d.periodStart} a ${d.periodEnd}
 ${campaignLine}
 ➡️ Valor Investido: ${formatCurrency(d.spend)}
 ➡️ Total de Conversas Iniciadas: ${formatNumber(d.conversations)}
 ➡️ Engajamentos com a publicação: ${formatNumber(d.engagements)}
-➡️ Impress\u00F5es: ${formatNumber(d.impressions)}
+➡️ Impressões: ${formatNumber(d.impressions)}
 
-\uD83D\uDCC8 Análise:
+📈 Análise:
 - Nesse período, cada mensagem teve um custo de ${formatCurrency(d.costPerConversation)}.
 - Atingimos cerca de ${formatNumber(d.reach)} usuários.
 - Cada engajamento nos custou mais ou menos ${formatCurrency(d.costPerEngagement)}.
 - Gastamos cerca de ${formatCurrency(d.cpm)} para atingirmos 1 mil pessoas.
+- A taxa de cliques (CTR) ficou em ${d.ctr > 0 ? `${d.ctr.toFixed(2)}%` : '0%'}.${improvementBlock}
 
 Fico a disposição para qualquer dúvida!
-Obrigado e tenha uma excelente semana! #GDM \uD83D\uDE80`;
+Obrigado e tenha uma excelente semana! #GDM 🚀`;
 }
 
 // ── LAQUILA text template (multiple campaigns in one report) ──
@@ -130,9 +168,9 @@ function buildTextLaquila(reports, periodDates) {
 `;
 
   const campaignBlocks = reports.map(d => {
-    return `\uD83D\uDCCC Tese: ${d.campaignName}
-➡️ Valor Investido: ${formatCurrency(d.spend)}
-➡️ Total de Conversas Iniciadas: ${formatNumber(d.conversations)}
+    return `\uD83D\uDCCC  ${d.campaignName}
+💰 Valor Investido: ${formatCurrency(d.spend)}
+💬 Total de Conversas Iniciadas: ${formatNumber(d.conversations)}
 \uD83D\uDCC9 Custo por Conversa Iniciada: ${formatCurrency(d.costPerConversation)}`;
   }).join('\n\n');
 
@@ -148,10 +186,6 @@ export default function ReportText() {
   const [reportData, setReportData] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [sendingDiscordAll, setSendingDiscordAll] = useState(false);
-  const [discordSuccess, setDiscordSuccess] = useState(false);
-  const [aiAnalysis, setAiAnalysis] = useState(null);
-  const [loadingAI, setLoadingAI] = useState(false);
 
   // Filter agencies to only GDM and LAQUILA
   const allowedAgencyList = useMemo(() => {
@@ -189,6 +223,13 @@ export default function ReportText() {
     return campaigns.filter(c => c.accountId === selectedAccount);
   }, [campaigns, selectedAccount]);
 
+  const normalizeCampaignName = useCallback((name) => {
+    if (agencyType === 'laquila') {
+      return simplifyLaquilaCampaignName(name);
+    }
+    return simplifyCampaignName(name);
+  }, [agencyType]);
+
   useEffect(() => {
     if (filteredAccounts.length > 0 && !filteredAccounts.find(a => a.id === selectedAccount)) {
       setSelectedAccount(filteredAccounts[0].id);
@@ -205,7 +246,6 @@ export default function ReportText() {
       const periodDates = formatPeriodLabel(selectedPeriod);
 
       if (agencyType === 'laquila') {
-        // LAQUILA: always per-campaign, single combined report
         const campData = await fetchCampaignsWithInsights(selectedAccount, selectedPeriod);
         if (!campData || campData.length === 0) {
           setReportData({ error: 'Sem campanhas com dados para o período selecionado.' });
@@ -213,24 +253,49 @@ export default function ReportText() {
         }
         const reports = campData
           .filter(c => c.insights?.data?.[0])
-          .map(c => buildReportFromInsights(c.insights.data[0], simplifyCampaignName(c.name), periodDates))
+          .map(c => buildReportFromInsights(c.insights.data[0], normalizeCampaignName(c.name), periodDates))
           .filter(r => r.spend > 0);
 
         if (reports.length === 0) {
           setReportData({ error: 'Nenhuma campanha com dados de investimento no período.' });
           return;
         }
-        setReportData({ mode: 'laquila', reports, periodDates });
+        setReportData({
+          mode: reportMode === 'per_campaign' ? 'laquila_per_campaign' : 'laquila_all',
+          reports,
+          periodDates,
+        });
       } else if (reportMode === 'per_campaign') {
         // GDM per-campaign
-        const campData = await fetchCampaignsWithInsights(selectedAccount, selectedPeriod);
+        const previousPeriod = getPreviousPeriodRange(selectedPeriod);
+        const [campData, prevCampData] = await Promise.all([
+          fetchCampaignsWithInsights(selectedAccount, selectedPeriod),
+          fetchCampaignsWithInsights(selectedAccount, previousPeriod).catch(() => []),
+        ]);
         if (!campData || campData.length === 0) {
           setReportData({ error: 'Sem campanhas com dados para o período selecionado.' });
           return;
         }
+
+        // Mapa de período anterior por nome normalizado
+        const prevMap = new Map();
+        if (prevCampData && prevCampData.length > 0) {
+          for (const c of prevCampData) {
+            if (c.insights?.data?.[0]) {
+              const name = normalizeCampaignName(c.name);
+              prevMap.set(name.toLowerCase(), buildReportFromInsights(c.insights.data[0], name, periodDates));
+            }
+          }
+        }
+
         const reports = campData
           .filter(c => c.insights?.data?.[0])
-          .map(c => buildReportFromInsights(c.insights.data[0], simplifyCampaignName(c.name), periodDates))
+          .map(c => {
+            const name = normalizeCampaignName(c.name);
+            const report = buildReportFromInsights(c.insights.data[0], name, periodDates);
+            report._prev = prevMap.get(name.toLowerCase()) || null;
+            return report;
+          })
           .filter(r => r.spend > 0);
 
         if (reports.length === 0) {
@@ -240,14 +305,19 @@ export default function ReportText() {
         setReportData({ mode: 'per_campaign', reports });
       } else {
         // GDM all campaigns (account-level)
-        const insights = await fetchAccountInsights(selectedAccount, selectedPeriod);
+        const previousPeriod = getPreviousPeriodRange(selectedPeriod);
+        const [insights, prevInsights] = await Promise.all([
+          fetchAccountInsights(selectedAccount, selectedPeriod),
+          fetchAccountInsights(selectedAccount, previousPeriod).catch(() => null),
+        ]);
         if (!insights) {
           setReportData({ error: 'Sem dados para o período selecionado.' });
           return;
         }
         const account = accounts.find(a => a.id === selectedAccount);
         const report = buildReportFromInsights(insights, account?.clientName || 'Conta', periodDates);
-        setReportData({ mode: 'all', report });
+        const prevReport = prevInsights ? buildReportFromInsights(prevInsights, '', periodDates) : null;
+        setReportData({ mode: 'all', report, prevReport });
       }
     } catch (err) {
       console.error('Erro ao gerar relatório:', err);
@@ -255,24 +325,30 @@ export default function ReportText() {
     } finally {
       setGenerating(false);
     }
-  }, [selectedAccount, selectedPeriod, reportMode, accounts, agencyType]);
+  }, [selectedAccount, selectedPeriod, reportMode, accounts, agencyType, normalizeCampaignName]);
 
   // Build report text(s)
   const reportTexts = useMemo(() => {
     if (!reportData || reportData.error) return [];
 
-    if (reportData.mode === 'laquila') {
-      // Single combined report for LAQUILA
+    if (reportData.mode === 'laquila_all') {
       return [{ text: buildTextLaquila(reportData.reports, reportData.periodDates), label: 'Relatório Laquila' }];
     }
 
+    if (reportData.mode === 'laquila_per_campaign') {
+      return [{
+        text: buildTextLaquila(reportData.reports, reportData.periodDates),
+        label: 'Relatório Laquila por campanha',
+      }];
+    }
+
     if (reportData.mode === 'all') {
-      return [{ text: buildTextGDM(reportData.report, false), label: 'Relatório geral da conta' }];
+      return [{ text: buildTextGDM(reportData.report, false, reportData.prevReport), label: 'Relatório geral da conta' }];
     }
 
     if (reportData.mode === 'per_campaign') {
       return reportData.reports.map(r => ({
-        text: buildTextGDM(r, true),
+        text: buildTextGDM(r, true, r._prev),
         label: r.campaignName,
       }));
     }
@@ -293,82 +369,172 @@ export default function ReportText() {
     handleCopy(all);
   }, [reportTexts, handleCopy]);
 
-  // Send to Discord
-  const handleSendDiscordAll = useCallback(async () => {
-    setSendingDiscordAll(true);
-    setDiscordSuccess(false);
-    try {
-      const webhookUrl = 'https://discord.com/api/webhooks/1485682722289483966/zf5hPB77jc7Auucu-dUlGTehe2aSk37_V8FIqimSjM8B71N2QHhkElQVnk2KWbJA0IYn';
-      const all = reportTexts.map(r => r.text).join('\n\n' + '─'.repeat(40) + '\n\n');
+  // ── Laquila: generate all accounts report and send to Slack ──
+  const [sendingLaquila, setSendingLaquila] = useState(false);
+  const [laquilaSent, setLaquilaSent] = useState(false);
+  const [laquilaError, setLaquilaError] = useState(null);
 
-      const chunks = all.match(/[\s\S]{1,1900}/g) || [];
-      for (const chunk of chunks) {
-         await fetch(webhookUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content: chunk })
-         });
-      }
-      setDiscordSuccess(true);
-      setTimeout(() => setDiscordSuccess(false), 2000);
-    } catch (e) {
-      console.error(e);
-      alert('Erro ao enviar para o Discord');
-    } finally {
-      setSendingDiscordAll(false);
+  const laquilaAccounts = useMemo(() => {
+    return accounts.filter(a => {
+      const ag = accountAgencies[a.id];
+      return ag && matchAgency(ag) === 'laquila';
+    });
+  }, [accounts, accountAgencies]);
+
+  const handleSendLaquilaSlack = useCallback(async () => {
+    if (laquilaAccounts.length === 0) {
+      setLaquilaError('Nenhuma conta Laquila encontrada. Verifique as agências nas Configurações.');
+      return;
     }
-  }, [reportTexts]);
+    setSendingLaquila(true);
+    setLaquilaSent(false);
+    setLaquilaError(null);
 
-  // Generate AI Analysis
-  const handleGenerateAI = useCallback(async () => {
-    if (!selectedAccount) return;
-    setLoadingAI(true);
-    setAiAnalysis(null);
     try {
-      const account = accounts.find(a => a.id === selectedAccount);
-      const periodLabel = formatPeriodLabel(selectedPeriod);
-      const campaignsData = await fetchCampaignsWithInsights(selectedAccount, selectedPeriod);
+      const periodDates = formatPeriodLabel(selectedPeriod);
+      const messages = [];
 
-      const campaignsForAI = (campaignsData || [])
-        .filter(c => c.insights?.data?.[0])
-        .map(c => {
-          const insight = c.insights.data[0];
-          return {
-            id: c.id,
-            name: c.name,
-            spend: parseFloat(insight.spend || 0),
-            impressions: parseInt(insight.impressions || 0, 10),
-            reach: parseInt(insight.reach || 0, 10),
-            cpm: parseFloat(insight.cpm || 0),
-          };
-        });
+      for (const account of laquilaAccounts) {
+        const accountCampaigns = campaigns.filter(c => c.accountId === account.id && Number(c.metrics?.spend || 0) > 0);
+        if (accountCampaigns.length === 0) continue;
 
-      if (campaignsForAI.length === 0) {
-        setAiAnalysis({ error: 'Sem campanhas com dados para análise.' });
+        const reports = accountCampaigns.map(c => ({
+          campaignName: simplifyLaquilaCampaignName(c.name),
+          spend: Number(c.metrics?.spend || 0),
+          conversations: Number(c.metrics?.messages || 0),
+          costPerConversation: Number(c.metrics?.costPerMessage || 0),
+        }));
+
+        // Use the exact same template as the platform
+        const text = `🏢 *${account.clientName}*\n\n` + buildTextLaquila(reports, periodDates);
+        messages.push(text);
+      }
+
+      if (messages.length === 0) {
+        setLaquilaError('Nenhuma conta Laquila com dados de campanhas no período selecionado.');
         return;
       }
 
-      const { data: aiData, error: fnError } = await supabase.functions.invoke('analyze-campaign', {
-        body: {
-          accountName: account?.clientName || '',
-          platform: 'Meta Ads',
-          periodLabel: `${periodLabel.start} a ${periodLabel.end}`,
-          todayDate: new Date().toLocaleDateString('pt-BR'),
-          campaigns: campaignsForAI,
-        },
-      });
+      // Send each account as a separate Slack message (same text as platform)
+      for (const text of messages) {
+        try {
+          await fetch(SLACK_WEBHOOK_LAQUILA, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: `payload=${encodeURIComponent(JSON.stringify({ text }))}`,
+          });
+        } catch (e) {
+          throw new Error('Falha ao enviar mensagem para o Slack');
+        }
+      }
 
-      if (fnError) throw fnError;
-      if (aiData?.error) throw new Error(aiData.error);
-
-      setAiAnalysis({ analysis: aiData.relatorio || aiData || 'Análise gerada com sucesso.' });
+      setLaquilaSent(true);
+      setTimeout(() => setLaquilaSent(false), 4000);
     } catch (err) {
-      console.error('Erro ao gerar análise com IA:', err);
-      setAiAnalysis({ error: `Erro: ${err.message}` });
+      console.error('[ReportText] Erro ao enviar relatórios Laquila para Slack:', err);
+      const msg = err.message || 'Erro desconhecido';
+      if (msg.includes('Load failed') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+        setLaquilaError('Erro de rede: não foi possível conectar ao Slack.');
+      } else {
+        setLaquilaError(`Erro: ${msg}`);
+      }
     } finally {
-      setLoadingAI(false);
+      setSendingLaquila(false);
     }
-  }, [selectedAccount, selectedPeriod, accounts]);
+  }, [laquilaAccounts, campaigns, selectedPeriod]);
+
+  // ── GDM: generate all accounts report and send to Slack ──
+  const [sendingGdm, setSendingGdm] = useState(false);
+  const [gdmSent, setGdmSent] = useState(false);
+  const [gdmError, setGdmError] = useState(null);
+
+  const gdmAccounts = useMemo(() => {
+    return accounts.filter(a => {
+      const ag = accountAgencies[a.id];
+      return ag && matchAgency(ag) === 'gdm';
+    });
+  }, [accounts, accountAgencies]);
+
+  const handleSendGdmSlack = useCallback(async () => {
+    if (gdmAccounts.length === 0) {
+      setGdmError('Nenhuma conta GDM encontrada. Verifique as agências nas Configurações.');
+      return;
+    }
+    setSendingGdm(true);
+    setGdmSent(false);
+    setGdmError(null);
+
+    try {
+      const periodDates = formatPeriodLabel(selectedPeriod);
+      const messages = [];
+
+      for (const account of gdmAccounts) {
+        const accountCampaigns = campaigns.filter(c => c.accountId === account.id && Number(c.metrics?.spend || 0) > 0);
+        if (accountCampaigns.length === 0) continue;
+
+        // Aggregate all campaigns into one report object (same shape as buildReportFromInsights)
+        const totalSpend = accountCampaigns.reduce((s, c) => s + Number(c.metrics?.spend || 0), 0);
+        const totalConversations = accountCampaigns.reduce((s, c) => s + Number(c.metrics?.messages || 0), 0);
+        const totalImpressions = accountCampaigns.reduce((s, c) => s + Number(c.metrics?.impressions || 0), 0);
+        const totalReach = accountCampaigns.reduce((s, c) => s + Number(c.metrics?.reach || 0), 0);
+        const totalEngagements = accountCampaigns.reduce((s, c) => s + Number(c.metrics?.engagements || 0), 0);
+        const avgCpm = totalImpressions > 0 ? (totalSpend / totalImpressions) * 1000 : 0;
+        const avgCtr = accountCampaigns.reduce((s, c) => s + Number(c.metrics?.ctr || 0), 0) / accountCampaigns.length;
+
+        const reportData = {
+          periodStart: periodDates.start,
+          periodEnd: periodDates.end,
+          campaignName: account.clientName,
+          spend: totalSpend,
+          conversations: totalConversations,
+          engagements: totalEngagements,
+          impressions: totalImpressions,
+          reach: totalReach,
+          costPerConversation: totalConversations > 0 ? totalSpend / totalConversations : 0,
+          costPerEngagement: totalEngagements > 0 ? totalSpend / totalEngagements : 0,
+          cpm: avgCpm,
+          ctr: avgCtr,
+        };
+
+        // Use the exact same template as the platform
+        const text = buildTextGDM(reportData, true, null);
+        messages.push(text);
+      }
+
+      if (messages.length === 0) {
+        setGdmError('Nenhuma conta GDM com dados de campanhas no período selecionado.');
+        return;
+      }
+
+      // Send each account as a separate Slack message (same text as platform)
+      for (const text of messages) {
+        try {
+          await fetch(SLACK_WEBHOOK_GDM, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: `payload=${encodeURIComponent(JSON.stringify({ text }))}`,
+          });
+        } catch (e) {
+          throw new Error('Falha ao enviar mensagem para o Slack');
+        }
+      }
+
+      setGdmSent(true);
+      setTimeout(() => setGdmSent(false), 4000);
+    } catch (err) {
+      console.error('[ReportText] Erro ao enviar relatórios GDM para Slack:', err);
+      const msg = err.message || 'Erro desconhecido';
+      if (msg.includes('Load failed') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+        setGdmError('Erro de rede: não foi possível conectar ao Slack.');
+      } else {
+        setGdmError(`Erro: ${msg}`);
+      }
+    } finally {
+      setSendingGdm(false);
+    }
+  }, [gdmAccounts, campaigns, selectedPeriod]);
 
   return (
     <div className="space-y-6">
@@ -417,8 +583,8 @@ export default function ReportText() {
             </select>
           </div>
 
-          {/* Modo: only for GDM */}
-          {agencyType === 'gdm' && (
+          {/* Modo */}
+          {(agencyType === 'gdm' || agencyType === 'laquila') && (
             <div className="flex flex-col gap-1.5 w-[210px]">
               <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Modo</label>
               <select
@@ -454,20 +620,49 @@ export default function ReportText() {
             <div className="absolute inset-0 rounded-xl bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
           </button>
 
-          <button
-            onClick={handleGenerateAI}
-            disabled={!selectedAccount || loadingAI}
-            className="group relative inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl font-semibold text-sm
-              bg-gradient-to-r from-warning to-warning/80 text-black shadow-lg shadow-warning/25
-              hover:shadow-xl hover:shadow-warning/30 hover:scale-[1.02] active:scale-[0.98]
-              disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100
-              transition-all duration-300 ease-out"
-          >
-            {loadingAI ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />}
-            {loadingAI ? 'Gerando...' : 'Gerar Análise com IA'}
-            <div className="absolute inset-0 rounded-xl bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-          </button>
+          {agencyType === 'laquila' && (
+            <button
+              onClick={handleSendLaquilaSlack}
+              disabled={sendingLaquila || laquilaAccounts.length === 0}
+              className="group relative inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl font-semibold text-sm
+                bg-gradient-to-r from-[#4A154B] to-[#611f69] text-white shadow-lg shadow-[#4A154B]/25
+                hover:shadow-xl hover:shadow-[#4A154B]/30 hover:scale-[1.02] active:scale-[0.98]
+                disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100
+                transition-all duration-300 ease-out"
+            >
+              {sendingLaquila ? <Loader2 size={16} className="animate-spin" /> : laquilaSent ? <CheckCircle2 size={16} /> : <Send size={16} />}
+              {sendingLaquila ? 'Enviando...' : laquilaSent ? 'Enviado ao Slack!' : `Todos Laquila → Slack (${laquilaAccounts.length})`}
+              <div className="absolute inset-0 rounded-xl bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+            </button>
+          )}
+
+          {agencyType === 'gdm' && (
+            <button
+              onClick={handleSendGdmSlack}
+              disabled={sendingGdm || gdmAccounts.length === 0}
+              className="group relative inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl font-semibold text-sm
+                bg-gradient-to-r from-[#4A154B] to-[#611f69] text-white shadow-lg shadow-[#4A154B]/25
+                hover:shadow-xl hover:shadow-[#4A154B]/30 hover:scale-[1.02] active:scale-[0.98]
+                disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100
+                transition-all duration-300 ease-out"
+            >
+              {sendingGdm ? <Loader2 size={16} className="animate-spin" /> : gdmSent ? <CheckCircle2 size={16} /> : <Send size={16} />}
+              {sendingGdm ? 'Enviando...' : gdmSent ? 'Enviado ao Slack!' : `Todos GDM → Slack (${gdmAccounts.length})`}
+              <div className="absolute inset-0 rounded-xl bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+            </button>
+          )}
         </div>
+
+        {laquilaError && agencyType === 'laquila' && (
+          <div className="relative mt-3 mx-auto max-w-lg rounded-lg bg-danger/10 border border-danger/30 px-4 py-2.5 text-center">
+            <p className="text-sm text-danger">{laquilaError}</p>
+          </div>
+        )}
+        {gdmError && agencyType === 'gdm' && (
+          <div className="relative mt-3 mx-auto max-w-lg rounded-lg bg-danger/10 border border-danger/30 px-4 py-2.5 text-center">
+            <p className="text-sm text-danger">{gdmError}</p>
+          </div>
+        )}
       </div>
 
       {/* REPORT OUTPUT */}
@@ -476,20 +671,9 @@ export default function ReportText() {
           {reportTexts.length > 1 && (
             <div className="flex justify-end gap-3">
               <button
-                onClick={handleSendDiscordAll}
-                disabled={sendingDiscordAll}
-                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium border transition-all ${
-                  discordSuccess ? 'bg-[#5865F2]/10 text-[#5865F2] border-[#5865F2]/30' : 'bg-surface border-border hover:border-[#5865F2]/40 hover:text-[#5865F2] text-text-secondary'
-                }`}
-              >
-                {sendingDiscordAll ? <Loader2 size={14} className="animate-spin" /> : (discordSuccess ? <Check size={14} /> : <MessageSquare size={14} />)}
-                {sendingDiscordAll ? 'Enviando...' : (discordSuccess ? 'Enviado!' : 'Enviar para Discord')}
-              </button>
-              <button
                 onClick={handleCopyAll}
-                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium border transition-all ${
-                  copied ? 'bg-success/10 text-success border-success/30' : 'bg-surface border-border hover:border-primary/40 hover:text-primary text-text-secondary'
-                }`}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium border transition-all ${copied ? 'bg-success/10 text-success border-success/30' : 'bg-surface border-border hover:border-primary/40 hover:text-primary text-text-secondary'
+                  }`}
               >
                 {copied ? <Check size={14} /> : <Copy size={14} />}
                 {copied ? 'Copiado!' : `Copiar todos (${reportTexts.length})`}
@@ -505,33 +689,9 @@ export default function ReportText() {
                 </span>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={async () => {
-                      try {
-                        const webhookUrl = 'https://discord.com/api/webhooks/1485682722289483966/zf5hPB77jc7Auucu-dUlGTehe2aSk37_V8FIqimSjM8B71N2QHhkElQVnk2KWbJA0IYn';
-                        const chunks = r.text.match(/[\s\S]{1,1900}/g) || [];
-                        for (const chunk of chunks) {
-                           await fetch(webhookUrl, {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ content: chunk })
-                           });
-                        }
-                        alert('Enviado com sucesso para o Discord!');
-                      } catch (e) {
-                        console.error(e);
-                        alert('Erro ao enviar para o Discord');
-                      }
-                    }}
-                    className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-medium border transition-all bg-surface border-border hover:border-[#5865F2]/40 hover:text-[#5865F2] text-text-secondary`}
-                  >
-                    <MessageSquare size={13} />
-                    Enviar Discord
-                  </button>
-                  <button
                     onClick={() => handleCopy(r.text)}
-                    className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-medium border transition-all ${
-                      copied ? 'bg-success/10 text-success border-success/30' : 'bg-surface border-border hover:border-primary/40 hover:text-primary text-text-secondary'
-                    }`}
+                    className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-medium border transition-all ${copied ? 'bg-success/10 text-success border-success/30' : 'bg-surface border-border hover:border-primary/40 hover:text-primary text-text-secondary'
+                      }`}
                   >
                     {copied ? <Check size={13} /> : <Copy size={13} />}
                     {copied ? 'Copiado!' : 'Copiar texto'}
@@ -561,29 +721,6 @@ export default function ReportText() {
         </div>
       )}
 
-      {/* AI ANALYSIS */}
-      {aiAnalysis && (
-        <div className="relative bg-gradient-to-br from-warning/10 to-warning/5 rounded-2xl border border-warning/30 overflow-hidden">
-          <div className="absolute inset-0 pointer-events-none">
-            <div className="absolute top-0 right-0 h-40 w-40 rounded-full bg-warning/5 blur-3xl" />
-          </div>
-          <div className="relative p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <Zap size={20} className="text-warning" />
-              <h3 className="text-lg font-bold text-text-primary">Análise com IA</h3>
-            </div>
-            {aiAnalysis.error ? (
-              <div className="text-danger text-sm">{aiAnalysis.error}</div>
-            ) : (
-              <div className="prose prose-invert max-w-none">
-                <div className="whitespace-pre-wrap text-sm text-text-primary leading-relaxed font-sans">
-                  {aiAnalysis.analysis}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

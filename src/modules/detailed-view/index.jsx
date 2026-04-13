@@ -14,9 +14,11 @@ import {
 import {
   SearchCheck, Lightbulb, TrendingUp, TrendingDown, AlertCircle, RefreshCw,
   Eye, Video, MapPin, Monitor, Layout, X, Users, Calendar,
-  AlertTriangle, CheckCircle2, XCircle, Zap, Shield, Target, Activity
+  AlertTriangle, CheckCircle2, XCircle, Zap, Shield, Target, Activity,
+  Loader2
 } from 'lucide-react';
 import { analyzeCampaign as analyzeLocal } from '../../services/campaignAnalysis';
+
 import PeriodSelector from '../../shared/components/PeriodSelector';
 import ScrollReveal from '../../shared/components/ScrollReveal';
 
@@ -256,7 +258,7 @@ export default function DetailedView() {
   const [selectedCampaignId, setSelectedCampaignId] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
-  const [analyzing, setAnalyzing] = useState(false);
+
 
   // Period — synced with context, shared PeriodSelector component drives this
   const [currentPeriod, setCurrentPeriod] = useState('30d');
@@ -1145,6 +1147,7 @@ export default function DetailedView() {
             </div>
           )}
 
+          {/* ═══ ANÁLISE COM IA ═══ */}
           {/* ═══ DIAGNÓSTICO & SUGESTÕES ═══ */}
           {analysisResult && (
             <div className="col-span-full space-y-6 mt-2">

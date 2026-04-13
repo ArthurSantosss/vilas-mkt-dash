@@ -1,18 +1,22 @@
-import { createContext, useContext, useState, useMemo } from 'react';
+import { createContext, useContext, useEffect, useState, useMemo } from 'react';
 import { useMetaAds } from './MetaAdsContext';
+import { isCreditCardPaymentMethod, readSavedPaymentMethods, getAccountPaymentMethod } from '../shared/utils/paymentMethod';
 
 const AlertsContext = createContext();
 
 /**
  * Generates real-time alerts based on live account/campaign data.
  */
-function generateAlerts(metaAccounts, metaBalances, metaCampaigns) {
+function generateAlerts(metaAccounts, metaBalances, metaCampaigns, paymentMethods) {
   const alerts = [];
   let id = 1;
   const now = new Date().toISOString();
 
   // ── 1. Low balance alerts (Meta) ──
   metaBalances.forEach(b => {
+    const paymentMethod = getAccountPaymentMethod(paymentMethods, b.accountId) || 'credit_card';
+    if (isCreditCardPaymentMethod(paymentMethod)) return;
+    if (b.hasReliableBalance === false) return;
     if (b.currentBalance > 0 && b.currentBalance < 50) {
       alerts.push({
         id: id++,
@@ -132,10 +136,28 @@ export function AlertsProvider({ children }) {
   const { accounts: metaAccounts, balances: metaBalances, campaigns: metaCampaigns } = useMetaAds();
 
   const [readIds, setReadIds] = useState(new Set());
+  const [paymentMethods, setPaymentMethods] = useState(() => readSavedPaymentMethods());
+
+  useEffect(() => {
+    const syncPaymentMethods = () => setPaymentMethods(readSavedPaymentMethods());
+    const handleLocalStorageMapUpdated = (event) => {
+      if (event?.detail?.key === 'account_payment_methods') {
+        setPaymentMethods(event.detail.value || {});
+      }
+    };
+    window.addEventListener('storage', syncPaymentMethods);
+    window.addEventListener('focus', syncPaymentMethods);
+    window.addEventListener('local-storage-map-updated', handleLocalStorageMapUpdated);
+    return () => {
+      window.removeEventListener('storage', syncPaymentMethods);
+      window.removeEventListener('focus', syncPaymentMethods);
+      window.removeEventListener('local-storage-map-updated', handleLocalStorageMapUpdated);
+    };
+  }, []);
 
   const generatedAlerts = useMemo(
-    () => generateAlerts(metaAccounts, metaBalances, metaCampaigns),
-    [metaAccounts, metaBalances, metaCampaigns]
+    () => generateAlerts(metaAccounts, metaBalances, metaCampaigns, paymentMethods),
+    [metaAccounts, metaBalances, metaCampaigns, paymentMethods]
   );
 
   const alerts = useMemo(

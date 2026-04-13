@@ -2,13 +2,17 @@ import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useMetaAds } from '../../contexts/MetaAdsContext';
 import { useAgency } from '../../contexts/AgencyContext';
 import { formatCurrency, formatNumber, formatPercent, getCostColor } from '../../shared/utils/format';
+import { readSavedPaymentMethods, isCreditCardPaymentMethod, getAccountPaymentMethod } from '../../shared/utils/paymentMethod';
 
-import { Megaphone, Power, ChevronDown, ChevronRight, Loader2, RefreshCw, Settings2, Wallet, AlertTriangle, Clock, DollarSign, Check, X, ChevronUp, Info, Image } from 'lucide-react';
+import { Megaphone, Power, ChevronDown, ChevronRight, Loader2, RefreshCw, Settings2, Wallet, AlertTriangle, Clock, DollarSign, Check, X, ChevronUp, Info, Image, Pencil, CreditCard, GripVertical } from 'lucide-react';
 import { updateCampaignStatus, updateCampaignBudget, fetchAdSetsForCampaign, updateAdSetBudget, updateAdSetStatus, updateAdStatus, fetchAdsForAdSet } from '../../services/metaApi';
 import PeriodSelector from '../../shared/components/PeriodSelector';
 
 const ALL_COLUMNS = [
+  { key: 'name', label: 'Conta / Cliente', align: 'left' },
+  { key: 'budget', label: 'Orçamento', align: 'center' },
   { key: 'spend', label: 'Gasto', align: 'right' },
+  { key: 'balance', label: 'Saldo', align: 'right' },
   { key: 'cpm', label: 'CPM', align: 'right' },
   { key: 'clicks', label: 'Cliques', align: 'right' },
   { key: 'cpc', label: 'CPC', align: 'right' },
@@ -30,12 +34,91 @@ function normalizeColumnOrder(savedOrder) {
   return [...sanitized, ...missing];
 }
 
-function readSavedPaymentMethods() {
+function readSavedMonthlyGoals() {
   try {
-    return JSON.parse(localStorage.getItem('account_payment_methods') || '{}');
+    return JSON.parse(localStorage.getItem('account_monthly_goals') || '{}');
   } catch {
     return {};
   }
+}
+
+function readCustomAccountNames() {
+  try {
+    return JSON.parse(localStorage.getItem('custom_account_names') || '{}');
+  } catch {
+    return {};
+  }
+}
+
+// ── Account Name Editor ──
+function AccountNameEditor({ accountId, defaultName, customNames, setCustomNames }) {
+  const [editing, setEditing] = useState(false);
+  const currentName = customNames[accountId] || defaultName;
+  const [draft, setDraft] = useState('');
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [editing]);
+
+  const handleOpen = (e) => {
+    e.stopPropagation();
+    setDraft(currentName);
+    setEditing(true);
+  };
+
+  const handleSave = (e) => {
+    e?.stopPropagation();
+    const newNames = { ...customNames, [accountId]: draft.trim() };
+    if (!draft.trim()) {
+      delete newNames[accountId];
+    }
+    setCustomNames(newNames);
+    localStorage.setItem('custom_account_names', JSON.stringify(newNames));
+    window.dispatchEvent(new CustomEvent('local-storage-map-updated', { detail: { key: 'custom_account_names', value: newNames } }));
+    setEditing(false);
+  };
+
+  const handleCancel = (e) => {
+    e?.stopPropagation();
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+        <input
+          ref={inputRef}
+          type="text"
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') handleCancel(); }}
+          className="w-40 bg-bg border border-primary/40 rounded px-1.5 py-0.5 text-xs text-text-primary focus:outline-none focus:border-primary"
+        />
+        <button onClick={handleSave} className="p-0.5 rounded hover:bg-success/20 text-success transition-colors" title="Salvar">
+          <Check size={12} />
+        </button>
+        <button onClick={handleCancel} className="p-0.5 rounded hover:bg-danger/20 text-danger transition-colors" title="Cancelar">
+          <X size={12} />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="group flex items-center gap-2">
+      <span className="font-medium text-text-primary">{currentName}</span>
+      <button
+        onClick={handleOpen}
+        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-surface-hover rounded text-text-secondary hover:text-primary transition-all"
+        title="Editar nome"
+      >
+        <Pencil size={12} />
+      </button>
+    </div>
+  );
 }
 
 // ── Meta-style Toggle Switch ──
@@ -160,64 +243,65 @@ function BudgetSourceBadge({ type, label }) {
 }
 
 // ── Balance Summary Cards ──
-function BalanceSummaryCards({ balances, filteredAccountIds, paymentMethods }) {
+function BalanceSummaryCards({ balances, filteredAccountIds, monthlyGoals }) {
   const relevantBalances = useMemo(() => {
-    const visibleBalances = balances.filter(b => paymentMethods?.[b.accountId] !== 'credit_card');
-    if (!filteredAccountIds) return visibleBalances;
-    return visibleBalances.filter(b => filteredAccountIds.includes(b.accountId));
-  }, [balances, filteredAccountIds, paymentMethods]);
+    const withGoals = balances.filter((b) => {
+      const goal = monthlyGoals?.[b.accountId] || 0;
+      return goal > 0;
+    });
+    if (!filteredAccountIds) return withGoals;
+    return withGoals.filter(b => filteredAccountIds.includes(b.accountId));
+  }, [balances, filteredAccountIds, monthlyGoals]);
 
-  const totalBalance = useMemo(() =>
-    relevantBalances.reduce((sum, b) => sum + (b.currentBalance || 0), 0),
+  const totalGoal = useMemo(() =>
+    relevantBalances.reduce((sum, b) => sum + (monthlyGoals?.[b.accountId] || 0), 0),
+    [relevantBalances, monthlyGoals]
+  );
+
+  const totalSpent = useMemo(() =>
+    relevantBalances.reduce((sum, b) => sum + (b.spentThisMonth || 0), 0),
     [relevantBalances]
   );
+
+  const totalRemaining = Math.max(0, totalGoal - totalSpent);
+  const pctUsed = totalGoal > 0 ? (totalSpent / totalGoal) * 100 : 0;
 
   const totalAvgDaily = useMemo(() =>
     relevantBalances.reduce((sum, b) => sum + (b.avgDailySpend7d || 0), 0),
     [relevantBalances]
   );
 
-  const estimatedDays = totalAvgDaily > 0 ? totalBalance / totalAvgDaily : 0;
+  const estimatedDays = totalAvgDaily > 0 ? totalRemaining / totalAvgDaily : 0;
 
-  const urgentCount = relevantBalances.filter(b => b.currentBalance > 0 && b.currentBalance < 50).length;
+  const urgentCount = relevantBalances.filter(b => {
+    const goal = monthlyGoals?.[b.accountId] || 0;
+    const spent = b.spentThisMonth || 0;
+    return goal > 0 && (spent / goal) >= 0.9;
+  }).length;
 
   if (relevantBalances.length === 0) return null;
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-      {/* Saldo Total */}
-      <div className="bg-surface rounded-xl border border-border p-4 hover:bg-surface-hover transition-all">
-        <div className="flex items-center gap-2 mb-2">
-          <div className="p-1.5 rounded-lg bg-success/10">
-            <Wallet size={16} className="text-success" />
-          </div>
-          <span className="text-xs text-text-secondary font-medium">Saldo Total Disponível</span>
-        </div>
-        <p className={`text-xl font-bold ${totalBalance < 100 ? 'text-danger' : totalBalance < 300 ? 'text-warning' : 'text-success'}`}>
-          {formatCurrency(totalBalance)}
-        </p>
-        <p className="text-[11px] text-text-secondary mt-1">{relevantBalances.length} conta{relevantBalances.length !== 1 ? 's' : ''} ativa{relevantBalances.length !== 1 ? 's' : ''}</p>
-      </div>
-
-      {/* Média de Gasto Diário */}
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      {/* Gasto no Mês */}
       <div className="bg-surface rounded-xl border border-border p-4 hover:bg-surface-hover transition-all">
         <div className="flex items-center gap-2 mb-2">
           <div className="p-1.5 rounded-lg bg-meta/10">
-            <DollarSign size={16} className="text-meta" />
+            <Wallet size={16} className="text-meta" />
           </div>
-          <span className="text-xs text-text-secondary font-medium">Gasto Médio Diário</span>
+          <span className="text-xs text-text-secondary font-medium">Gasto no Mês</span>
         </div>
-        <p className="text-xl font-bold text-text-primary">{formatCurrency(totalAvgDaily)}</p>
-        <p className="text-[11px] text-text-secondary mt-1">Média dos últimos 7 dias</p>
+        <p className="text-xl font-bold text-text-primary">{formatCurrency(totalSpent)}</p>
+        <p className="text-[11px] text-text-secondary mt-1">Meta total: {formatCurrency(totalGoal)}</p>
       </div>
 
-      {/* Dias Estimados Restantes */}
+      {/* Dias Estimados */}
       <div className="bg-surface rounded-xl border border-border p-4 hover:bg-surface-hover transition-all">
         <div className="flex items-center gap-2 mb-2">
           <div className="p-1.5 rounded-lg bg-info/10">
             <Clock size={16} className="text-info" />
           </div>
-          <span className="text-xs text-text-secondary font-medium">Dias Restantes (est.)</span>
+          <span className="text-xs text-text-secondary font-medium">Dias até Meta</span>
         </div>
         <p className={`text-xl font-bold ${estimatedDays < 3 ? 'text-danger' : estimatedDays < 7 ? 'text-warning' : 'text-text-primary'}`}>
           {estimatedDays > 0 ? `${estimatedDays.toFixed(1)} dias` : '—'}
@@ -231,32 +315,40 @@ function BalanceSummaryCards({ balances, filteredAccountIds, paymentMethods }) {
           <div className={`p-1.5 rounded-lg ${urgentCount > 0 ? 'bg-danger/10' : 'bg-success/10'}`}>
             <AlertTriangle size={16} className={urgentCount > 0 ? 'text-danger' : 'text-success'} />
           </div>
-          <span className="text-xs text-text-secondary font-medium">Alertas de Saldo</span>
+          <span className="text-xs text-text-secondary font-medium">Alertas de Meta</span>
         </div>
         <p className={`text-xl font-bold ${urgentCount > 0 ? 'text-danger' : 'text-success'}`}>
           {urgentCount > 0 ? `${urgentCount} conta${urgentCount !== 1 ? 's' : ''}` : 'Tudo ok'}
         </p>
-        <p className="text-[11px] text-text-secondary mt-1">{urgentCount > 0 ? 'Saldo abaixo de R$ 50' : 'Nenhuma conta em risco'}</p>
+        <p className="text-[11px] text-text-secondary mt-1">{urgentCount > 0 ? 'Acima de 90% da meta' : 'Todas dentro da meta'}</p>
       </div>
     </div>
   );
 }
 
-// ── Individual Account Balance Row ──
-function AccountBalanceBadge({ balance }) {
+// ── Individual Account Balance Badges ──
+function AccountBalanceBadge({ balance, monthlyGoal }) {
   if (!balance) return null;
 
-  const isCritical = balance.currentBalance > 0 && balance.currentBalance < 50;
-  const isWarning = balance.currentBalance >= 50 && balance.currentBalance < 150;
+  const spentThisMonth = balance.spentThisMonth || 0;
+  const hasGoal = monthlyGoal && monthlyGoal > 0;
+  const hasBalance = balance.hasReliableBalance !== false && balance.currentBalance > 0;
+
+  if (!hasGoal && !hasBalance) return null;
 
   return (
-    <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full ml-2 ${
-      isCritical ? 'bg-danger/10 text-danger border border-danger/20' :
-      isWarning ? 'bg-warning/10 text-warning border border-warning/20' :
-      'bg-success/10 text-success border border-success/20'
-    }`}>
-      <Wallet size={10} />
-      {formatCurrency(balance.currentBalance)}
+    <span className="inline-flex items-center gap-1.5 ml-2">
+      {/* Saldo disponível em conta */}
+      {hasBalance && (
+        <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full ${
+          balance.currentBalance < 50 ? 'bg-danger/10 text-danger border border-danger/20' :
+          balance.currentBalance < 150 ? 'bg-warning/10 text-warning border border-warning/20' :
+          'bg-success/10 text-success border border-success/20'
+        }`} title={`Saldo em conta: ${formatCurrency(balance.currentBalance)}`}>
+          <Wallet size={10} />
+          {formatCurrency(balance.currentBalance)}
+        </span>
+      )}
     </span>
   );
 }
@@ -292,28 +384,41 @@ export default function MetaAdsOverview() {
   const [togglingAdSets, setTogglingAdSets] = useState({});
   const [togglingAds, setTogglingAds] = useState({});
   const [savingBudgets, setSavingBudgets] = useState({});
+  const [monthlyGoals, setMonthlyGoals] = useState(() => readSavedMonthlyGoals());
   const [paymentMethods, setPaymentMethods] = useState(() => readSavedPaymentMethods());
+  const [customNames, setCustomNames] = useState(() => readCustomAccountNames());
   const [columnOrder, setColumnOrder] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('meta_ads_column_order'));
+      if (!saved || !saved.includes('name')) return DEFAULT_COLUMN_ORDER;
       return normalizeColumnOrder(saved);
     } catch { return DEFAULT_COLUMN_ORDER; }
   });
   const [showColumnSettings, setShowColumnSettings] = useState(false);
+  const [draggedColumnKey, setDraggedColumnKey] = useState(null);
+  const [dragOverColumnKey, setDragOverColumnKey] = useState(null);
 
   useEffect(() => {
-    const syncPaymentMethods = () => setPaymentMethods(readSavedPaymentMethods());
+    const syncAll = () => {
+      setMonthlyGoals(readSavedMonthlyGoals());
+      setPaymentMethods(readSavedPaymentMethods());
+      setCustomNames(readCustomAccountNames());
+    };
     const handleLocalStorageMapUpdated = (event) => {
-      if (event?.detail?.key === 'account_payment_methods') {
+      if (event?.detail?.key === 'account_monthly_goals') {
+        setMonthlyGoals(event.detail.value || {});
+      } else if (event?.detail?.key === 'account_payment_methods') {
         setPaymentMethods(event.detail.value || {});
+      } else if (event?.detail?.key === 'custom_account_names') {
+        setCustomNames(event.detail.value || {});
       }
     };
-    window.addEventListener('storage', syncPaymentMethods);
-    window.addEventListener('focus', syncPaymentMethods);
+    window.addEventListener('storage', syncAll);
+    window.addEventListener('focus', syncAll);
     window.addEventListener('local-storage-map-updated', handleLocalStorageMapUpdated);
     return () => {
-      window.removeEventListener('storage', syncPaymentMethods);
-      window.removeEventListener('focus', syncPaymentMethods);
+      window.removeEventListener('storage', syncAll);
+      window.removeEventListener('focus', syncAll);
       window.removeEventListener('local-storage-map-updated', handleLocalStorageMapUpdated);
     };
   }, []);
@@ -325,18 +430,73 @@ export default function MetaAdsOverview() {
   const orderedColumns = columnOrder.map(key => ALL_COLUMNS.find(c => c.key === key)).filter(Boolean);
   const showBudgetColumn = expandedAccount !== null;
 
-  const moveColumn = (index, direction) => {
-    const newIndex = index + direction;
+  const persistColumnOrder = useCallback((nextOrder) => {
+    const normalized = normalizeColumnOrder(nextOrder);
+    setColumnOrder(normalized);
+    localStorage.setItem('meta_ads_column_order', JSON.stringify(normalized));
+  }, []);
+
+  const moveColumn = useCallback((key, direction) => {
+    const currentIndex = columnOrder.indexOf(key);
+    if (currentIndex === -1) return;
+
+    const newIndex = currentIndex + direction;
     if (newIndex < 0 || newIndex >= columnOrder.length) return;
+
     const newOrder = [...columnOrder];
-    [newOrder[index], newOrder[newIndex]] = [newOrder[newIndex], newOrder[index]];
-    setColumnOrder(newOrder);
-    localStorage.setItem('meta_ads_column_order', JSON.stringify(newOrder));
-  };
+    [newOrder[currentIndex], newOrder[newIndex]] = [newOrder[newIndex], newOrder[currentIndex]];
+    persistColumnOrder(newOrder);
+  }, [columnOrder, persistColumnOrder]);
+
+  const moveColumnToIndex = useCallback((key, targetIndex) => {
+    const currentIndex = columnOrder.indexOf(key);
+    if (currentIndex === -1 || targetIndex < 0 || targetIndex >= columnOrder.length || currentIndex === targetIndex) return;
+
+    const newOrder = [...columnOrder];
+    const [movedColumn] = newOrder.splice(currentIndex, 1);
+    newOrder.splice(targetIndex, 0, movedColumn);
+    persistColumnOrder(newOrder);
+  }, [columnOrder, persistColumnOrder]);
+
+  const handleColumnDragStart = useCallback((event, key) => {
+    setDraggedColumnKey(key);
+    setDragOverColumnKey(key);
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', key);
+    }
+  }, []);
+
+  const handleColumnDragOver = useCallback((event, key) => {
+    event.preventDefault();
+    if (dragOverColumnKey !== key) {
+      setDragOverColumnKey(key);
+    }
+  }, [dragOverColumnKey]);
+
+  const handleColumnDrop = useCallback((targetKey) => {
+    if (!draggedColumnKey || draggedColumnKey === targetKey) {
+      setDraggedColumnKey(null);
+      setDragOverColumnKey(null);
+      return;
+    }
+
+    const targetIndex = columnOrder.indexOf(targetKey);
+    if (targetIndex !== -1) {
+      moveColumnToIndex(draggedColumnKey, targetIndex);
+    }
+
+    setDraggedColumnKey(null);
+    setDragOverColumnKey(null);
+  }, [columnOrder, draggedColumnKey, moveColumnToIndex]);
+
+  const handleColumnDragEnd = useCallback(() => {
+    setDraggedColumnKey(null);
+    setDragOverColumnKey(null);
+  }, []);
 
   const resetColumnOrder = () => {
-    setColumnOrder(DEFAULT_COLUMN_ORDER);
-    localStorage.setItem('meta_ads_column_order', JSON.stringify(DEFAULT_COLUMN_ORDER));
+    persistColumnOrder(DEFAULT_COLUMN_ORDER);
   };
 
   // ── Cell Renderers ──
@@ -346,10 +506,23 @@ export default function MetaAdsOverview() {
     return msg ? parseInt(msg.value, 10) : 0;
   };
 
-  const renderAccountCell = (col, account) => {
+  const renderAccountCell = (col, account, { balance, monthlyGoal, totalBudget } = {}) => {
     const m = account.metrics;
+    const accountId = account.id || account.accountId;
+    const paymentMethod = getAccountPaymentMethod(paymentMethods, account.id, account.accountId, accountId) || 'credit_card';
+    const isCreditCard = isCreditCardPaymentMethod(paymentMethod);
+
     switch (col.key) {
       case 'spend': return formatCurrency(m?.spend || 0);
+      case 'balance': {
+        if (isCreditCard) {
+          return <span className="flex items-center gap-1 text-text-secondary font-medium"><CreditCard size={12} /> Cartão</span>;
+        }
+        if (!balance || balance.hasReliableBalance === false || balance.currentBalance <= 0) return '—';
+        const val = balance.currentBalance;
+        const color = val < 50 ? 'text-danger' : val < 150 ? 'text-warning' : 'text-success';
+        return <span className={`font-medium ${color}`}>{formatCurrency(val)}</span>;
+      }
       case 'cpm': return formatCurrency(m?.cpm || 0);
       case 'clicks': return formatNumber(m?.linkClicks || 0);
       case 'cpc': return formatCurrency(m?.cpc || 0);
@@ -366,6 +539,7 @@ export default function MetaAdsOverview() {
     const m = campaign.metrics;
     switch (col.key) {
       case 'spend': return formatCurrency(m?.spend || 0);
+      case 'dailyBudget': return campaign.dailyBudget > 0 ? formatCurrency(campaign.dailyBudget) : '—';
       case 'cpm': return m?.cpm > 0 ? formatCurrency(m.cpm) : '—';
       case 'clicks': return '—';
       case 'cpc': return m?.cpc > 0 ? formatCurrency(m.cpc) : '—';
@@ -440,11 +614,6 @@ export default function MetaAdsOverview() {
       .filter(c => c.accountId === accountId)
       .sort((a, b) => getSpendValue(b) - getSpendValue(a));
   }, [campaigns, getSpendValue]);
-
-  const getBalanceForAccount = useCallback((accountId) => {
-    if (paymentMethods[accountId] === 'credit_card') return null;
-    return balances.find(b => b.accountId === accountId);
-  }, [balances, paymentMethods]);
 
   // ── Toggle Handlers ──
   const handleToggleCampaign = async (campaign) => {
@@ -697,7 +866,7 @@ export default function MetaAdsOverview() {
               >
                 <option value="all">Todas as contas</option>
                 {agencyFilteredAccounts.map(a => (
-                  <option key={a.id} value={a.id}>{a.clientName}</option>
+                  <option key={a.id} value={a.id}>{customNames[a.id] || a.clientName}</option>
                 ))}
               </select>
             </div>
@@ -733,17 +902,93 @@ export default function MetaAdsOverview() {
       </div>
 
       {showColumnSettings && (
-        <div className="bg-surface rounded-xl border border-border p-4">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-sm font-medium text-text-primary">Personalizar ordem das colunas</span>
-            <button onClick={resetColumnOrder} className="text-xs text-text-secondary hover:text-primary transition-colors">Resetar ordem</button>
+        <div className="bg-surface rounded-2xl border border-border p-4 lg:p-5 shadow-[0_2px_12px_-4px_rgba(0,0,0,0.25)]">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
+            <div>
+              <span className="text-sm font-semibold text-text-primary">Organizar métricas</span>
+              <p className="text-xs text-text-secondary mt-1">
+                Arraste os cards para reordenar ou use os botões de subir e descer.
+              </p>
+            </div>
+            <button
+              onClick={resetColumnOrder}
+              className="text-xs px-3 py-1.5 rounded-lg border border-border bg-bg text-text-secondary hover:text-primary hover:border-primary/30 transition-colors self-start"
+            >
+              Resetar ordem
+            </button>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {orderedColumns.map((col, idx) => (
-              <div key={col.key} className="flex items-center gap-1 bg-bg border border-border rounded-lg px-2 py-1.5">
-                <button onClick={() => moveColumn(idx, -1)} disabled={idx === 0} className="text-text-secondary/50 hover:text-primary disabled:opacity-20 transition-colors"><ChevronRight size={12} className="rotate-180" /></button>
-                <span className="text-xs text-text-primary font-medium px-1">{col.label}</span>
-                <button onClick={() => moveColumn(idx, 1)} disabled={idx === orderedColumns.length - 1} className="text-text-secondary/50 hover:text-primary disabled:opacity-20 transition-colors"><ChevronRight size={12} /></button>
+
+          <div className="space-y-2">
+            {orderedColumns.map((col, idx) => {
+              const isDragging = draggedColumnKey === col.key;
+              const isDropTarget = dragOverColumnKey === col.key && draggedColumnKey && draggedColumnKey !== col.key;
+
+              return (
+                <div
+                  key={col.key}
+                  draggable
+                  onDragStart={(event) => handleColumnDragStart(event, col.key)}
+                  onDragOver={(event) => handleColumnDragOver(event, col.key)}
+                  onDrop={() => handleColumnDrop(col.key)}
+                  onDragEnd={handleColumnDragEnd}
+                  className={`group flex items-center gap-3 rounded-xl border px-3 py-3 transition-all ${
+                    isDragging
+                      ? 'border-primary/40 bg-primary/10 opacity-70 scale-[0.99]'
+                      : isDropTarget
+                        ? 'border-primary/50 bg-primary/5 shadow-[0_0_0_1px_rgba(15,165,174,0.2)]'
+                        : 'border-border bg-bg/60 hover:border-primary/25 hover:bg-bg'
+                  }`}
+                >
+                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg border border-border/70 bg-surface text-text-secondary cursor-grab active:cursor-grabbing">
+                    <GripVertical size={16} />
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="inline-flex items-center rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary-light">
+                        #{idx + 1}
+                      </span>
+                      <span className="text-sm font-medium text-text-primary">{col.label}</span>
+                    </div>
+                    <p className="text-xs text-text-secondary mt-1">
+                      {col.key === 'name'
+                        ? 'Identificação principal da conta e expansão da estrutura.'
+                        : col.key === 'budget'
+                          ? 'Orçamento diário visível quando a conta está expandida.'
+                          : 'Métrica exibida na tabela principal da conta.'}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={() => moveColumn(col.key, -1)}
+                      disabled={idx === 0}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-surface text-text-secondary hover:text-primary hover:border-primary/30 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                      title="Mover para cima"
+                    >
+                      <ChevronUp size={15} />
+                    </button>
+                    <button
+                      onClick={() => moveColumn(col.key, 1)}
+                      disabled={idx === orderedColumns.length - 1}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-surface text-text-secondary hover:text-primary hover:border-primary/30 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                      title="Mover para baixo"
+                    >
+                      <ChevronDown size={15} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            {orderedColumns.map((col) => (
+              <div key={`${col.key}-preview`} className="inline-flex items-center gap-2 rounded-full border border-border bg-bg/70 px-3 py-1.5 text-xs text-text-secondary">
+                <span className="font-semibold text-text-primary">
+                  {columnOrder.indexOf(col.key) + 1}.
+                </span>
+                <span>{col.label}</span>
               </div>
             ))}
           </div>
@@ -751,19 +996,18 @@ export default function MetaAdsOverview() {
       )}
 
       {/* Table */}
-      <div className="bg-surface rounded-xl border border-border overflow-hidden">
+      <div className="bg-surface rounded-2xl border border-border overflow-hidden shadow-[0_2px_12px_-4px_rgba(0,0,0,0.3)]">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-border">
-                <th className="w-8 px-2 py-3"></th>
-                <th className="text-left px-4 py-3 text-text-secondary font-medium">Conta / Cliente</th>
-                {showBudgetColumn && (
-                  <th className="text-center px-3 py-3 text-text-secondary font-medium">Orçamento</th>
-                )}
-                {orderedColumns.map(col => (
-                  <th key={col.key} className={`text-${col.align} px-3 py-3 text-text-secondary font-medium`}>{col.label}</th>
-                ))}
+              <tr className="border-b border-border bg-bg/40">
+                <th className="w-8 px-2 py-3.5"></th>
+                {orderedColumns.map(col => {
+                  if (col.key === 'budget' && !showBudgetColumn) return null;
+                  return (
+                    <th key={col.key} className={`text-${col.align} px-${col.key === 'name' ? '4' : '3'} py-3.5 text-text-secondary ${col.key === 'name' ? 'font-semibold' : 'font-medium'}`}>{col.label}</th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
@@ -771,7 +1015,8 @@ export default function MetaAdsOverview() {
                 const isExpanded = expandedAccount === account.id;
                 const accountCampaigns = getCampaignsForAccount(account.id);
                 const hasCampaigns = accountCampaigns.length > 0;
-                const accountBalance = getBalanceForAccount(account.id);
+                const accountBalance = balances.find((b) => b.accountId === account.id || b.accountId === account.accountId);
+                const accountGoal = monthlyGoals[account.id] || monthlyGoals[account.accountId] || 0;
                 const totalBudget = getTotalBudget(accountCampaigns);
 
                 return (
@@ -787,30 +1032,40 @@ export default function MetaAdsOverview() {
                             : <ChevronRight size={14} className="text-text-secondary mx-auto" />
                         )}
                       </td>
-                      <td className="px-4 py-3 font-medium text-text-primary">
-                        <div className="flex items-center">
-                          {account.clientName}
-                          <AccountBalanceBadge balance={accountBalance} />
-                        </div>
-                      </td>
-                      {showBudgetColumn && (
-                        <td className="px-3 py-3 text-center">
-                          {isExpanded && totalBudget > 0 ? (
-                            <span className="inline-flex items-center gap-1 text-xs font-medium text-text-primary bg-primary/8 border border-primary/15 rounded-lg px-2 py-1">
-                              <DollarSign size={10} className="text-primary-light" />
-                              {formatCurrency(totalBudget)}/dia
-                            </span>
-                          ) : (
-                            <span className="text-text-secondary text-xs">—</span>
-                          )}
-                        </td>
-                      )}
                       {orderedColumns.map(col => {
+                        if (col.key === 'name') {
+                          return (
+                            <td key={col.key} className="px-4 py-3 font-medium text-text-primary">
+                              <AccountNameEditor
+                                accountId={account.id}
+                                defaultName={account.clientName}
+                                customNames={customNames}
+                                setCustomNames={setCustomNames}
+                              />
+                            </td>
+                          );
+                        }
+                        if (col.key === 'budget') {
+                          if (!showBudgetColumn) return null;
+                          return (
+                            <td key={col.key} className="px-3 py-3 text-center">
+                              {isExpanded && totalBudget > 0 ? (
+                                <span className="inline-flex items-center gap-1 text-xs font-medium text-text-primary bg-primary/8 border border-primary/15 rounded-lg px-2 py-1">
+                                  <DollarSign size={10} className="text-primary-light" />
+                                  {formatCurrency(totalBudget)}/dia
+                                </span>
+                              ) : (
+                                <span className="text-text-secondary text-xs">—</span>
+                              )}
+                            </td>
+                          );
+                        }
                         const cellClass = col.key === 'spend' ? 'text-right text-text-primary' :
                           col.key === 'messages' ? 'text-right font-medium text-text-primary' :
                           col.key === 'costPerMsg' ? `text-right font-bold ${getCostColor(account.metrics?.costPerMessage || 0)}` :
+                          (col.key === 'balance' || col.key === 'available') ? 'text-right' :
                           'text-right text-text-secondary';
-                        return <td key={col.key} className={`px-3 py-3 ${cellClass}`}>{renderAccountCell(col, account)}</td>;
+                        return <td key={col.key} className={`px-3 py-3 ${cellClass}`}>{renderAccountCell(col, account, { balance: accountBalance, monthlyGoal: accountGoal, totalBudget })}</td>;
                       })}
                     </tr>
 
@@ -838,34 +1093,41 @@ export default function MetaAdsOverview() {
                                 }
                               </button>
                             </td>
-                            <td className="px-4 py-2.5 pl-8">
-                              <div className="flex items-center gap-3">
-                                <MetaToggle
-                                  isActive={isActive}
-                                  isToggling={isToggling}
-                                  onToggle={(e) => { e.stopPropagation(); handleToggleCampaign(campaign); }}
-                                  title={isActive ? 'Pausar campanha' : 'Ativar campanha'}
-                                />
-                                <div>
-                                  <span className="text-sm text-text-primary">{campaign.name}</span>
-                                  <span className="text-xs text-text-secondary ml-2">({campaign.objective})</span>
-                                </div>
-                              </div>
-                            </td>
-                            {showBudgetColumn && (
-                              <td className="px-3 py-2.5 text-center">
-                                {budgetSource === 'campaign' ? (
-                                  <BudgetEditor
-                                    currentBudget={campaign.dailyBudget || 0}
-                                    onSave={(val) => handleUpdateCampaignBudget(campaign.id, val)}
-                                    saving={savingBudgets[campaign.id]}
-                                  />
-                                ) : (
-                                  <BudgetSourceBadge type="adset" label="Orçamento definido nos conjuntos de anúncio" />
-                                )}
-                              </td>
-                            )}
                             {orderedColumns.map(col => {
+                              if (col.key === 'name') {
+                                return (
+                                  <td key={col.key} className="px-4 py-2.5 pl-8">
+                                    <div className="flex items-center gap-3">
+                                      <MetaToggle
+                                        isActive={isActive}
+                                        isToggling={isToggling}
+                                        onToggle={(e) => { e.stopPropagation(); handleToggleCampaign(campaign); }}
+                                        title={isActive ? 'Pausar campanha' : 'Ativar campanha'}
+                                      />
+                                      <div>
+                                        <span className="text-sm text-text-primary">{campaign.name}</span>
+                                        <span className="text-xs text-text-secondary ml-2">({campaign.objective})</span>
+                                      </div>
+                                    </div>
+                                  </td>
+                                );
+                              }
+                              if (col.key === 'budget') {
+                                if (!showBudgetColumn) return null;
+                                return (
+                                  <td key={col.key} className="px-3 py-2.5 text-center">
+                                    {budgetSource === 'campaign' ? (
+                                      <BudgetEditor
+                                        currentBudget={campaign.dailyBudget || 0}
+                                        onSave={(val) => handleUpdateCampaignBudget(campaign.id, val)}
+                                        saving={savingBudgets[campaign.id]}
+                                      />
+                                    ) : (
+                                      <BudgetSourceBadge type="adset" label="Orçamento definido nos conjuntos de anúncio" />
+                                    )}
+                                  </td>
+                                );
+                              }
                               const cellClass = col.key === 'spend' ? 'text-right text-text-primary' :
                                 col.key === 'messages' ? 'text-right font-medium text-text-primary' :
                                 col.key === 'costPerMsg' ? `text-right font-bold ${getCostColor(campaign.metrics?.costPerMessage || 0)}` :
@@ -879,7 +1141,7 @@ export default function MetaAdsOverview() {
                             <>
                               {isLoadingAdSets && (
                                 <tr className="bg-bg/40 border-b border-border/20">
-                                  <td colSpan={orderedColumns.length + (showBudgetColumn ? 3 : 2)} className="py-3 text-center">
+                                  <td colSpan={orderedColumns.length + (showBudgetColumn ? 1 : 0)} className="py-3 text-center">
                                     <span className="flex items-center justify-center gap-2 text-xs text-text-secondary">
                                       <Loader2 size={12} className="animate-spin" /> Carregando conjuntos de anúncio...
                                     </span>
@@ -888,7 +1150,7 @@ export default function MetaAdsOverview() {
                               )}
                               {!isLoadingAdSets && campaignAdSets.length === 0 && (
                                 <tr className="bg-bg/40 border-b border-border/20">
-                                  <td colSpan={orderedColumns.length + (showBudgetColumn ? 3 : 2)} className="py-3 text-center text-xs text-text-secondary">
+                                  <td colSpan={orderedColumns.length + (showBudgetColumn ? 1 : 0)} className="py-3 text-center text-xs text-text-secondary">
                                     Nenhum conjunto de anúncio encontrado
                                   </td>
                                 </tr>
@@ -922,37 +1184,44 @@ export default function MetaAdsOverview() {
                                           }
                                         </button>
                                       </td>
-                                      <td className="px-4 py-2 pl-14">
-                                        <div className="flex items-center gap-2.5">
-                                          <MetaToggle
-                                            isActive={isAdSetActive}
-                                            isToggling={isAdSetToggling}
-                                            onToggle={(e) => { e.stopPropagation(); handleToggleAdSet(adSet, campaign.id); }}
-                                            size="sm"
-                                            title={isAdSetActive ? 'Pausar conjunto' : 'Ativar conjunto'}
-                                          />
-                                          <div className="flex items-center gap-2">
-                                            <span className="text-xs text-text-primary">{adSet.name}</span>
-                                            {adSet.optimization_goal && (
-                                              <span className="text-[10px] text-text-secondary/60">({adSet.optimization_goal})</span>
-                                            )}
-                                          </div>
-                                        </div>
-                                      </td>
-                                      {showBudgetColumn && (
-                                        <td className="px-3 py-2 text-center">
-                                          {budgetSource === 'adset' ? (
-                                            <BudgetEditor
-                                              currentBudget={adSetBudget}
-                                              onSave={(val) => handleUpdateAdSetBudget(adSet.id, val)}
-                                              saving={savingBudgets[adSet.id]}
-                                            />
-                                          ) : (
-                                            <BudgetSourceBadge type="campaign" label="Orçamento definido na campanha (CBO)" />
-                                          )}
-                                        </td>
-                                      )}
                                       {orderedColumns.map(col => {
+                                        if (col.key === 'name') {
+                                          return (
+                                            <td key={col.key} className="px-4 py-2 pl-14">
+                                              <div className="flex items-center gap-2.5">
+                                                <MetaToggle
+                                                  isActive={isAdSetActive}
+                                                  isToggling={isAdSetToggling}
+                                                  onToggle={(e) => { e.stopPropagation(); handleToggleAdSet(adSet, campaign.id); }}
+                                                  size="sm"
+                                                  title={isAdSetActive ? 'Pausar conjunto' : 'Ativar conjunto'}
+                                                />
+                                                <div className="flex items-center gap-2">
+                                                  <span className="text-xs text-text-primary">{adSet.name}</span>
+                                                  {adSet.optimization_goal && (
+                                                    <span className="text-[10px] text-text-secondary/60">({adSet.optimization_goal})</span>
+                                                  )}
+                                                </div>
+                                              </div>
+                                            </td>
+                                          );
+                                        }
+                                        if (col.key === 'budget') {
+                                          if (!showBudgetColumn) return null;
+                                          return (
+                                            <td key={col.key} className="px-3 py-2 text-center">
+                                              {budgetSource === 'adset' ? (
+                                                <BudgetEditor
+                                                  currentBudget={adSetBudget}
+                                                  onSave={(val) => handleUpdateAdSetBudget(adSet.id, val)}
+                                                  saving={savingBudgets[adSet.id]}
+                                                />
+                                              ) : (
+                                                <BudgetSourceBadge type="campaign" label="Orçamento definido na campanha (CBO)" />
+                                              )}
+                                            </td>
+                                          );
+                                        }
                                         const cellClass = col.key === 'spend' ? 'text-right text-text-primary' :
                                           col.key === 'messages' ? 'text-right font-medium text-text-primary' :
                                           col.key === 'costPerMsg' ? `text-right font-bold ${getCostColor(adSetCostPerMsg)}` :
@@ -966,7 +1235,7 @@ export default function MetaAdsOverview() {
                                       <>
                                         {isLoadingAds && (
                                           <tr className="bg-bg/20 border-b border-border/10">
-                                            <td colSpan={orderedColumns.length + (showBudgetColumn ? 3 : 2)} className="py-3 text-center">
+                                            <td colSpan={orderedColumns.length + (showBudgetColumn ? 1 : 0)} className="py-3 text-center">
                                               <span className="flex items-center justify-center gap-2 text-xs text-text-secondary">
                                                 <Loader2 size={12} className="animate-spin" /> Carregando anúncios...
                                               </span>
@@ -975,7 +1244,7 @@ export default function MetaAdsOverview() {
                                         )}
                                         {!isLoadingAds && adSetAds.length === 0 && (
                                           <tr className="bg-bg/20 border-b border-border/10">
-                                            <td colSpan={orderedColumns.length + (showBudgetColumn ? 3 : 2)} className="py-3 text-center text-xs text-text-secondary">
+                                            <td colSpan={orderedColumns.length + (showBudgetColumn ? 1 : 0)} className="py-3 text-center text-xs text-text-secondary">
                                               Nenhum anúncio encontrado
                                             </td>
                                           </tr>
@@ -992,29 +1261,36 @@ export default function MetaAdsOverview() {
                                           return (
                                             <tr key={ad.id} className="bg-bg/15 border-b border-border/10">
                                               <td className="px-2 py-2"></td>
-                                              <td className="px-4 py-2 pl-20">
-                                                <div className="flex items-center gap-2.5">
-                                                  <MetaToggle
-                                                    isActive={isAdActive}
-                                                    isToggling={isAdToggling}
-                                                    onToggle={(e) => { e.stopPropagation(); handleToggleAd(ad, adSet.id); }}
-                                                    size="sm"
-                                                    title={isAdActive ? 'Pausar anúncio' : 'Ativar anúncio'}
-                                                  />
-                                                  {thumbnailUrl ? (
-                                                    <img src={thumbnailUrl} alt="" className="w-8 h-8 rounded object-cover border border-border/30 flex-shrink-0" />
-                                                  ) : (
-                                                    <div className="w-8 h-8 rounded bg-border/20 flex items-center justify-center flex-shrink-0">
-                                                      <Image size={12} className="text-text-secondary/40" />
-                                                    </div>
-                                                  )}
-                                                  <span className="text-xs text-text-primary">{ad.name}</span>
-                                                </div>
-                                              </td>
-                                              {showBudgetColumn && (
-                                                <td className="px-3 py-2 text-center text-xs text-text-secondary">—</td>
-                                              )}
                                               {orderedColumns.map(col => {
+                                                if (col.key === 'name') {
+                                                  return (
+                                                    <td key={col.key} className="px-4 py-2 pl-20">
+                                                      <div className="flex items-center gap-2.5">
+                                                        <MetaToggle
+                                                          isActive={isAdActive}
+                                                          isToggling={isAdToggling}
+                                                          onToggle={(e) => { e.stopPropagation(); handleToggleAd(ad, adSet.id); }}
+                                                          size="sm"
+                                                          title={isAdActive ? 'Pausar anúncio' : 'Ativar anúncio'}
+                                                        />
+                                                        {thumbnailUrl ? (
+                                                          <img src={thumbnailUrl} alt="" className="w-8 h-8 rounded object-cover border border-border/30 flex-shrink-0" />
+                                                        ) : (
+                                                          <div className="w-8 h-8 rounded bg-border/20 flex items-center justify-center flex-shrink-0">
+                                                            <Image size={12} className="text-text-secondary/40" />
+                                                          </div>
+                                                        )}
+                                                        <span className="text-xs text-text-primary">{ad.name}</span>
+                                                      </div>
+                                                    </td>
+                                                  );
+                                                }
+                                                if (col.key === 'budget') {
+                                                  if (!showBudgetColumn) return null;
+                                                  return (
+                                                    <td key={col.key} className="px-3 py-2 text-center text-xs text-text-secondary">—</td>
+                                                  );
+                                                }
                                                 const cellClass = col.key === 'spend' ? 'text-right text-text-primary' :
                                                   col.key === 'messages' ? 'text-right font-medium text-text-primary' :
                                                   col.key === 'costPerMsg' ? `text-right font-bold ${getCostColor(adCostPerMsg)}` :
