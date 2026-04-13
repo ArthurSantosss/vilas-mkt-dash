@@ -10,44 +10,6 @@ import { isCreditCardPaymentMethod, readSavedPaymentMethods, getAccountPaymentMe
 
 const SLACK_WEBHOOK = import.meta.env.VITE_SLACK_WEBHOOK_ALERTS;
 
-// Horários fixos de lembrete (Brasília, UTC-3)
-const REMINDER_HOURS = [6, 8, 10, 12, 14, 16, 18];
-const REMINDER_SENT_KEY = 'auto_alerts_reminders_sent';
-
-function getBrasiliaHour() {
-  const now = new Date();
-  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
-  const brasilia = new Date(utc - 3 * 3600000);
-  return brasilia.getHours();
-}
-
-function getBrasiliaDateStr() {
-  const now = new Date();
-  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
-  const brasilia = new Date(utc - 3 * 3600000);
-  return brasilia.toISOString().slice(0, 10);
-}
-
-function loadSentReminders() {
-  try {
-    const stored = JSON.parse(localStorage.getItem(REMINDER_SENT_KEY) || '{}');
-    // Limpa entradas de dias anteriores
-    const today = getBrasiliaDateStr();
-    if (stored.date !== today) return { date: today, hours: [] };
-    return stored;
-  } catch {
-    return { date: getBrasiliaDateStr(), hours: [] };
-  }
-}
-
-function saveSentReminder(hour) {
-  const data = loadSentReminders();
-  if (!data.hours.includes(hour)) {
-    data.hours.push(hour);
-  }
-  localStorage.setItem(REMINDER_SENT_KEY, JSON.stringify(data));
-}
-
 const STORAGE_KEY = 'auto_alerts_thresholds';
 
 const DEFAULT_THRESHOLDS = {
@@ -313,75 +275,7 @@ export default function AutoAlerts() {
       .catch(err => console.error('[AutoAlerts] Erro ao enviar para Slack:', err));
   }, [allAlerts]);
 
-  // ── Scheduled reminders (6h, 8h, 10h, 12h, 14h, 16h, 18h Brasília) ──
-  useEffect(() => {
-    if (allAlerts.length === 0) return;
-
-    const checkAndSendReminder = () => {
-      if (allAlerts.length === 0) return;
-
-      const currentHour = getBrasiliaHour();
-      const matchedHour = REMINDER_HOURS.find(h => h === currentHour);
-      if (matchedHour === undefined) return;
-
-      const sent = loadSentReminders();
-      if (sent.hours.includes(matchedHour)) return;
-
-      const today = new Date().toLocaleDateString('pt-BR');
-      const severityEmoji = { danger: ':red_circle:', warning: ':large_yellow_circle:', info: ':large_blue_circle:' };
-      const typeHeaders = {
-        balance_low: ':moneybag: Saldo Baixo',
-        payment_error: ':credit_card: Erro no Pagamento',
-        high_cost: ':chart_with_downwards_trend: Custo Alto',
-        no_messages: ':no_entry_sign: Sem Mensagens',
-      };
-
-      const grouped = {};
-      allAlerts.forEach(a => {
-        if (!grouped[a.type]) grouped[a.type] = [];
-        grouped[a.type].push(a);
-      });
-
-      const blocks = [
-        { type: 'header', text: { type: 'plain_text', text: `🔔 Lembrete ${matchedHour}h — ${allAlerts.length} alerta${allAlerts.length !== 1 ? 's' : ''} pendente${allAlerts.length !== 1 ? 's' : ''}`, emoji: true } },
-        { type: 'section', text: { type: 'mrkdwn', text: `_Esses problemas ainda não foram resolvidos:_` } },
-      ];
-
-      Object.entries(grouped).forEach(([type, alerts]) => {
-        blocks.push({ type: 'divider' });
-        blocks.push({
-          type: 'section',
-          text: { type: 'mrkdwn', text: `*${typeHeaders[type] || type}* (${alerts.length})` },
-        });
-
-        alerts.slice(0, 10).forEach(alert => {
-          const emoji = severityEmoji[alert.severity];
-          const agency = alert.agency ? ` _(${alert.agency})_` : '';
-          let text = `${emoji} *${alert.accountName}*${agency}\n${alert.message}`;
-          blocks.push({ type: 'section', text: { type: 'mrkdwn', text } });
-        });
-      });
-
-      blocks.push({ type: 'divider' });
-      blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `_Lembrete automático • ${today} às ${matchedHour}h • Vilas MKT Dash_` }] });
-
-      fetch(SLACK_WEBHOOK, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ blocks }),
-      })
-        .then(res => {
-          if (res.ok) saveSentReminder(matchedHour);
-          else console.warn('[AutoAlerts] Slack reminder retornou status:', res.status);
-        })
-        .catch(err => console.error('[AutoAlerts] Erro ao enviar lembrete:', err));
-    };
-
-    // Checa imediatamente e depois a cada 60s
-    checkAndSendReminder();
-    const interval = setInterval(checkAndSendReminder, 60_000);
-    return () => clearInterval(interval);
-  }, [allAlerts]);
+  // ── Scheduled reminders now handled by Vercel Cron (api/cron/slack-alerts.js) ──
 
   // ── Send balance summary to Slack ──
   const [sendingBalances, setSendingBalances] = useState(false);
