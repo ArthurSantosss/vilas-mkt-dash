@@ -44,7 +44,7 @@ export default function Clients() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-lg bg-info/10"><Users size={24} className="text-info" /></div>
           <div>
@@ -53,14 +53,14 @@ export default function Clients() {
           </div>
         </div>
         <button onClick={() => { setEditingClient(null); setShowModal(true); }}
-          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-primary to-primary-light text-black rounded-lg text-sm font-medium hover:opacity-90 transition-opacity">
+          className="flex w-full items-center justify-center gap-2 px-4 py-2 bg-gradient-to-r from-primary to-primary-light text-black rounded-lg text-sm font-medium hover:opacity-90 transition-opacity sm:w-auto">
           <Plus size={16} /> Novo Cliente
         </button>
       </div>
 
       {/* Filters */}
-      <div className="flex gap-4 items-center">
-        <div className="relative flex-1 max-w-md">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+        <div className="relative w-full flex-1 sm:max-w-md">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary" />
           <input
             type="text" placeholder="Buscar por nome..." value={search} onChange={e => setSearch(e.target.value)}
@@ -68,12 +68,12 @@ export default function Clients() {
           />
         </div>
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-          className="bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary">
+          className="w-full sm:w-auto bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary">
           <option value="all">Todos os status</option>
           {allStatuses.map(s => <option key={s} value={s}>{getStatusLabel(s)}</option>)}
         </select>
         <select value={nicheFilter} onChange={e => setNicheFilter(e.target.value)}
-          className="bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary">
+          className="w-full sm:w-auto bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary">
           <option value="all">Todos os nichos</option>
           {allNiches.map(n => <option key={n} value={n}>{nicheLabels[n]}</option>)}
         </select>
@@ -81,47 +81,49 @@ export default function Clients() {
 
       {/* Table */}
       <div className="bg-surface rounded-xl border border-border overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border">
-              <th className="text-left px-4 py-3 text-text-secondary font-medium">Cliente</th>
-              <th className="text-left px-3 py-3 text-text-secondary font-medium">Contato</th>
-              <th className="text-center px-3 py-3 text-text-secondary font-medium">Nicho</th>
-              <th className="text-center px-3 py-3 text-text-secondary font-medium">Plataformas</th>
-              <th className="text-right px-3 py-3 text-text-secondary font-medium">Budget Mensal</th>
-              <th className="text-center px-3 py-3 text-text-secondary font-medium">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((client, i) => (
-              <tr key={client.id} onClick={() => setSelectedClient(client)}
-                className={`border-b border-border/50 hover:bg-surface-hover transition-colors cursor-pointer ${i % 2 === 0 ? 'bg-surface' : 'bg-bg/30'}`}>
-                <td className="px-4 py-3 font-medium text-text-primary">{client.name}</td>
-                <td className="px-3 py-3 text-text-secondary">{client.contactName}</td>
-                <td className="px-3 py-3 text-center">
-                  <span className="text-xs px-2 py-0.5 rounded bg-surface-hover text-text-secondary">{nicheLabels[client.niche]}</span>
-                </td>
-                <td className="px-3 py-3 text-center">
-                  <div className="flex justify-center gap-1">
-                    {client.platforms.includes('meta') && <span className="text-xs px-1.5 py-0.5 rounded bg-meta/10 text-meta">Meta</span>}
-                  </div>
-                </td>
-                <td className="px-3 py-3 text-right text-text-primary">{formatCurrency(client.monthlyBudget)}</td>
-                <td className="px-3 py-3 text-center">
-                  <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium border ${getStatusColor(client.status)}`}>{getStatusLabel(client.status)}</span>
-                </td>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-sm">
+            <thead>
+              <tr className="border-b border-border">
+                <th className="text-left px-4 py-3 text-text-secondary font-medium">Cliente</th>
+                <th className="text-left px-3 py-3 text-text-secondary font-medium">Contato</th>
+                <th className="text-center px-3 py-3 text-text-secondary font-medium">Nicho</th>
+                <th className="text-center px-3 py-3 text-text-secondary font-medium">Plataformas</th>
+                <th className="text-right px-3 py-3 text-text-secondary font-medium">Budget Mensal</th>
+                <th className="text-center px-3 py-3 text-text-secondary font-medium">Status</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {filtered.map((client, i) => (
+                <tr key={client.id} onClick={() => setSelectedClient(client)}
+                  className={`border-b border-border/50 hover:bg-surface-hover transition-colors cursor-pointer ${i % 2 === 0 ? 'bg-surface' : 'bg-bg/30'}`}>
+                  <td className="px-4 py-3 font-medium text-text-primary">{client.name}</td>
+                  <td className="px-3 py-3 text-text-secondary">{client.contactName}</td>
+                  <td className="px-3 py-3 text-center">
+                    <span className="text-xs px-2 py-0.5 rounded bg-surface-hover text-text-secondary">{nicheLabels[client.niche]}</span>
+                  </td>
+                  <td className="px-3 py-3 text-center">
+                    <div className="flex justify-center gap-1">
+                      {client.platforms.includes('meta') && <span className="text-xs px-1.5 py-0.5 rounded bg-meta/10 text-meta">Meta</span>}
+                    </div>
+                  </td>
+                  <td className="px-3 py-3 text-right text-text-primary">{formatCurrency(client.monthlyBudget)}</td>
+                  <td className="px-3 py-3 text-center">
+                    <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium border ${getStatusColor(client.status)}`}>{getStatusLabel(client.status)}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Side Panel */}
       {selectedClient && (
         <div className="fixed inset-0 z-50 flex justify-end" onClick={() => setSelectedClient(null)}>
           <div className="absolute inset-0 bg-black/50" />
-          <div className="relative w-[480px] h-full bg-surface border-l border-border overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <div className="p-6">
+          <div className="relative h-full w-full max-w-[480px] bg-surface border-l border-border overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="p-4 sm:p-6">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-lg font-bold text-text-primary">{selectedClient.name}</h2>
                 <button onClick={() => setSelectedClient(null)} className="text-text-secondary hover:text-text-primary"><X size={20} /></button>
@@ -179,7 +181,7 @@ export default function Clients() {
 
 function Field({ label, value, children }) {
   return (
-    <div className="flex justify-between items-center">
+    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
       <span className="text-text-secondary">{label}</span>
       {children || <span className="text-text-primary font-medium">{value}</span>}
     </div>
@@ -214,8 +216,8 @@ function ClientModal({ client, onSave, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
       <div className="absolute inset-0 bg-black/60" />
-      <div className="relative bg-surface rounded-xl border border-border w-[560px] max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="p-6">
+      <div className="relative mx-3 w-[calc(100vw-1.5rem)] max-w-[560px] max-h-[90vh] overflow-y-auto rounded-xl border border-border bg-surface" onClick={e => e.stopPropagation()}>
+        <div className="p-4 sm:p-6">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-lg font-bold text-text-primary">{client ? 'Editar Cliente' : 'Novo Cliente'}</h2>
             <button onClick={onClose} className="text-text-secondary hover:text-text-primary"><X size={20} /></button>
@@ -224,7 +226,7 @@ function ClientModal({ client, onSave, onClose }) {
             <FormField label="Nome do Escritório">
               <input value={form.name} onChange={e => update('name', e.target.value)} className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary" />
             </FormField>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <FormField label="Contato">
                 <input value={form.contactName} onChange={e => update('contactName', e.target.value)} className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary" />
               </FormField>
@@ -235,7 +237,7 @@ function ClientModal({ client, onSave, onClose }) {
             <FormField label="Email">
               <input type="email" value={form.email} onChange={e => update('email', e.target.value)} className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary" />
             </FormField>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <FormField label="Nicho">
                 <select value={form.niche} onChange={e => update('niche', e.target.value)} className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary">
                   {allNiches.map(n => <option key={n} value={n}>{nicheLabels[n]}</option>)}
@@ -255,7 +257,7 @@ function ClientModal({ client, onSave, onClose }) {
                 </button>
               </div>
             </FormField>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <FormField label="Budget Mensal (R$)">
                 <input type="number" value={form.monthlyBudget} onChange={e => update('monthlyBudget', +e.target.value)} className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary" />
               </FormField>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Calendar, Megaphone, Wallet, Search,
@@ -22,6 +22,19 @@ const navItems = [
 export default function Sidebar() {
   const { unreadCount, criticalCount } = useAlerts();
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    if (mobileOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = previousOverflow || '';
+    }
+
+    return () => {
+      document.body.style.overflow = previousOverflow || '';
+    };
+  }, [mobileOpen]);
 
   const sidebarContent = (
     <>

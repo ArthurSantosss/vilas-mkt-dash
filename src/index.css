@@ -41,14 +41,34 @@
 *::-webkit-scrollbar-thumb:hover { background: #2A2F40; }
 
 /* ── Body ── */
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
 body {
   margin: 0;
   background-color: #080A0F;
   color: #F0F2F5;
   min-height: 100vh;
+  min-height: 100dvh;
+  overflow-x: hidden;
   font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+img,
+svg,
+canvas,
+video {
+  max-width: 100%;
 }
 
 /* ── Typography ── */
@@ -164,6 +184,28 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 /* ── Checkbox ── */
 input[type="checkbox"] {
   accent-color: var(--color-primary);
+}
+
+button,
+input,
+select,
+textarea {
+  touch-action: manipulation;
+}
+
+@media (max-width: 640px) {
+  select,
+  input[type="text"],
+  input[type="search"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  input[type="date"],
+  input[type="time"],
+  input[type="datetime-local"],
+  textarea {
+    font-size: 16px;
+  }
 }
 
 /* ═══════════════════════════════════════════════════

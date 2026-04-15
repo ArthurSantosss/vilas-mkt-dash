@@ -635,7 +635,7 @@ export default function MetaBalances() {
           </div>
 
           {/* Filters & Actions */}
-          <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-end gap-3 lg:gap-4 w-full lg:w-auto">
+          <div className="grid grid-cols-1 min-[560px]:grid-cols-2 sm:flex sm:flex-wrap items-end gap-3 lg:gap-4 w-full lg:w-auto">
             {agencies.length > 0 && (
               <div className="flex flex-col gap-1 col-span-1 sm:w-[180px]">
                 <label className="text-[10px] font-medium text-text-secondary uppercase tracking-wider">Agência</label>
@@ -670,7 +670,7 @@ export default function MetaBalances() {
                 bg-gradient-to-r from-primary to-primary-light text-white shadow-lg shadow-primary/25
                 hover:shadow-xl hover:shadow-primary/30 hover:scale-[1.02] active:scale-[0.98]
                 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100
-                transition-all duration-300 ease-out h-[36px] col-span-2 sm:col-span-1"
+                transition-all duration-300 ease-out h-[36px] col-span-1 min-[560px]:col-span-2 sm:col-span-1"
             >
               <RefreshCw size={14} className={loading ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'} />
               {loading ? 'Atualizando...' : 'Atualizar'}

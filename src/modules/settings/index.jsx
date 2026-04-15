@@ -196,7 +196,7 @@ export default function Settings() {
   return (
     <div className="space-y-6">
       {/* ═══ HEADER ═══ */}
-      <div className="relative z-10 rounded-2xl border border-border bg-gradient-to-br from-surface via-[#1a1d27] to-[#0f1117] p-6 mb-6">
+      <div className="relative z-10 mb-6 rounded-2xl border border-border bg-gradient-to-br from-surface via-[#1a1d27] to-[#0f1117] p-4 sm:p-6">
         <div className="absolute inset-0 overflow-hidden rounded-2xl pointer-events-none">
           <div className="absolute -top-20 -right-20 h-60 w-60 rounded-full bg-primary/5 blur-3xl" />
           <div className="absolute -bottom-10 -left-10 h-40 w-40 rounded-full bg-primary-light/5 blur-3xl" />
@@ -208,8 +208,8 @@ export default function Settings() {
               <SettingsIcon size={22} className="text-white" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-text-primary tracking-tight">Configurações</h1>
-              <p className="text-sm text-text-secondary">Gerencie conexões e preferências da plataforma</p>
+              <h1 className="text-xl sm:text-2xl font-bold text-text-primary tracking-tight">Configurações</h1>
+              <p className="text-xs sm:text-sm text-text-secondary">Gerencie conexões e preferências da plataforma</p>
             </div>
           </div>
         </div>
@@ -225,7 +225,7 @@ export default function Settings() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-surface rounded-xl border border-border overflow-hidden">
-          <div className="bg-gradient-to-r from-[#1877F2]/5 to-transparent px-6 py-4 border-b border-border/50 flex items-center justify-between">
+          <div className="bg-gradient-to-r from-[#1877F2]/5 to-transparent px-4 py-4 sm:px-6 border-b border-border/50 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-lg bg-[#1877F2]/10 flex items-center justify-center">
                 <FacebookIcon />
@@ -251,7 +251,7 @@ export default function Settings() {
                     </div>
                   </div>
                 )}
-                <div className="flex gap-2">
+                <div className="flex flex-col gap-2 sm:flex-row">
                   <button
                     onClick={() => fetchMetaAccounts(metaToken)}
                     disabled={loadingMeta}
@@ -287,19 +287,19 @@ export default function Settings() {
 
       {metaAccounts.length > 0 && (
         <div className="bg-surface rounded-xl border border-border overflow-hidden">
-          <div className="px-6 py-4 border-b border-border/50 flex items-center justify-between">
+          <div className="flex flex-col gap-4 border-b border-border/50 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <div>
               <h2 className="text-lg font-bold text-text-primary">Contas de Anuncio - Meta Ads</h2>
               <p className="text-xs text-text-secondary">Ordenadas por agencia (sem agencia no final)</p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center">
               <button
                 onClick={() => setShowOnlyActive(v => !v)}
-                className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${showOnlyActive ? 'bg-primary/15 text-primary-light border-primary/30' : 'bg-surface border-border text-text-secondary hover:text-text-primary hover:border-primary/30'}`}
+                className={`w-full sm:w-auto text-xs px-3 py-1.5 rounded-lg border transition-all ${showOnlyActive ? 'bg-primary/15 text-primary-light border-primary/30' : 'bg-surface border-border text-text-secondary hover:text-text-primary hover:border-primary/30'}`}
               >
                 {showOnlyActive ? 'Mostrar todas' : 'Ocultar inativas'}
               </button>
-              <div className="bg-surface border border-border rounded-lg px-4 py-2 text-sm">
+              <div className="bg-surface border border-border rounded-lg px-4 py-2 text-sm text-center sm:text-left">
                 <span className="text-text-secondary">Ativas: </span>
                 <span className="font-bold text-text-primary">{activeMetaCount}/{metaAccounts.length}</span>
               </div>
@@ -320,12 +320,12 @@ export default function Settings() {
                 const paymentMethod = getAccountPaymentMethod(paymentMethods, account.id, account.account_id) || 'credit_card';
                 const isCreditCard = isCreditCardPaymentMethod(paymentMethod);
                 return (
-                  <div key={account.id} className={`px-6 py-4 flex items-center justify-between transition-colors ${isEnabled ? 'hover:bg-surface-hover/50' : 'opacity-50'}`}>
-                    <div className="flex items-center gap-4 min-w-0">
+                  <div key={account.id} className={`flex flex-col gap-4 px-4 py-4 transition-colors sm:flex-row sm:items-center sm:justify-between sm:px-6 ${isEnabled ? 'hover:bg-surface-hover/50' : 'opacity-50'}`}>
+                    <div className="flex w-full min-w-0 items-start gap-4">
                       <div className="w-8 h-8 rounded-lg bg-[#1877F2]/10 flex items-center justify-center shrink-0">
                         <FacebookIcon className="w-4 h-4" />
                       </div>
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-text-primary truncate">{account.name || account.account_id}</p>
                         <div className="flex items-center gap-2 text-xs text-text-secondary flex-wrap">
                           <span className="font-mono">{account.account_id}</span>
@@ -337,18 +337,18 @@ export default function Settings() {
                         </div>
                       </div>
                     </div>
-                    <div className="shrink-0 ml-4 flex items-center gap-3">
+                    <div className="flex w-full flex-col gap-3 sm:ml-4 sm:w-auto sm:flex-row sm:items-center sm:justify-end">
                       {agencies.length > 0 && (
                         <select
                           value={accountAgencies[account.id] || ''}
                           onChange={e => setAccountAgency(account.id, e.target.value)}
-                          className="bg-bg border border-border rounded-lg px-2 py-1 text-xs text-text-primary focus:outline-none focus:border-primary"
+                          className="w-full bg-bg border border-border rounded-lg px-2 py-2 text-xs text-text-primary focus:outline-none focus:border-primary sm:w-[180px]"
                         >
                           <option value="">Sem agencia</option>
                           {agencies.map(ag => <option key={ag} value={ag}>{ag}</option>)}
                         </select>
                       )}
-                      <button onClick={() => toggleAccount(account.id)} className="transition-colors" title={isEnabled ? 'Desativar no dashboard' : 'Ativar no dashboard'}>
+                      <button onClick={() => toggleAccount(account.id)} className="self-end transition-colors sm:self-auto" title={isEnabled ? 'Desativar no dashboard' : 'Ativar no dashboard'}>
                         {isEnabled ? <ToggleRight size={28} className="text-success" /> : <ToggleLeft size={28} className="text-text-secondary/40" />}
                       </button>
                     </div>
@@ -368,8 +368,8 @@ export default function Settings() {
             <p className="text-xs text-text-secondary">Crie agencias para categorizar as contas de anuncio</p>
           </div>
         </div>
-        <div className="p-6 space-y-4">
-          <div className="flex gap-2">
+        <div className="p-4 space-y-4 sm:p-6">
+          <div className="flex flex-col gap-2 sm:flex-row">
             <input
               type="text"
               value={newAgencyName}
@@ -381,7 +381,7 @@ export default function Settings() {
             <button
               onClick={() => { if (newAgencyName.trim()) { addAgency(newAgencyName); setNewAgencyName(''); } }}
               disabled={!newAgencyName.trim()}
-              className="flex items-center gap-2 px-4 py-2 bg-primary/20 border border-primary/30 text-primary-light rounded-lg text-sm font-medium hover:bg-primary/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex items-center justify-center gap-2 px-4 py-2 bg-primary/20 border border-primary/30 text-primary-light rounded-lg text-sm font-medium hover:bg-primary/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Plus size={16} /> Adicionar
             </button>
@@ -405,20 +405,20 @@ export default function Settings() {
       </div>
 
       {/* Logout */}
-      <div className="bg-surface/50 rounded-xl border border-danger/20 px-6 py-5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
+      <div className="bg-surface/50 rounded-xl border border-danger/20 px-4 py-5 sm:px-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
             <LogOut size={18} className="text-danger/70" />
-            <div>
+            <div className="min-w-0">
               <p className="text-sm font-medium text-text-primary">Sair da conta</p>
               {user?.email && (
-                <p className="text-xs text-text-secondary mt-0.5">Conectado como {user.email}</p>
+                <p className="mt-0.5 truncate text-xs text-text-secondary">Conectado como {user.email}</p>
               )}
             </div>
           </div>
           <button
             onClick={signOut}
-            className="inline-flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium
+            className="inline-flex w-full items-center justify-center gap-2 px-5 py-2 rounded-lg text-sm font-medium sm:w-auto
               bg-danger/10 border border-danger/30 text-danger
               hover:bg-danger/20 hover:border-danger/50
               active:scale-[0.97] transition-all duration-200"

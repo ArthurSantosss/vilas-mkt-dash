@@ -131,7 +131,8 @@ export default function SheetsClients() {
 
       {/* ── Agency Tabs + Search ── */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-        <div className="flex gap-1 p-1 bg-surface border border-border rounded-xl">
+        <div className="overflow-x-auto pb-1">
+          <div className="flex w-max gap-1 rounded-xl border border-border bg-surface p-1">
           {AGENCY_TABS.map(tab => (
             <button
               key={tab.key}
@@ -145,8 +146,9 @@ export default function SheetsClients() {
               {tab.label}
             </button>
           ))}
+          </div>
         </div>
-        <div className="relative flex-1 max-w-xs">
+        <div className="relative w-full flex-1 sm:max-w-xs">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary/50" />
           <input
             type="text"

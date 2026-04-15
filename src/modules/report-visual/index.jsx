@@ -895,7 +895,7 @@ export default function ReportVisual() {
         </div>
 
         {/* Selectors */}
-        <div className="relative mt-5 grid grid-cols-2 sm:flex sm:flex-wrap items-end justify-center gap-3 sm:gap-5">
+        <div className="relative mt-5 grid grid-cols-1 min-[560px]:grid-cols-2 sm:flex sm:flex-wrap items-end justify-center gap-3 sm:gap-5">
           {hasAgencies ? (
             <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px]">
               <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Agência</label>
@@ -928,7 +928,7 @@ export default function ReportVisual() {
             </select>
           </div>
 
-          <div className="flex flex-col gap-1.5 col-span-2 sm:col-span-1 sm:w-[210px] z-50">
+          <div className="flex flex-col gap-1.5 col-span-1 min-[560px]:col-span-2 sm:col-span-1 sm:w-[210px] z-50">
             <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Período</label>
             <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} className="w-full" />
           </div>

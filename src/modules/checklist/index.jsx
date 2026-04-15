@@ -54,7 +54,7 @@ export default function Checklist() {
   return (
     <div className="space-y-6 max-w-3xl">
       {/* Header */}
-      <div className="section-header flex items-center justify-between">
+      <div className="section-header flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative flex items-center gap-3">
           <div className="flex items-center justify-center w-11 h-11 rounded-xl bg-gradient-to-br from-success to-emerald-400 shadow-lg shadow-success/20">
             <CheckSquare size={22} className="text-white" />
@@ -67,7 +67,7 @@ export default function Checklist() {
         {totalCount > 0 && (
           <button
             onClick={clearAllTasks}
-            className="relative flex items-center gap-2 px-3.5 py-2 bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl text-xs font-medium text-text-secondary hover:text-danger hover:border-danger/30 transition-all"
+            className="relative flex w-full items-center justify-center gap-2 px-3.5 py-2 bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl text-xs font-medium text-text-secondary hover:text-danger hover:border-danger/30 transition-all sm:w-auto"
           >
             <RotateCcw size={13} /> Limpar Tudo
           </button>
@@ -97,7 +97,7 @@ export default function Checklist() {
 
       {/* Add task */}
       <div className="bg-surface rounded-xl border border-border p-4">
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row">
           <input
             type="text"
             placeholder="Nova tarefa..."
@@ -109,7 +109,7 @@ export default function Checklist() {
           <select
             value={selectedAgency}
             onChange={e => setSelectedAgency(e.target.value)}
-            className="bg-bg border border-border rounded-lg px-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-primary"
+            className="w-full sm:w-auto bg-bg border border-border rounded-lg px-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-primary"
           >
             <option value="">Geral</option>
             {agencies.map(ag => (
@@ -119,7 +119,7 @@ export default function Checklist() {
           <button
             onClick={handleAddTask}
             disabled={!newTask.trim()}
-            className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-primary to-primary-light text-black rounded-lg text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-primary to-primary-light text-black rounded-lg text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Plus size={16} /> Adicionar
           </button>
@@ -171,7 +171,7 @@ export default function Checklist() {
                     {groupTasks.map(task => (
                       <div
                         key={task.id}
-                        className="flex items-center gap-3 px-5 py-3 hover:bg-surface-hover/50 transition-colors group"
+                        className="group flex flex-wrap items-center gap-3 px-5 py-3 hover:bg-surface-hover/50 transition-colors"
                       >
                         <input
                           type="checkbox"
@@ -179,7 +179,7 @@ export default function Checklist() {
                           onChange={() => toggleTask(task.id)}
                           className="w-4 h-4 rounded border-border accent-primary shrink-0 cursor-pointer"
                         />
-                        <span className={`flex-1 text-sm ${task.completed ? 'line-through text-text-secondary' : 'text-text-primary'}`}>
+                        <span className={`min-w-0 flex-1 text-sm ${task.completed ? 'line-through text-text-secondary' : 'text-text-primary'}`}>
                           {task.text}
                         </span>
                         {task.completedAt && (
