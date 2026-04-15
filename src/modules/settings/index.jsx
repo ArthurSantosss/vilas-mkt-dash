@@ -46,6 +46,7 @@ export default function Settings() {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.META_ACCOUNTS)) || []; } catch { return []; }
   });
   const [loadingMeta, setLoadingMeta] = useState(false);
+  const [error, setError] = useState(null);
 
   const [paymentMethods, setPaymentMethods] = useState(() => readSavedPaymentMethods());
 
