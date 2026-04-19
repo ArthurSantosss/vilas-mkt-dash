@@ -87,6 +87,7 @@ export default function Settings() {
       const accounts = accountsData.data || [];
       setMetaAccounts(accounts);
       localStorage.setItem(STORAGE_KEYS.META_ACCOUNTS, JSON.stringify(accounts));
+      window.dispatchEvent(new CustomEvent('local-storage-map-updated'));
     } catch (err) {
       console.error('Erro ao buscar contas Meta:', err);
       setError(err.message);
@@ -127,6 +128,7 @@ export default function Settings() {
         const trimmed = token.trim();
         setMetaToken(trimmed);
         localStorage.setItem(STORAGE_KEYS.META_TOKEN, trimmed);
+        window.dispatchEvent(new CustomEvent('local-storage-map-updated'));
         await fetchMetaAccounts(trimmed);
       }
       return;
@@ -138,6 +140,7 @@ export default function Settings() {
           const token = response.authResponse.accessToken;
           setMetaToken(token);
           localStorage.setItem(STORAGE_KEYS.META_TOKEN, token);
+          window.dispatchEvent(new CustomEvent('local-storage-map-updated'));
           fetchMetaAccounts(token);
         } else {
           setLoadingMeta(false);
@@ -154,6 +157,7 @@ export default function Settings() {
     localStorage.removeItem(STORAGE_KEYS.META_TOKEN);
     localStorage.removeItem(STORAGE_KEYS.META_USER);
     localStorage.removeItem(STORAGE_KEYS.META_ACCOUNTS);
+    window.dispatchEvent(new CustomEvent('local-storage-map-updated'));
   };
 
   const toggleAccount = (accountId) => {
@@ -163,6 +167,7 @@ export default function Settings() {
         : [...prev, accountId];
       localStorage.setItem(STORAGE_KEYS.DISABLED_ACCOUNTS, JSON.stringify(updated));
       window.dispatchEvent(new Event('meta-accounts-toggled'));
+      window.dispatchEvent(new CustomEvent('local-storage-map-updated'));
       return updated;
     });
   };

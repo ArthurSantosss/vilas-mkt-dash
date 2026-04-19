@@ -75,3 +75,11 @@ CREATE POLICY "Users see own accounts"
 
 CREATE INDEX IF NOT EXISTS idx_user_tokens_user_platform ON user_tokens(user_id, platform);
 CREATE INDEX IF NOT EXISTS idx_ad_accounts_user_platform ON ad_accounts(user_id, platform);
+
+-- ── Tabela: app_preferences ──
+-- Armazena de forma global as configurações de localStorage (Saldos, Nomes, Tokens customizados)
+CREATE TABLE IF NOT EXISTS app_preferences (
+  key TEXT PRIMARY KEY,
+  value JSONB NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);

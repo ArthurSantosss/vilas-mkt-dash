@@ -7,6 +7,7 @@ import { MetaAdsProvider } from './contexts/MetaAdsContext';
 import { AgencyProvider } from './contexts/AgencyContext';
 import { AlertsProvider } from './contexts/AlertsContext';
 import { ChangeLogProvider } from './contexts/ChangeLogContext';
+import { PreferencesProvider } from './contexts/PreferencesContext';
 
 // Code-split: cada rota carrega seu bundle sob demanda
 const LoginPage = lazy(() => import('./modules/login'));
@@ -39,8 +40,9 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AgencyProvider>
-          <MetaAdsProvider>
+        <PreferencesProvider>
+          <AgencyProvider>
+            <MetaAdsProvider>
             <AlertsProvider>
               <ChangeLogProvider>
                 <Suspense fallback={<PageLoader />}>
@@ -74,7 +76,8 @@ export default function App() {
               </ChangeLogProvider>
             </AlertsProvider>
           </MetaAdsProvider>
-        </AgencyProvider>
+          </AgencyProvider>
+        </PreferencesProvider>
       </AuthProvider>
     </BrowserRouter>
   );
