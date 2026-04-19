@@ -101,7 +101,10 @@ export function AuthProvider({ children }) {
         };
 
         localStorage.setItem(AUTH_KEY, JSON.stringify(userData));
-        setUser(userData);
+        
+        // Força um recarregamento da página para que os contextos AgencyProvider 
+        // e MetaAdsProvider leiam o localStorage repopulado pela nuvem!
+        window.location.href = '/';
     };
 
     const signOut = async () => {

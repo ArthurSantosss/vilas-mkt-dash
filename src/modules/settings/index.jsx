@@ -450,9 +450,22 @@ export default function Settings() {
               btn.disabled = true;
               const originalText = btn.innerText;
               btn.innerText = 'Salvando...';
-              await syncToCloud(user.email);
-              btn.innerText = 'Salvo com sucesso!';
-              setTimeout(() => { btn.disabled = false; btn.innerText = originalText; }, 2000);
+              
+              const success = await syncToCloud(user.email);
+              
+              if (success) {
+                btn.innerText = 'Salvo com sucesso!';
+                btn.classList.add('bg-success', 'text-white');
+              } else {
+                btn.innerText = 'Erro (Tabela nao existe?)';
+                btn.classList.add('bg-danger', 'text-white');
+              }
+              
+              setTimeout(() => { 
+                btn.disabled = false; 
+                btn.innerText = originalText; 
+                btn.classList.remove('bg-success', 'bg-danger', 'text-white');
+              }, 4000);
             }}
             className="inline-flex w-full items-center justify-center gap-2 px-5 py-2 rounded-lg text-sm font-bold sm:w-auto
               bg-primary text-white shadow-lg shadow-primary/20
