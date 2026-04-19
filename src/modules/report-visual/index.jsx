@@ -3,8 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { supabase } from '../../services/supabase';
 import { useMetaAds } from '../../contexts/MetaAdsContext';
 import { useAgency } from '../../contexts/AgencyContext';
-import { formatCurrency, formatNumber } from '../../shared/utils/format';
-import { Image, Download, Loader2, Sparkles, Copy, Check, Send, CheckCircle2 } from 'lucide-react';
+import { formatCurrency, formatNumber, formatPercent } from '../../shared/utils/format';
+import { Image, Download, Loader2, Sparkles, Copy, Check, Send, CheckCircle2, Target } from 'lucide-react';
 import PeriodSelector from '../../shared/components/PeriodSelector';
 import {
   fetchAccountInsights, fetchCampaignsWithInsights,
@@ -78,6 +78,73 @@ const LEAD_ACTION_TYPES = [
 ];
 
 const ENGAGEMENT_ACTION_TYPES = ['post_engagement', 'page_engagement'];
+
+const OBJECTIVES = {
+  messages: {
+    label: 'Mensagens',
+    metricLabel: 'Mensagens',
+    metricLabelSingular: 'mensagem',
+    dailyKey: 'leads',
+    dailyTitle: 'Mensagens por dia',
+    buildKpis: (d) => [
+      { label: 'Investimento', value: formatCurrency(d.spend), color: '#0FA5AE' },
+      { label: 'Mensagens', value: formatNumber(d.leads), color: '#1B8EC2' },
+      { label: 'Custo / Mensagem', value: formatCurrency(d.costPerLead), color: '#2196F3' },
+      { label: 'Alcance', value: formatNumber(d.reach), color: '#42A5F5' },
+      { label: 'Impressões', value: formatNumber(d.impressions), color: '#64B5F6' },
+    ],
+    buildFunnel: (d) => [
+      { label: 'Impressões', value: d.impressions, widthPct: 100, color: '#0B6E75' },
+      { label: 'Alcance', value: d.reach, widthPct: Math.max(40, Math.min(82, (d.reach / Math.max(d.impressions, 1)) * 100)), color: '#0FA5AE' },
+      { label: 'Cliques', value: d.clicks, widthPct: Math.max(24, Math.min(50, (d.clicks / Math.max(d.reach, 1)) * 100 + 20)), color: '#1B8EC2' },
+      { label: 'Mensagens', value: d.leads, widthPct: Math.max(14, Math.min(30, (d.leads / Math.max(d.clicks, 1)) * 100 + 10)), color: '#2196F3' },
+    ],
+  },
+  clicks: {
+    label: 'Cliques no link',
+    metricLabel: 'Cliques',
+    metricLabelSingular: 'clique',
+    dailyKey: 'clicks',
+    dailyTitle: 'Cliques por dia',
+    buildKpis: (d) => [
+      { label: 'Investimento', value: formatCurrency(d.spend), color: '#0FA5AE' },
+      { label: 'Cliques', value: formatNumber(d.clicks), color: '#1B8EC2' },
+      { label: 'Custo / Clique', value: formatCurrency(d.costPerClick), color: '#2196F3' },
+      { label: 'CTR', value: formatPercent(d.ctr), color: '#42A5F5' },
+      { label: 'Alcance', value: formatNumber(d.reach), color: '#64B5F6' },
+    ],
+    buildFunnel: (d) => [
+      { label: 'Impressões', value: d.impressions, widthPct: 100, color: '#0B6E75' },
+      { label: 'Alcance', value: d.reach, widthPct: Math.max(40, Math.min(82, (d.reach / Math.max(d.impressions, 1)) * 100)), color: '#0FA5AE' },
+      { label: 'Cliques', value: d.clicks, widthPct: Math.max(20, Math.min(55, (d.clicks / Math.max(d.reach, 1)) * 100 + 15)), color: '#2196F3' },
+    ],
+  },
+  engagements: {
+    label: 'Engajamentos',
+    metricLabel: 'Engajamentos',
+    metricLabelSingular: 'engajamento',
+    dailyKey: 'engagements',
+    dailyTitle: 'Engajamentos por dia',
+    buildKpis: (d) => [
+      { label: 'Investimento', value: formatCurrency(d.spend), color: '#0FA5AE' },
+      { label: 'Engajamentos', value: formatNumber(d.engagements), color: '#1B8EC2' },
+      { label: 'Custo / Engajamento', value: formatCurrency(d.costPerEngagement), color: '#2196F3' },
+      { label: 'Alcance', value: formatNumber(d.reach), color: '#42A5F5' },
+      { label: 'Impressões', value: formatNumber(d.impressions), color: '#64B5F6' },
+    ],
+    buildFunnel: (d) => [
+      { label: 'Impressões', value: d.impressions, widthPct: 100, color: '#0B6E75' },
+      { label: 'Alcance', value: d.reach, widthPct: Math.max(40, Math.min(82, (d.reach / Math.max(d.impressions, 1)) * 100)), color: '#0FA5AE' },
+      { label: 'Engajamentos', value: d.engagements, widthPct: Math.max(16, Math.min(46, (d.engagements / Math.max(d.reach, 1)) * 100 + 12)), color: '#42A5F5' },
+    ],
+  },
+};
+
+const OBJECTIVE_OPTIONS = [
+  { id: 'messages', label: 'Mensagens' },
+  { id: 'clicks', label: 'Cliques no link' },
+  { id: 'engagements', label: 'Engajamentos' },
+];
 
 function aggregateCampaignMetrics(campaigns = []) {
   const summary = campaigns.reduce((acc, campaign) => {
@@ -293,8 +360,10 @@ function getExportCacheKey(reportData) {
     scopeLabel: reportData.scopeLabel,
     start: reportData.period?.startShort,
     end: reportData.period?.endShort,
+    objective: reportData.objective,
     spend: reportData.spend,
     leads: reportData.leads,
+    clicks: reportData.clicks,
     engagements: reportData.engagements,
     agencyLogoB64: reportData.agencyLogoB64?.slice(0, 64),
     metaLogoB64: reportData.metaLogoB64?.slice(0, 64),
@@ -302,8 +371,11 @@ function getExportCacheKey(reportData) {
 }
 
 // ── Standalone report card for off-screen rendering ──
-function ReportCard({ data, agencyLogoB64, metaLogoB64, agencyLabel: agLabel }) {
+function ReportCard({ data, agencyLogoB64, metaLogoB64, agencyLabel: agLabel, objective = 'messages' }) {
   const d = data;
+  const config = OBJECTIVES[objective] || OBJECTIVES.messages;
+  const kpis = config.buildKpis(d);
+  const funnelStages = config.buildFunnel(d);
   return (
     <div
       style={{
@@ -353,11 +425,9 @@ function ReportCard({ data, agencyLogoB64, metaLogoB64, agencyLabel: agLabel }) 
 
       {/* KPIs */}
       <div style={{ display: 'flex', gap: 14, marginBottom: 22 }}>
-        <ReportKPI label="Investimento" value={formatCurrency(d.spend)} color="#0FA5AE" />
-        <ReportKPI label="Leads / Conversas" value={formatNumber(d.leads)} color="#1B8EC2" />
-        <ReportKPI label="Custo por Lead" value={formatCurrency(d.costPerLead)} color="#2196F3" />
-        <ReportKPI label="Engajamentos" value={formatNumber(d.engagements)} color="#42A5F5" />
-        <ReportKPI label="Custo / Engajamento" value={formatCurrency(d.costPerEngagement)} color="#64B5F6" />
+        {kpis.map((kpi, idx) => (
+          <ReportKPI key={idx} label={kpi.label} value={kpi.value} color={kpi.color} />
+        ))}
       </div>
 
       {/* Funnel */}
@@ -367,14 +437,9 @@ function ReportCard({ data, agencyLogoB64, metaLogoB64, agencyLabel: agLabel }) 
         boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
       }}>
         <div style={{ fontSize: 11, color: '#8899aa', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 14, textAlign: 'center' }}>
-          Funil de Conversão
+          Funil de Conversão — {config.metricLabel}
         </div>
-        <SVGFunnel stages={[
-          { label: 'Impressões', value: d.impressions, widthPct: 100, color: '#0B6E75' },
-          { label: 'Alcance', value: d.reach, widthPct: Math.max(40, Math.min(82, (d.reach / Math.max(d.impressions, 1)) * 100)), color: '#0FA5AE' },
-          { label: 'Cliques', value: d.clicks, widthPct: Math.max(24, Math.min(50, (d.clicks / Math.max(d.reach, 1)) * 100 + 20)), color: '#1B8EC2' },
-          { label: 'Leads', value: d.leads, widthPct: Math.max(14, Math.min(30, (d.leads / Math.max(d.clicks, 1)) * 100 + 10)), color: '#2196F3' },
-        ]} />
+        <SVGFunnel stages={funnelStages} />
       </div>
     </div>
   );
@@ -410,6 +475,7 @@ export default function ReportVisual() {
   const { agencies, accountAgencies } = useAgency();
   const [selectedAccount, setSelectedAccount] = useState('');
   const [selectedAgency, setSelectedAgency] = useState('');
+  const [selectedObjective, setSelectedObjective] = useState('messages');
   const [selectedCampaignIds, setSelectedCampaignIds] = useState([]);
   const [reportData, setReportData] = useState(null);
   const [generating, setGenerating] = useState(false);
@@ -592,6 +658,9 @@ export default function ReportVisual() {
         campData = currentCampaigns;
       }
 
+      const costPerClick = clicks > 0 ? spend / clicks : 0;
+      const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+
       const diffs = {
         spend: calcDiff(spend, prevSpend),
         leads: calcDiff(leads, prevLeads),
@@ -600,8 +669,10 @@ export default function ReportVisual() {
         costPerEngagement: calcDiff(costPerEngagement, prevCostPerEngagement),
       };
 
-      // Daily leads
+      // Daily series: leads, clicks, engagements from the same campaign fetch
       let dailyLeads = [];
+      let dailyClicks = [];
+      let dailyEngagements = [];
       if (campData.length > 0) {
         try {
           const allDaily = await Promise.all(
@@ -611,12 +682,17 @@ export default function ReportVisual() {
           for (const daily of allDaily) {
             for (const d of daily) {
               const date = d.date_start;
-              if (!dayMap[date]) dayMap[date] = { date, leads: 0 };
+              if (!dayMap[date]) dayMap[date] = { date, leads: 0, clicks: 0, engagements: 0 };
               dayMap[date].leads += getActionValueMulti(d.actions || [], LEAD_ACTION_TYPES);
+              dayMap[date].clicks += parseInt(d.inline_link_clicks || 0, 10);
+              dayMap[date].engagements += getActionValueMulti(d.actions || [], ENGAGEMENT_ACTION_TYPES);
             }
           }
-          dailyLeads = Object.values(dayMap).sort((a, b) => a.date.localeCompare(b.date))
-            .map(d => ({ date: `${d.date.split('-')[2]}/${d.date.split('-')[1]}`, leads: d.leads }));
+          const sorted = Object.values(dayMap).sort((a, b) => a.date.localeCompare(b.date));
+          const formatDay = (date) => `${date.split('-')[2]}/${date.split('-')[1]}`;
+          dailyLeads = sorted.map(d => ({ date: formatDay(d.date), leads: d.leads }));
+          dailyClicks = sorted.map(d => ({ date: formatDay(d.date), clicks: d.clicks }));
+          dailyEngagements = sorted.map(d => ({ date: formatDay(d.date), engagements: d.engagements }));
         } catch { /* empty */ }
       }
 
@@ -635,9 +711,12 @@ export default function ReportVisual() {
         selectedCampaignNames,
         filteredCampaignCount: hasCampaignFilter ? selectedCampaignIds.length : 0,
         period: periodDates,
+        objective: selectedObjective,
         spend, impressions, reach, clicks, leads, engagements,
-        costPerLead, costPerEngagement,
-        diffs, dailyLeads, agencyLogoB64, metaLogoB64,
+        costPerLead, costPerEngagement, costPerClick, ctr,
+        diffs,
+        dailyLeads, dailyClicks, dailyEngagements,
+        agencyLogoB64, metaLogoB64,
       });
     } catch (err) {
       console.error('Erro ao gerar relatório visual:', err);
@@ -648,6 +727,7 @@ export default function ReportVisual() {
   }, [
     selectedAccount,
     selectedPeriod,
+    selectedObjective,
     accounts,
     logoSrc,
     hasCampaignFilter,
@@ -779,6 +859,8 @@ export default function ReportVisual() {
         const totalEngagements = accountCamps.reduce((s, c) => s + Number(c.metrics?.engagements || 0), 0);
         const costPerLead = totalLeads > 0 ? totalSpend / totalLeads : 0;
         const costPerEngagement = totalEngagements > 0 ? totalSpend / totalEngagements : 0;
+        const costPerClick = totalClicks > 0 ? totalSpend / totalClicks : 0;
+        const ctr = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
 
         const cardData = {
           accountName: account.clientName || 'Conta',
@@ -791,6 +873,8 @@ export default function ReportVisual() {
           engagements: totalEngagements,
           costPerLead,
           costPerEngagement,
+          costPerClick,
+          ctr,
         };
 
         // Render card to PNG blob
@@ -799,6 +883,7 @@ export default function ReportVisual() {
           agencyLogoB64,
           metaLogoB64,
           agencyLabel: 'Grupo Tag',
+          objective: selectedObjective,
         });
 
         // Upload to Supabase Storage
@@ -870,7 +955,7 @@ export default function ReportVisual() {
     } finally {
       setSendingTag(false);
     }
-  }, [tagAccounts, campaigns, selectedPeriod]);
+  }, [tagAccounts, campaigns, selectedPeriod, selectedObjective]);
 
   const d = reportData;
 
@@ -925,6 +1010,22 @@ export default function ReportVisual() {
             >
               <option value="">Selecione uma conta</option>
               {filteredAccounts.map(a => <option key={a.id} value={a.id}>{a.clientName}</option>)}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px]">
+            <label className="text-xs font-medium text-text-secondary uppercase tracking-wider flex items-center gap-1.5">
+              <Target size={12} className="text-primary-light" />
+              Objetivo
+            </label>
+            <select
+              value={selectedObjective}
+              onChange={e => setSelectedObjective(e.target.value)}
+              className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
+            >
+              {OBJECTIVE_OPTIONS.map(opt => (
+                <option key={opt.id} value={opt.id}>{opt.label}</option>
+              ))}
             </select>
           </div>
 
@@ -1162,14 +1263,20 @@ export default function ReportVisual() {
 
             {/* ROW 2: KPI Cards */}
             <div style={{ display: 'flex', gap: 14, marginBottom: 22 }}>
-              <ReportKPI label="Investimento" value={formatCurrency(d.spend)} color="#0FA5AE" />
-              <ReportKPI label="Leads / Conversas" value={formatNumber(d.leads)} color="#1B8EC2" />
-              <ReportKPI label="Custo por Lead" value={formatCurrency(d.costPerLead)} color="#2196F3" />
-              <ReportKPI label="Engajamentos" value={formatNumber(d.engagements)} color="#42A5F5" />
-              <ReportKPI label="Custo / Engajamento" value={formatCurrency(d.costPerEngagement)} color="#64B5F6" />
+              {(() => {
+                const config = OBJECTIVES[d.objective] || OBJECTIVES.messages;
+                return config.buildKpis(d).map((kpi, idx) => (
+                  <ReportKPI key={idx} label={kpi.label} value={kpi.value} color={kpi.color} />
+                ));
+              })()}
             </div>
 
             {/* ROW 3: Funnel + Full-width Bar Chart */}
+            {(() => {
+              const config = OBJECTIVES[d.objective] || OBJECTIVES.messages;
+              const dailyData = d[`daily${config.dailyKey.charAt(0).toUpperCase() + config.dailyKey.slice(1)}`] || [];
+              const metricLabel = config.metricLabel.toLowerCase();
+              return (
             <div style={{ display: 'flex', gap: 16 }}>
               {/* LEFT: Real SVG Funnel */}
               <div style={{
@@ -1182,17 +1289,12 @@ export default function ReportVisual() {
                 boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
               }}>
                 <div style={{ fontSize: 11, color: '#8899aa', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 14, textAlign: 'center' }}>
-                  Funil de Conversão
+                  Funil — {config.metricLabel}
                 </div>
-                <SVGFunnel stages={[
-                  { label: 'Impressões', value: d.impressions, widthPct: 100, color: '#0B6E75' },
-                  { label: 'Alcance', value: d.reach, widthPct: Math.max(40, Math.min(82, (d.reach / Math.max(d.impressions, 1)) * 100)), color: '#0FA5AE' },
-                  { label: 'Cliques', value: d.clicks, widthPct: Math.max(24, Math.min(50, (d.clicks / Math.max(d.reach, 1)) * 100 + 20)), color: '#1B8EC2' },
-                  { label: 'Leads', value: d.leads, widthPct: Math.max(14, Math.min(30, (d.leads / Math.max(d.clicks, 1)) * 100 + 10)), color: '#2196F3' },
-                ]} />
+                <SVGFunnel stages={config.buildFunnel(d)} />
               </div>
 
-              {/* RIGHT: Daily Leads Bar Chart (full width) */}
+              {/* RIGHT: Daily Bar Chart for selected objective */}
               <div style={{
                 flex: 1,
                 background: 'linear-gradient(135deg, #1a2a3d, #1e2d3d)',
@@ -1204,11 +1306,11 @@ export default function ReportVisual() {
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
                   <div style={{ width: 10, height: 10, borderRadius: 3, background: 'linear-gradient(135deg, #0FA5AE, #2196F3)' }} />
-                  <span style={{ fontSize: 12, color: '#b0bec5', fontWeight: 600 }}>Leads por dia</span>
+                  <span style={{ fontSize: 12, color: '#b0bec5', fontWeight: 600 }}>{config.dailyTitle}</span>
                 </div>
-                {d.dailyLeads.length > 0 ? (
+                {dailyData.length > 0 ? (
                   <ResponsiveContainer width="100%" height={290}>
-                    <BarChart data={d.dailyLeads} margin={{ top: 24, right: 10, left: -10, bottom: 5 }}>
+                    <BarChart data={dailyData} margin={{ top: 24, right: 10, left: -10, bottom: 5 }}>
                       <defs>
                         <linearGradient id="barGradVis" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="0%" stopColor="#20CFCF" stopOpacity={1} />
@@ -1228,16 +1330,16 @@ export default function ReportVisual() {
                         contentStyle={{ background: 'linear-gradient(135deg, #1a2538, #1e2d3d)', border: '1px solid #0FA5AE40', borderRadius: 12, fontSize: 12, boxShadow: '0 12px 32px rgba(0,0,0,0.4)', backdropFilter: 'blur(8px)' }}
                         labelStyle={{ color: '#8899aa', fontWeight: 600, marginBottom: 4 }}
                         itemStyle={{ color: '#20CFCF', fontWeight: 700 }}
-                        formatter={(value) => [`${value} leads`, '']}
+                        formatter={(value) => [`${value} ${metricLabel}`, '']}
                       />
                       {/* Glow shadow bar behind main bar */}
-                      <Bar dataKey="leads" fill="url(#barGlowVis)" radius={[8, 8, 0, 0]} barSize={d.dailyLeads.length > 20 ? 22 : 36} isAnimationActive={false} />
+                      <Bar dataKey={config.dailyKey} fill="url(#barGlowVis)" radius={[8, 8, 0, 0]} barSize={dailyData.length > 20 ? 22 : 36} isAnimationActive={false} />
                       {/* Main bar with gradient + value labels on top */}
                       <Bar
-                        dataKey="leads"
+                        dataKey={config.dailyKey}
                         fill="url(#barGradVis)"
                         radius={[8, 8, 0, 0]}
-                        barSize={d.dailyLeads.length > 20 ? 18 : 32}
+                        barSize={dailyData.length > 20 ? 18 : 32}
                         label={{ position: 'top', fill: '#b0bec5', fontSize: 10, fontWeight: 700, offset: 6 }}
                         isAnimationActive={false}
                       />
@@ -1250,6 +1352,8 @@ export default function ReportVisual() {
                 )}
               </div>
             </div>
+              );
+            })()}
           </div>
         </div>
       )}
