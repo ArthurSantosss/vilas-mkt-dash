@@ -1,8 +1,23 @@
 import { createContext, useContext, useState, useEffect } from 'react';
+import { supabase } from '../services/supabase';
 
 const AuthContext = createContext();
 
 const AUTH_KEY = 'vilasmkt_auth';
+
+const BACKUP_KEYS = [
+  'account_monthly_goals',
+  'account_payment_methods',
+  'account_last_payments',
+  'account_last_payment_sources',
+  'account_billing_frequencies',
+  'meta_balance_snapshots',
+  'custom_account_names',
+  'meta_ads_column_order',
+  'meta_accounts',
+  'disabled_accounts',
+  'meta_provider_token'
+];
 
 export function AuthProvider({ children }) {
     const [user, setUser] = useState(null);
@@ -22,6 +37,47 @@ export function AuthProvider({ children }) {
         setIsLoading(false);
     }, []);
 
+    const syncToCloud = async (email) => {
+        try {
+            const upserts = [];
+            for (const key of BACKUP_KEYS) {
+                const localStr = localStorage.getItem(key);
+                if (localStr !== null && localStr !== 'undefined' && localStr !== '') {
+                    try {
+                        const localParsed = key === 'meta_provider_token' ? localStr : JSON.parse(localStr);
+                        upserts.push({ key: `${email}_${key}`, value: localParsed, updated_at: new Date().toISOString() });
+                    } catch {}
+                }
+            }
+            if (upserts.length > 0) {
+                await supabase.from('app_preferences').upsert(upserts, { onConflict: 'key' });
+                return true;
+            }
+            return false;
+        } catch (e) {
+            console.error('Erro ao sincronizar com nuvem:', e);
+            return false;
+        }
+    };
+
+    const loadFromCloud = async (email) => {
+        try {
+            const { data } = await supabase.from('app_preferences').select('key, value').like('key', `${email}_%`);
+            if (data && data.length > 0) {
+                data.forEach(row => {
+                    const originalKey = row.key.replace(`${email}_`, '');
+                    const strToSave = originalKey === 'meta_provider_token' ? row.value : JSON.stringify(row.value);
+                    localStorage.setItem(originalKey, strToSave);
+                });
+                return true;
+            }
+            return false;
+        } catch (e) {
+            console.error('Erro ao buscar backup na nuvem:', e);
+            return false;
+        }
+    };
+
     const signIn = async (email, password) => {
         const normalizedEmail = email.trim().toLowerCase();
         const authorizedEmail = import.meta.env.VITE_AUTH_EMAIL;
@@ -35,9 +91,12 @@ export function AuthProvider({ children }) {
             throw new Error('Email ou senha incorretos.');
         }
 
+        // Antes de finalizar o login, descarrega a nuvem pro celular
+        await loadFromCloud(normalizedEmail);
+
         const userData = {
             email: normalizedEmail,
-            name: 'Arthur Vilas',
+            name: 'Gestor',
             loggedAt: new Date().toISOString(),
         };
 
@@ -46,6 +105,9 @@ export function AuthProvider({ children }) {
     };
 
     const signOut = async () => {
+        if (user?.email) {
+            await syncToCloud(user.email);
+        }
         localStorage.removeItem(AUTH_KEY);
         setUser(null);
     };
@@ -55,6 +117,8 @@ export function AuthProvider({ children }) {
         isLoading,
         signIn,
         signOut,
+        syncToCloud,
+        loadFromCloud
     };
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

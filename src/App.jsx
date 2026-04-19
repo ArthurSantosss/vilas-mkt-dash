@@ -43,8 +43,8 @@ export default function App() {
         <PreferencesProvider>
           <AgencyProvider>
             <MetaAdsProvider>
-            <AlertsProvider>
-              <ChangeLogProvider>
+              <AlertsProvider>
+                <ChangeLogProvider>
                 <Suspense fallback={<PageLoader />}>
                   <Routes>
                     {/* Public routes */}
@@ -73,9 +73,9 @@ export default function App() {
                     <Route path="*" element={<Navigate to="/" replace />} />
                   </Routes>
                 </Suspense>
-              </ChangeLogProvider>
-            </AlertsProvider>
-          </MetaAdsProvider>
+                </ChangeLogProvider>
+              </AlertsProvider>
+            </MetaAdsProvider>
           </AgencyProvider>
         </PreferencesProvider>
       </AuthProvider>

@@ -34,7 +34,7 @@ const STORAGE_KEYS = {
 
 export default function Settings() {
   const { agencies, accountAgencies, addAgency, removeAgency, setAccountAgency } = useAgency();
-  const { user, signOut } = useAuth();
+  const { user, signOut, syncToCloud } = useAuth();
   const [newAgencyName, setNewAgencyName] = useState('');
   const [showOnlyActive, setShowOnlyActive] = useState(false);
 
@@ -430,6 +430,35 @@ export default function Settings() {
           >
             <LogOut size={14} />
             Sair
+          </button>
+        </div>
+      </div>
+
+      {/* Cloud Backup */}
+      <div className="bg-surface/50 rounded-xl border border-primary/20 bg-primary/5 px-4 py-5 sm:px-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
+            <RefreshCw size={18} className="text-primary-light" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-text-primary">Sincronizar com Nuvem (Backup)</p>
+              <p className="mt-0.5 text-xs text-text-secondary">Salve as configurações atuais (agências, token, contas) para seu login.</p>
+            </div>
+          </div>
+          <button
+            onClick={async (e) => {
+              const btn = e.currentTarget;
+              btn.disabled = true;
+              const originalText = btn.innerText;
+              btn.innerText = 'Salvando...';
+              await syncToCloud(user.email);
+              btn.innerText = 'Salvo com sucesso!';
+              setTimeout(() => { btn.disabled = false; btn.innerText = originalText; }, 2000);
+            }}
+            className="inline-flex w-full items-center justify-center gap-2 px-5 py-2 rounded-lg text-sm font-bold sm:w-auto
+              bg-primary text-white shadow-lg shadow-primary/20
+              hover:bg-primary-light active:scale-[0.97] transition-all duration-200"
+          >
+            Fazer Backup Manual
           </button>
         </div>
       </div>

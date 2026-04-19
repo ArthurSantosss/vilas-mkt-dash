@@ -11,9 +11,10 @@ const CLOUD_KEYS = [
   'meta_balance_snapshots',
   'custom_account_names',
   'meta_ads_column_order',
-  'meta_accounts',
-  'disabled_accounts',
-  'meta_provider_token'
+  'meta_ad_accounts',
+  'disabled_ad_accounts',
+  'meta_provider_token',
+  'meta_user_info',
 ];
 
 export const PreferencesContext = createContext();
@@ -75,7 +76,9 @@ export function PreferencesProvider({ children }) {
         }
 
         if (changedLocal) {
-          window.dispatchEvent(new CustomEvent('local-storage-map-updated', { detail: { fromCloud: true } }));
+          // A nuvem mandou itens novos! Recarregamos a página 1 única vez para que todas as 
+          // tabelas e o MetaAds acordem usando as preferências atualizadas em memória.
+          window.location.reload();
         }
         
         isHydrated.current = true;
@@ -105,7 +108,7 @@ export function PreferencesProvider({ children }) {
              try {
                const localParsed = key === 'meta_provider_token' ? localStr : JSON.parse(localStr);
                upserts.push({ key, value: localParsed, updated_at: new Date().toISOString() });
-             } catch {}
+             } catch { /* skip unparseable */ }
           }
         }
         if (upserts.length > 0) {
