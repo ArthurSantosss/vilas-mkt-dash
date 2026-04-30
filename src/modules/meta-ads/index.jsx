@@ -3,8 +3,9 @@ import { useMetaAds } from '../../contexts/MetaAdsContext';
 import { useAgency } from '../../contexts/AgencyContext';
 import { formatCurrency, formatNumber, formatPercent, getCostColor } from '../../shared/utils/format';
 import { readSavedPaymentMethods, isCreditCardPaymentMethod, getAccountPaymentMethod } from '../../shared/utils/paymentMethod';
+import { getNextPaymentDate, getDaysUntil, formatDateBR, readSavedLastPayments, readSavedBillingFrequencies, readSavedNextPaymentOverrides, parseDateInput, formatDateInput } from '../../shared/utils/nextPayment';
 
-import { Megaphone, Power, ChevronDown, ChevronRight, Loader2, RefreshCw, Settings2, Wallet, AlertTriangle, Clock, DollarSign, Check, X, ChevronUp, Info, Image, Pencil, CreditCard, GripVertical } from 'lucide-react';
+import { Megaphone, Power, ChevronDown, ChevronRight, Loader2, RefreshCw, Settings2, Wallet, AlertTriangle, Clock, DollarSign, Check, X, ChevronUp, Info, Image, Pencil, CreditCard, CalendarClock, GripVertical } from 'lucide-react';
 import { updateCampaignStatus, updateCampaignBudget, fetchAdSetsForCampaign, updateAdSetBudget, updateAdSetStatus, updateAdStatus, fetchAdsForAdSet } from '../../services/metaApi';
 import PeriodSelector from '../../shared/components/PeriodSelector';
 
@@ -13,6 +14,8 @@ const ALL_COLUMNS = [
   { key: 'budget', label: 'Orçamento', align: 'center' },
   { key: 'spend', label: 'Gasto', align: 'right' },
   { key: 'balance', label: 'Saldo', align: 'right' },
+  { key: 'nextPayment', label: 'Próx. Pagamento', align: 'right' },
+  { key: 'dailyUntilPayment', label: 'Disp./dia até Pgto', align: 'right' },
   { key: 'cpm', label: 'CPM', align: 'right' },
   { key: 'clicks', label: 'Cliques', align: 'right' },
   { key: 'cpc', label: 'CPC', align: 'right' },
@@ -232,6 +235,107 @@ function BudgetEditor({ currentBudget, onSave, saving }) {
   );
 }
 
+// ── Next Payment Editor ──
+function NextPaymentEditor({ accountId, computedDate, overrideDate, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const inputRef = useRef(null);
+
+  const effectiveDate = overrideDate || computedDate;
+  const days = getDaysUntil(effectiveDate);
+  const overdue = days !== null && days < 0;
+  const soon = days !== null && days >= 0 && days <= 2;
+  const color = overdue ? 'text-danger' : soon ? 'text-warning' : 'text-primary-light';
+  const label = days === null
+    ? ''
+    : overdue
+      ? `Atrasado ${Math.abs(days)}d`
+      : days === 0 ? 'Hoje' : days === 1 ? 'Amanhã' : `Em ${days}d`;
+
+  useEffect(() => {
+    if (editing && inputRef.current) inputRef.current.focus();
+  }, [editing]);
+
+  const handleOpen = (e) => {
+    e?.stopPropagation();
+    setDraft(overrideDate ? formatDateInput(overrideDate) : computedDate ? formatDateInput(computedDate) : '');
+    setEditing(true);
+  };
+
+  const handleSave = (e) => {
+    e?.stopPropagation();
+    onSave(accountId, draft || null);
+    setEditing(false);
+  };
+
+  const handleCancel = (e) => {
+    e?.stopPropagation();
+    setEditing(false);
+  };
+
+  const handleClear = (e) => {
+    e?.stopPropagation();
+    onSave(accountId, null);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1 justify-end" onClick={e => e.stopPropagation()}>
+        <input
+          ref={inputRef}
+          type="date"
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') handleCancel(); }}
+          className="bg-bg border border-primary/40 rounded px-1.5 py-0.5 text-xs text-text-primary focus:outline-none focus:border-primary"
+        />
+        <button onClick={handleSave} className="p-0.5 rounded hover:bg-success/20 text-success transition-colors" title="Salvar">
+          <Check size={12} />
+        </button>
+        <button onClick={handleCancel} className="p-0.5 rounded hover:bg-danger/20 text-danger transition-colors" title="Cancelar">
+          <X size={12} />
+        </button>
+        {overrideDate && (
+          <button onClick={handleClear} className="p-0.5 rounded hover:bg-warning/20 text-warning transition-colors" title="Limpar override (voltar ao cálculo automático)">
+            <RefreshCw size={12} />
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  if (!effectiveDate) {
+    return (
+      <button
+        onClick={handleOpen}
+        className="text-xs text-text-secondary/60 hover:text-primary-light transition-colors"
+        title="Definir próxima data de pagamento"
+      >
+        Definir
+      </button>
+    );
+  }
+
+  return (
+    <button
+      onClick={handleOpen}
+      title={overrideDate ? 'Data manual — clique para alterar' : 'Calculado automaticamente — clique para definir manualmente'}
+      className="group inline-flex items-center gap-1 hover:bg-primary/5 rounded px-1.5 py-0.5 transition-colors"
+    >
+      <CalendarClock size={11} className={color} />
+      <span className="flex flex-col items-end leading-tight">
+        <span className={`font-medium ${color}`}>
+          {formatDateBR(effectiveDate)}
+          {overrideDate && <span className="ml-1 text-[9px] text-primary-light/70 font-normal">manual</span>}
+        </span>
+        <span className={`text-[10px] opacity-70 ${color}`}>{label}</span>
+      </span>
+      <Pencil size={10} className="opacity-0 group-hover:opacity-60 text-text-secondary transition-opacity" />
+    </button>
+  );
+}
+
 // ── Budget Source Info Badge ──
 function BudgetSourceBadge({ type, label }) {
   return (
@@ -386,6 +490,9 @@ export default function MetaAdsOverview() {
   const [savingBudgets, setSavingBudgets] = useState({});
   const [monthlyGoals, setMonthlyGoals] = useState(() => readSavedMonthlyGoals());
   const [paymentMethods, setPaymentMethods] = useState(() => readSavedPaymentMethods());
+  const [lastPayments, setLastPayments] = useState(() => readSavedLastPayments());
+  const [billingFrequencies, setBillingFrequencies] = useState(() => readSavedBillingFrequencies());
+  const [nextPaymentOverrides, setNextPaymentOverrides] = useState(() => readSavedNextPaymentOverrides());
   const [customNames, setCustomNames] = useState(() => readCustomAccountNames());
   const [columnOrder, setColumnOrder] = useState(() => {
     try {
@@ -402,6 +509,9 @@ export default function MetaAdsOverview() {
     const syncAll = () => {
       setMonthlyGoals(readSavedMonthlyGoals());
       setPaymentMethods(readSavedPaymentMethods());
+      setLastPayments(readSavedLastPayments());
+      setBillingFrequencies(readSavedBillingFrequencies());
+      setNextPaymentOverrides(readSavedNextPaymentOverrides());
       setCustomNames(readCustomAccountNames());
     };
     const handleLocalStorageMapUpdated = (event) => {
@@ -409,6 +519,12 @@ export default function MetaAdsOverview() {
         setMonthlyGoals(event.detail.value || {});
       } else if (event?.detail?.key === 'account_payment_methods') {
         setPaymentMethods(event.detail.value || {});
+      } else if (event?.detail?.key === 'account_last_payments') {
+        setLastPayments(event.detail.value || {});
+      } else if (event?.detail?.key === 'account_billing_frequencies') {
+        setBillingFrequencies(event.detail.value || {});
+      } else if (event?.detail?.key === 'account_next_payment_overrides') {
+        setNextPaymentOverrides(event.detail.value || {});
       } else if (event?.detail?.key === 'custom_account_names') {
         setCustomNames(event.detail.value || {});
       }
@@ -425,6 +541,20 @@ export default function MetaAdsOverview() {
 
   const getSpendValue = useCallback((item) => {
     return Number(item?.metrics?.spend || 0);
+  }, []);
+
+  const saveNextPaymentOverride = useCallback((accountId, dateStr) => {
+    setNextPaymentOverrides(prev => {
+      const next = { ...prev };
+      if (dateStr) {
+        next[accountId] = dateStr;
+      } else {
+        delete next[accountId];
+      }
+      localStorage.setItem('account_next_payment_overrides', JSON.stringify(next));
+      window.dispatchEvent(new CustomEvent('local-storage-map-updated', { detail: { key: 'account_next_payment_overrides', value: next } }));
+      return next;
+    });
   }, []);
 
   const orderedColumns = columnOrder.map(key => ALL_COLUMNS.find(c => c.key === key)).filter(Boolean);
@@ -522,6 +652,54 @@ export default function MetaAdsOverview() {
         const val = balance.currentBalance;
         const color = val < 50 ? 'text-danger' : val < 150 ? 'text-warning' : 'text-success';
         return <span className={`font-medium ${color}`}>{formatCurrency(val)}</span>;
+      }
+      case 'nextPayment': {
+        if (paymentMethod !== 'pix' && paymentMethod !== 'boleto') return <span className="text-text-secondary/60">—</span>;
+        const lastPayment = lastPayments[account.id] || lastPayments[account.accountId] || lastPayments[accountId] || '';
+        const frequency = billingFrequencies[account.id] || billingFrequencies[account.accountId] || billingFrequencies[accountId] || 'monthly';
+        const computed = getNextPaymentDate(lastPayment, frequency);
+        const overrideStr = nextPaymentOverrides[account.id] || nextPaymentOverrides[account.accountId] || nextPaymentOverrides[accountId] || '';
+        const override = parseDateInput(overrideStr);
+        return (
+          <NextPaymentEditor
+            accountId={account.id}
+            computedDate={computed}
+            overrideDate={override}
+            onSave={saveNextPaymentOverride}
+          />
+        );
+      }
+      case 'dailyUntilPayment': {
+        if (paymentMethod !== 'pix' && paymentMethod !== 'boleto') return <span className="text-text-secondary/60">—</span>;
+        if (!balance || balance.hasReliableBalance === false || balance.currentBalance <= 0) return <span className="text-text-secondary/60">—</span>;
+        const lastPayment = lastPayments[account.id] || lastPayments[account.accountId] || lastPayments[accountId] || '';
+        const frequency = billingFrequencies[account.id] || billingFrequencies[account.accountId] || billingFrequencies[accountId] || 'monthly';
+        const computed = getNextPaymentDate(lastPayment, frequency);
+        const overrideStr = nextPaymentOverrides[account.id] || nextPaymentOverrides[account.accountId] || nextPaymentOverrides[accountId] || '';
+        const override = parseDateInput(overrideStr);
+        const effective = override || computed;
+        if (!effective) return <span className="text-text-secondary/60" title="Configure o próximo pagamento para calcular">—</span>;
+        const days = getDaysUntil(effective);
+        if (days === null) return <span className="text-text-secondary/60">—</span>;
+        const divisor = Math.max(days, 1);
+        const daily = balance.currentBalance / divisor;
+        const dailySpend = Number(account.metrics?.spend || 0);
+        const isOverdue = days < 0;
+        const overBudget = dailySpend > daily;
+        const tooltip = isOverdue
+          ? `Pagamento atrasado — saldo R$ ${balance.currentBalance.toFixed(2)} dividido por 1 dia`
+          : days === 0
+            ? `Pagamento hoje — saldo total R$ ${balance.currentBalance.toFixed(2)}`
+            : `R$ ${balance.currentBalance.toFixed(2)} ÷ ${days} dia${days === 1 ? '' : 's'} até o próximo pagamento`;
+        const color = overBudget ? 'text-danger' : isOverdue ? 'text-warning' : 'text-success';
+        return (
+          <span className={`inline-flex flex-col items-end leading-tight font-medium ${color}`} title={tooltip}>
+            <span>{formatCurrency(daily)}</span>
+            <span className="text-[10px] opacity-70">
+              {isOverdue ? 'Atrasado' : days === 0 ? 'Hoje' : `÷ ${days}d`}
+            </span>
+          </span>
+        );
       }
       case 'cpm': return formatCurrency(m?.cpm || 0);
       case 'clicks': return formatNumber(m?.linkClicks || 0);

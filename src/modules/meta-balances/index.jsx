@@ -3,6 +3,7 @@ import { useMetaAds } from '../../contexts/MetaAdsContext';
 import { useAgency } from '../../contexts/AgencyContext';
 import { formatCurrency } from '../../shared/utils/format';
 import { isCreditCardPaymentMethod, getAccountPaymentMethod } from '../../shared/utils/paymentMethod';
+import { billingFrequencyOptions, getNextPaymentDate, getDaysUntil, formatDateBR } from '../../shared/utils/nextPayment';
 import { supabase } from '../../services/supabase';
 import { Wallet, AlertTriangle, Clock, CreditCard, ArrowUpDown, RefreshCw, Edit3, Target, CalendarClock, Repeat } from 'lucide-react';
 
@@ -18,45 +19,6 @@ const paymentMethodOptions = [
   { value: 'pix', label: 'Pix' },
   { value: 'boleto', label: 'Boleto' },
 ];
-
-const billingFrequencyOptions = [
-  { value: 'weekly', label: 'Semanal', days: 7 },
-  { value: 'biweekly', label: 'Quinzenal', days: 15 },
-  { value: 'monthly', label: 'Mensal', days: 30 },
-];
-
-/**
- * Calcula a próxima data de pagamento com base na última data e frequência.
- */
-function getNextPaymentDate(lastPaymentStr, frequency) {
-  if (!lastPaymentStr) return null;
-  const freqObj = billingFrequencyOptions.find(f => f.value === frequency);
-  if (!freqObj) return null;
-
-  const last = new Date(lastPaymentStr + 'T00:00:00');
-  if (isNaN(last.getTime())) return null;
-
-  const next = new Date(last);
-  if (frequency === 'monthly') {
-    next.setMonth(next.getMonth() + 1);
-  } else {
-    next.setDate(next.getDate() + freqObj.days);
-  }
-  return next;
-}
-
-function getDaysUntil(dateObj) {
-  if (!dateObj) return null;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const diff = Math.ceil((dateObj - today) / 86400000);
-  return diff;
-}
-
-function formatDateBR(dateObj) {
-  if (!dateObj) return '—';
-  return dateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-}
 
 function formatDateInput(dateObj = new Date()) {
   const localDate = new Date(dateObj.getTime() - dateObj.getTimezoneOffset() * 60000);
