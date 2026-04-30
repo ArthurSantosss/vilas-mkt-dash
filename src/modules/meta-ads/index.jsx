@@ -5,7 +5,7 @@ import { formatCurrency, formatNumber, formatPercent, getCostColor } from '../..
 import { readSavedPaymentMethods, isCreditCardPaymentMethod, getAccountPaymentMethod } from '../../shared/utils/paymentMethod';
 import { getNextPaymentDate, getDaysUntil, formatDateBR, readSavedLastPayments, readSavedBillingFrequencies, readSavedNextPaymentOverrides, parseDateInput, formatDateInput } from '../../shared/utils/nextPayment';
 
-import { Megaphone, Power, ChevronDown, ChevronRight, Loader2, RefreshCw, Settings2, Wallet, AlertTriangle, Clock, DollarSign, Check, X, ChevronUp, Info, Image, Pencil, CreditCard, CalendarClock, GripVertical } from 'lucide-react';
+import { Megaphone, Power, ChevronDown, ChevronRight, Loader2, RefreshCw, Settings2, Wallet, AlertTriangle, Clock, DollarSign, Check, X, ChevronUp, Info, Image, Pencil, CreditCard, CalendarClock, GripVertical, MessageSquare, Plus } from 'lucide-react';
 import { updateCampaignStatus, updateCampaignBudget, fetchAdSetsForCampaign, updateAdSetBudget, updateAdSetStatus, updateAdStatus, fetchAdsForAdSet } from '../../services/metaApi';
 import PeriodSelector from '../../shared/components/PeriodSelector';
 
@@ -24,6 +24,7 @@ const ALL_COLUMNS = [
   { key: 'ctr', label: 'CTR', align: 'right' },
   { key: 'frequency', label: 'Frequência', align: 'right' },
   { key: 'reach', label: 'Alcance', align: 'right' },
+  { key: 'notes', label: 'Observação', align: 'left' },
 ];
 const DEFAULT_COLUMN_ORDER = ALL_COLUMNS.map(c => c.key);
 
@@ -48,6 +49,14 @@ function readSavedMonthlyGoals() {
 function readCustomAccountNames() {
   try {
     return JSON.parse(localStorage.getItem('custom_account_names') || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function readSavedNotes() {
+  try {
+    return JSON.parse(localStorage.getItem('meta_ads_notes') || '{}');
   } catch {
     return {};
   }
@@ -336,6 +345,98 @@ function NextPaymentEditor({ accountId, computedDate, overrideDate, onSave }) {
   );
 }
 
+// ── Notes Editor ──
+function NotesEditor({ entityId, note, onSave, level = 'account' }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const textareaRef = useRef(null);
+
+  useEffect(() => {
+    if (editing && textareaRef.current) {
+      textareaRef.current.focus();
+      textareaRef.current.setSelectionRange(textareaRef.current.value.length, textareaRef.current.value.length);
+    }
+  }, [editing]);
+
+  const handleOpen = (e) => {
+    e?.stopPropagation();
+    setDraft(note || '');
+    setEditing(true);
+  };
+
+  const handleSave = (e) => {
+    e?.stopPropagation();
+    onSave(entityId, draft.trim() || null);
+    setEditing(false);
+  };
+
+  const handleCancel = (e) => {
+    e?.stopPropagation();
+    setEditing(false);
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      handleSave(e);
+    } else if (e.key === 'Escape') {
+      handleCancel(e);
+    }
+  };
+
+  const widthClass = level === 'account' ? 'w-56' : level === 'campaign' ? 'w-52' : 'w-48';
+
+  if (editing) {
+    return (
+      <div className="flex items-start gap-1" onClick={e => e.stopPropagation()}>
+        <textarea
+          ref={textareaRef}
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={handleKeyDown}
+          rows={2}
+          placeholder="Escreva sua observação..."
+          className={`${widthClass} bg-bg border border-primary/40 rounded px-2 py-1 text-xs text-text-primary resize-y focus:outline-none focus:border-primary`}
+        />
+        <div className="flex flex-col gap-1">
+          <button onClick={handleSave} className="p-0.5 rounded hover:bg-success/20 text-success transition-colors" title="Salvar (Ctrl/Cmd+Enter)">
+            <Check size={12} />
+          </button>
+          <button onClick={handleCancel} className="p-0.5 rounded hover:bg-danger/20 text-danger transition-colors" title="Cancelar (Esc)">
+            <X size={12} />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!note) {
+    return (
+      <button
+        onClick={handleOpen}
+        className="inline-flex items-center gap-1 text-[11px] text-text-secondary/60 hover:text-primary-light hover:bg-primary/5 rounded px-1.5 py-0.5 transition-colors"
+        title="Adicionar observação"
+      >
+        <Plus size={10} /> Nota
+      </button>
+    );
+  }
+
+  return (
+    <button
+      onClick={handleOpen}
+      className="group inline-flex items-start gap-1.5 max-w-[260px] text-left hover:bg-primary/5 rounded px-1.5 py-1 transition-colors"
+      title={`Editar — ${note}`}
+    >
+      <MessageSquare size={11} className="text-primary-light/80 mt-0.5 flex-shrink-0" />
+      <span className="text-[11px] text-text-primary leading-snug whitespace-pre-wrap break-words line-clamp-3">
+        {note}
+      </span>
+      <Pencil size={9} className="opacity-0 group-hover:opacity-60 text-text-secondary mt-0.5 flex-shrink-0 transition-opacity" />
+    </button>
+  );
+}
+
 // ── Budget Source Info Badge ──
 function BudgetSourceBadge({ type, label }) {
   return (
@@ -494,6 +595,7 @@ export default function MetaAdsOverview() {
   const [billingFrequencies, setBillingFrequencies] = useState(() => readSavedBillingFrequencies());
   const [nextPaymentOverrides, setNextPaymentOverrides] = useState(() => readSavedNextPaymentOverrides());
   const [customNames, setCustomNames] = useState(() => readCustomAccountNames());
+  const [notes, setNotes] = useState(() => readSavedNotes());
   const [columnOrder, setColumnOrder] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('meta_ads_column_order'));
@@ -513,6 +615,7 @@ export default function MetaAdsOverview() {
       setBillingFrequencies(readSavedBillingFrequencies());
       setNextPaymentOverrides(readSavedNextPaymentOverrides());
       setCustomNames(readCustomAccountNames());
+      setNotes(readSavedNotes());
     };
     const handleLocalStorageMapUpdated = (event) => {
       if (event?.detail?.key === 'account_monthly_goals') {
@@ -527,6 +630,8 @@ export default function MetaAdsOverview() {
         setNextPaymentOverrides(event.detail.value || {});
       } else if (event?.detail?.key === 'custom_account_names') {
         setCustomNames(event.detail.value || {});
+      } else if (event?.detail?.key === 'meta_ads_notes') {
+        setNotes(event.detail.value || {});
       }
     };
     window.addEventListener('storage', syncAll);
@@ -541,6 +646,20 @@ export default function MetaAdsOverview() {
 
   const getSpendValue = useCallback((item) => {
     return Number(item?.metrics?.spend || 0);
+  }, []);
+
+  const saveNote = useCallback((entityId, text) => {
+    setNotes(prev => {
+      const next = { ...prev };
+      if (text) {
+        next[entityId] = text;
+      } else {
+        delete next[entityId];
+      }
+      localStorage.setItem('meta_ads_notes', JSON.stringify(next));
+      window.dispatchEvent(new CustomEvent('local-storage-map-updated', { detail: { key: 'meta_ads_notes', value: next } }));
+      return next;
+    });
   }, []);
 
   const saveNextPaymentOverride = useCallback((accountId, dateStr) => {
@@ -709,6 +828,7 @@ export default function MetaAdsOverview() {
       case 'ctr': return m?.ctr > 0 ? formatPercent(m.ctr) : '—';
       case 'frequency': return m?.frequency ? formatNumber(m.frequency) : '—';
       case 'reach': return m?.reach ? formatNumber(m.reach) : '—';
+      case 'notes': return <NotesEditor entityId={account.id} note={notes[account.id]} onSave={saveNote} level="account" />;
       default: return '—';
     }
   };
@@ -726,6 +846,7 @@ export default function MetaAdsOverview() {
       case 'ctr': return m?.ctr > 0 ? formatPercent(m.ctr) : '—';
       case 'frequency': return m?.frequency || '—';
       case 'reach': return '—';
+      case 'notes': return <NotesEditor entityId={campaign.id} note={notes[campaign.id]} onSave={saveNote} level="campaign" />;
       default: return '—';
     }
   };
@@ -746,6 +867,7 @@ export default function MetaAdsOverview() {
       case 'ctr': return ins?.ctr ? formatPercent(parseFloat(ins.ctr)) : '—';
       case 'frequency': return ins?.frequency ? formatNumber(parseFloat(ins.frequency)) : '—';
       case 'reach': return ins?.reach ? formatNumber(parseInt(ins.reach, 10)) : '—';
+      case 'notes': return <NotesEditor entityId={adSet.id} note={notes[adSet.id]} onSave={saveNote} level="adset" />;
       default: return '—';
     }
   };
@@ -766,6 +888,7 @@ export default function MetaAdsOverview() {
       case 'ctr': return ins?.ctr ? formatPercent(parseFloat(ins.ctr)) : '—';
       case 'frequency': return ins?.frequency ? formatNumber(parseFloat(ins.frequency)) : '—';
       case 'reach': return ins?.reach ? formatNumber(parseInt(ins.reach, 10)) : '—';
+      case 'notes': return <NotesEditor entityId={ad.id} note={notes[ad.id]} onSave={saveNote} level="ad" />;
       default: return '—';
     }
   };
@@ -1242,6 +1365,7 @@ export default function MetaAdsOverview() {
                           col.key === 'messages' ? 'text-right font-medium text-text-primary' :
                           col.key === 'costPerMsg' ? `text-right font-bold ${getCostColor(account.metrics?.costPerMessage || 0)}` :
                           (col.key === 'balance' || col.key === 'available') ? 'text-right' :
+                          col.key === 'notes' ? 'text-left align-top' :
                           'text-right text-text-secondary';
                         return <td key={col.key} className={`px-3 py-3 ${cellClass}`}>{renderAccountCell(col, account, { balance: accountBalance, monthlyGoal: accountGoal, totalBudget })}</td>;
                       })}
@@ -1309,6 +1433,7 @@ export default function MetaAdsOverview() {
                               const cellClass = col.key === 'spend' ? 'text-right text-text-primary' :
                                 col.key === 'messages' ? 'text-right font-medium text-text-primary' :
                                 col.key === 'costPerMsg' ? `text-right font-bold ${getCostColor(campaign.metrics?.costPerMessage || 0)}` :
+                                col.key === 'notes' ? 'text-left align-top' :
                                 'text-right text-text-secondary';
                               return <td key={col.key} className={`px-3 py-2.5 ${cellClass}`}>{renderCampaignCell(col, campaign)}</td>;
                             })}
@@ -1403,6 +1528,7 @@ export default function MetaAdsOverview() {
                                         const cellClass = col.key === 'spend' ? 'text-right text-text-primary' :
                                           col.key === 'messages' ? 'text-right font-medium text-text-primary' :
                                           col.key === 'costPerMsg' ? `text-right font-bold ${getCostColor(adSetCostPerMsg)}` :
+                                          col.key === 'notes' ? 'text-left align-top' :
                                           'text-right text-text-secondary';
                                         return <td key={col.key} className={`px-3 py-2 text-xs ${cellClass}`}>{renderAdSetCell(col, adSet)}</td>;
                                       })}
@@ -1472,6 +1598,7 @@ export default function MetaAdsOverview() {
                                                 const cellClass = col.key === 'spend' ? 'text-right text-text-primary' :
                                                   col.key === 'messages' ? 'text-right font-medium text-text-primary' :
                                                   col.key === 'costPerMsg' ? `text-right font-bold ${getCostColor(adCostPerMsg)}` :
+                                                  col.key === 'notes' ? 'text-left align-top' :
                                                   'text-right text-text-secondary';
                                                 return <td key={col.key} className={`px-3 py-2 text-[11px] ${cellClass}`}>{renderAdCell(col, ad)}</td>;
                                               })}
