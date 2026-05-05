@@ -170,6 +170,7 @@ const ReportCard = function ReportCard({
   agencyLogoSrc,
   metaLogoSrc,
   agencyLabel,
+  showAccountName = true,
   objective = 'messages',
   innerRef,
   withBarChart = false,
@@ -236,13 +237,15 @@ const ReportCard = function ReportCard({
         </div>
       </div>
 
-      <div style={{
-        fontSize: 20, fontWeight: 700, color: '#fff', marginBottom: 18,
-        padding: '12px 20px', background: 'linear-gradient(135deg, #1a2a3d, #1e2d3d)',
-        borderRadius: 12, border: '1px solid #2a3a4d',
-      }}>
-        📊 {d.accountName}
-      </div>
+      {showAccountName && (
+        <div style={{
+          fontSize: 20, fontWeight: 700, color: '#fff', marginBottom: 18,
+          padding: '12px 20px', background: 'linear-gradient(135deg, #1a2a3d, #1e2d3d)',
+          borderRadius: 12, border: '1px solid #2a3a4d',
+        }}>
+          📊 {d.accountName}
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 14, marginBottom: 22 }}>
         {kpis.map((kpi, idx) => (

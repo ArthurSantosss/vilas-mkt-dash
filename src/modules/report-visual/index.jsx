@@ -212,7 +212,7 @@ function ReportKPI({ label, value, color = '#2196F3' }) {
   );
 }
 
-// Meta logo uses /logometa.png converted to base64 at generate time
+// Meta logo uses /meta-ads-logo.png converted to base64 at generate time
 
 // ── SVG Funnel (Premium Floating Layers) ──
 function SVGFunnel({ stages }) {
@@ -703,7 +703,7 @@ export default function ReportVisual() {
       // Convert logos to base64 once, before export
       const [agencyLogoB64, metaLogoB64] = await Promise.all([
         toBase64(logoSrc),
-        toBase64('/logometa.png'),
+        toBase64('/meta-ads-logo.png'),
       ]);
 
       setReportData({
@@ -843,7 +843,7 @@ export default function ReportVisual() {
       // Pre-load logos as base64
       const [agencyLogoB64, metaLogoB64] = await Promise.all([
         toBase64('/logotag.png'),
-        toBase64('/logometa.png'),
+        toBase64('/meta-ads-logo.png'),
       ]);
 
       let sentCount = 0;
@@ -1341,7 +1341,7 @@ export default function ReportVisual() {
                   )}
                 </div>
                 <div style={{ height: 32, width: 1, background: '#2a3a4d', flexShrink: 0 }} />
-                {/* Meta Logo — base64 <img> from logometa.png */}
+                {/* Meta Logo — base64 <img> from meta-ads-logo.png */}
                 {d.metaLogoB64 && (
                   <img
                     src={d.metaLogoB64}
