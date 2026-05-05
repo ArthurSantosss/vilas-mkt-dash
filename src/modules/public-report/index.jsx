@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams } from 'react-router-dom';
+import { Navigate, useParams } from 'react-router-dom';
 import { Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 import { supabase } from '../../services/supabase';
 import {
@@ -19,6 +19,20 @@ const LEAD_ACTION_TYPES = [
 ];
 
 const ENGAGEMENT_ACTION_TYPES = ['post_engagement', 'page_engagement'];
+const SHARE_BASE_URL = (import.meta.env.VITE_PUBLIC_SHARE_BASE_URL || '').trim();
+
+function normalizeHost(hostname) {
+  return (hostname || '').replace(/^www\./, '').toLowerCase();
+}
+
+function getShareHost() {
+  if (!SHARE_BASE_URL) return '';
+  try {
+    return normalizeHost(new URL(SHARE_BASE_URL).hostname);
+  } catch {
+    return '';
+  }
+}
 
 function serializePeriod(period) {
   if (typeof period === 'object' && period?.type === 'custom') {
@@ -286,8 +300,21 @@ async function fetchReportInBrowser(shareId, selectedPeriod) {
   };
 }
 
-export default function PublicReport() {
-  const { shareId } = useParams();
+export function PublicReportEntry() {
+  const { shareSlug } = useParams();
+  const shareHost = getShareHost();
+  const currentHost = typeof window !== 'undefined' ? normalizeHost(window.location.hostname) : '';
+
+  if (!shareHost || currentHost !== shareHost || !shareSlug) {
+    return <Navigate to="/" replace />;
+  }
+
+  return <PublicReport shareKey={shareSlug} />;
+}
+
+export default function PublicReport({ shareKey: shareKeyProp = null }) {
+  const params = useParams();
+  const shareKey = shareKeyProp || params.shareId;
   const [selectedPeriod, setSelectedPeriod] = useState('7d');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -298,7 +325,7 @@ export default function PublicReport() {
   const agencyLogoSrc = agencyType === 'tag' ? '/logotag.png' : '/favicon.png';
 
   const fetchReport = useCallback(async () => {
-    if (!shareId) return;
+    if (!shareKey) return;
     setLoading(true);
     setError(null);
 
@@ -306,14 +333,14 @@ export default function PublicReport() {
       let report;
 
       try {
-        report = await fetchReportFromApi(shareId, selectedPeriod);
+        report = await fetchReportFromApi(shareKey, selectedPeriod);
       } catch (apiError) {
         if (!apiError?.shouldFallback) {
           throw apiError;
         }
 
         console.warn('[PublicReport] Falling back to browser fetch:', apiError.message);
-        report = await fetchReportInBrowser(shareId, selectedPeriod);
+        report = await fetchReportInBrowser(shareKey, selectedPeriod);
       }
 
       if (report.empty) {
@@ -329,7 +356,7 @@ export default function PublicReport() {
     } finally {
       setLoading(false);
     }
-  }, [shareId, selectedPeriod]);
+  }, [shareKey, selectedPeriod]);
 
   useEffect(() => {
     fetchReport();
@@ -394,7 +421,7 @@ export default function PublicReport() {
             <ReportCard
               data={data}
               agencyLogoSrc={agencyLogoSrc}
-              metaLogoSrc="/meta-ads-logo.png"
+              metaLogoSrc="/meta-ads-logo.svg"
               agencyLabel={agencyLabel}
               showAccountName={false}
               objective={data.objective || 'messages'}

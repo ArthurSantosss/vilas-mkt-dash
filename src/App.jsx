@@ -20,6 +20,7 @@ const Settings = lazy(() => import('./modules/settings'));
 const ReportText = lazy(() => import('./modules/report-text'));
 const ReportVisual = lazy(() => import('./modules/report-visual'));
 const PublicReport = lazy(() => import('./modules/public-report'));
+const PublicReportEntry = lazy(() => import('./modules/public-report').then((module) => ({ default: module.PublicReportEntry })));
 const CampaignAnalysis = lazy(() => import('./modules/campaign-analysis'));
 const AutoAlerts = lazy(() => import('./modules/auto-alerts'));
 
@@ -52,6 +53,7 @@ export default function App() {
                     <Route path="/login" element={<LoginPage />} />
                     <Route path="/auth/callback" element={<AuthCallback />} />
                     <Route path="/r/:shareId" element={<PublicReport />} />
+                    <Route path="/:shareSlug" element={<PublicReportEntry />} />
 
                     {/* Protected routes — require login */}
                     <Route

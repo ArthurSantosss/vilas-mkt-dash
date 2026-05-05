@@ -18,6 +18,7 @@ import {
 } from 'recharts';
 
 const SLACK_WEBHOOK_TAG = import.meta.env.VITE_SLACK_WEBHOOK_TAG;
+const SHARE_BASE_URL = (import.meta.env.VITE_PUBLIC_SHARE_BASE_URL || '').trim();
 
 // ── Allowed agencies for visual reports ──
 const ALLOWED_AGENCIES_VISUAL = ['vilasmkt', 'tag'];
@@ -188,9 +189,30 @@ function buildCampaignScopeLabel(selectedCampaigns, totalCampaignCount) {
   return `${selectedCampaigns.length} campanhas filtradas`;
 }
 
+function slugifyShareLabel(value) {
+  return (value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 50);
+}
+
+function makePublicSlug(label, fallbackId) {
+  const baseSlug = slugifyShareLabel(label);
+  return baseSlug || fallbackId;
+}
+
+function getShareBaseUrl() {
+  if (SHARE_BASE_URL) return SHARE_BASE_URL.replace(/\/+$/, '');
+  if (typeof window !== 'undefined') return window.location.origin;
+  return '';
+}
+
 // (pie chart palette and gender labels removed — pies replaced by extended bar chart)
 
-// Meta Ads logo is rendered as an <img> from /meta-ads-logo.png (converted to base64 at generate time)
+// Meta Ads logo is rendered as an <img> from /meta-ads-logo.svg (converted to base64 at generate time)
 
 // ── KPI Card ──
 function ReportKPI({ label, value, color = '#2196F3' }) {
@@ -212,7 +234,7 @@ function ReportKPI({ label, value, color = '#2196F3' }) {
   );
 }
 
-// Meta logo uses /meta-ads-logo.png converted to base64 at generate time
+// Meta logo uses /meta-ads-logo.svg converted to base64 at generate time
 
 // ── SVG Funnel (Premium Floating Layers) ──
 function SVGFunnel({ stages }) {
@@ -703,7 +725,7 @@ export default function ReportVisual() {
       // Convert logos to base64 once, before export
       const [agencyLogoB64, metaLogoB64] = await Promise.all([
         toBase64(logoSrc),
-        toBase64('/meta-ads-logo.png'),
+        toBase64('/meta-ads-logo.svg'),
       ]);
 
       setReportData({
@@ -843,7 +865,7 @@ export default function ReportVisual() {
       // Pre-load logos as base64
       const [agencyLogoB64, metaLogoB64] = await Promise.all([
         toBase64('/logotag.png'),
-        toBase64('/meta-ads-logo.png'),
+        toBase64('/meta-ads-logo.svg'),
       ]);
 
       let sentCount = 0;
@@ -967,7 +989,14 @@ export default function ReportVisual() {
   const [shareError, setShareError] = useState(null);
   const [copiedShareId, setCopiedShareId] = useState(null);
 
-  const buildShareUrl = useCallback((id) => `${window.location.origin}/r/${id}`, []);
+  const buildShareUrl = useCallback((share) => {
+    if (!share) return '';
+    const baseUrl = getShareBaseUrl();
+    if (SHARE_BASE_URL && share.public_slug) {
+      return `${baseUrl}/${encodeURIComponent(share.public_slug)}`;
+    }
+    return `${baseUrl}/r/${share.id}`;
+  }, []);
 
   const loadShares = useCallback(async () => {
     if (!selectedAccount) return;
@@ -1003,7 +1032,8 @@ export default function ReportVisual() {
         .join('')
         .slice(0, 14);
 
-      const { error } = await supabase
+      const baseSlug = makePublicSlug(account?.clientName, id);
+      let { error } = await supabase
         .from('shared_reports')
         .insert({
           id,
@@ -1013,7 +1043,23 @@ export default function ReportVisual() {
           objective: selectedObjective,
           campaign_ids: hasCampaignFilter ? selectedCampaignIds : null,
           client_label: account?.clientName || null,
+          public_slug: baseSlug,
         });
+      if (error?.code === '23505') {
+        const retrySlug = `${baseSlug}-${id.slice(-4)}`;
+        ({ error } = await supabase
+          .from('shared_reports')
+          .insert({
+            id,
+            owner_email: user?.email || null,
+            account_id: selectedAccount,
+            agency: agencyType,
+            objective: selectedObjective,
+            campaign_ids: hasCampaignFilter ? selectedCampaignIds : null,
+            client_label: account?.clientName || null,
+            public_slug: retrySlug,
+          }));
+      }
       if (error) throw error;
       await loadShares();
     } catch (err) {
@@ -1036,13 +1082,14 @@ export default function ReportVisual() {
 
   const handleCopyShareLink = useCallback(async (id) => {
     try {
-      await navigator.clipboard.writeText(buildShareUrl(id));
+      const share = shareList.find(item => item.id === id);
+      await navigator.clipboard.writeText(buildShareUrl(share));
       setCopiedShareId(id);
       setTimeout(() => setCopiedShareId(null), 2000);
     } catch (err) {
       setShareError(`Não foi possível copiar: ${err.message}`);
     }
-  }, [buildShareUrl]);
+  }, [buildShareUrl, shareList]);
 
   const d = reportData;
 
@@ -1341,7 +1388,7 @@ export default function ReportVisual() {
                   )}
                 </div>
                 <div style={{ height: 32, width: 1, background: '#2a3a4d', flexShrink: 0 }} />
-                {/* Meta Logo — base64 <img> from meta-ads-logo.png */}
+                {/* Meta Logo — base64 <img> from meta-ads-logo.svg */}
                 {d.metaLogoB64 && (
                   <img
                     src={d.metaLogoB64}
@@ -1550,7 +1597,7 @@ export default function ReportVisual() {
                 )}
 
                 {!shareLoading && shareList.map((share) => {
-                  const url = buildShareUrl(share.id);
+                  const url = buildShareUrl(share);
                   const isCopied = copiedShareId === share.id;
                   const filterCount = Array.isArray(share.campaign_ids) ? share.campaign_ids.length : 0;
                   const created = new Date(share.created_at).toLocaleString('pt-BR', {
