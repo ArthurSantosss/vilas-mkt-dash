@@ -46,7 +46,8 @@ export default function PublicReport() {
 
       const json = JSON.parse(text);
       if (!res.ok) {
-        setError(json.error || `Erro HTTP ${res.status}`);
+        const detail = json.details ? ` — ${json.details}` : '';
+        setError(`${json.error || `Erro HTTP ${res.status}`}${detail}`);
         setData(null);
       } else if (json.empty) {
         setData(null);
