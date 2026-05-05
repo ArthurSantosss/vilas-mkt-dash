@@ -29,8 +29,13 @@ export function PreferencesProvider({ children }) {
     async function hydrateFromCloud() {
       try {
         const { data, error } = await supabase.from('app_preferences').select('key, value');
-        if (error) throw error;
+        if (error) {
+          console.error('[PreferencesSync] Erro ao ler app_preferences:', error.message, error.hint || '');
+          throw error;
+        }
         if (!mounted) return;
+
+        console.log('[PreferencesSync] Nuvem tem', (data || []).length, 'preferências salvas');
 
         let changedLocal = false;
         const cloudMap = {};
@@ -45,7 +50,7 @@ export function PreferencesProvider({ children }) {
           const hasLocal = localStr !== null && localStr !== 'undefined' && localStr !== '';
           let localParsed;
           if (hasLocal) {
-            try { 
+            try {
               localParsed = key === 'meta_provider_token' ? localStr : JSON.parse(localStr);
             } catch {
               localParsed = null;
@@ -53,35 +58,39 @@ export function PreferencesProvider({ children }) {
           }
 
           if (cloudMap[key] !== undefined) {
-             // A nuvem tem valor! O celular/computador puxa a nuvem pra garantir que todos fiquem iguais
              const cloudVal = cloudMap[key];
              const strToSave = key === 'meta_provider_token' ? cloudVal : JSON.stringify(cloudVal);
-             
+
              if (localStorage.getItem(key) !== strToSave) {
                localStorage.setItem(key, strToSave);
                changedLocal = true;
+               console.log('[PreferencesSync] ↓ Nuvem → Local:', key);
              }
           } else if (localParsed !== null && localParsed !== undefined) {
-             // Existe no PC/Celular, mas na Nuvem tá vazio (Primeira vez logando). Migra pra nuvem.
-             upserts.push({ 
-               key, 
-               value: localParsed, 
-               updated_at: new Date().toISOString() 
+             upserts.push({
+               key,
+               value: localParsed,
+               updated_at: new Date().toISOString()
              });
           }
         }
 
         if (upserts.length > 0) {
-           await supabase.from('app_preferences').upsert(upserts, { onConflict: 'key' });
+           const { error: upsertErr } = await supabase.from('app_preferences').upsert(upserts, { onConflict: 'key' });
+           if (upsertErr) {
+             console.error('[PreferencesSync] Erro ao enviar para nuvem:', upsertErr.message, upsertErr.hint || '');
+           } else {
+             console.log('[PreferencesSync] ↑ Local → Nuvem:', upserts.map(u => u.key).join(', '));
+           }
         }
 
         if (changedLocal) {
-          // A nuvem mandou itens novos! Recarregamos a página 1 única vez para que todas as 
-          // tabelas e o MetaAds acordem usando as preferências atualizadas em memória.
+          console.log('[PreferencesSync] Recarregando página para aplicar preferências da nuvem...');
           window.location.reload();
         }
-        
+
         isHydrated.current = true;
+        console.log('[PreferencesSync] Sincronização concluída');
       } catch (err) {
         console.warn('[PreferencesSync] Falha ao sincronizar com nuvem (Supabase offline?):', err);
       }
@@ -113,7 +122,12 @@ export function PreferencesProvider({ children }) {
         }
         if (upserts.length > 0) {
            try {
-             await supabase.from('app_preferences').upsert(upserts, { onConflict: 'key' });
+             const { error: saveErr } = await supabase.from('app_preferences').upsert(upserts, { onConflict: 'key' });
+             if (saveErr) {
+               console.warn('[PreferencesSync] Erro no auto-save:', saveErr.message);
+             } else {
+               console.log('[PreferencesSync] Auto-save OK:', upserts.map(u => u.key).join(', '));
+             }
            } catch (err) {
              console.warn('[PreferencesSync] Erro no auto-save:', err);
            }

@@ -4,7 +4,8 @@ import { supabase } from '../../services/supabase';
 import { useMetaAds } from '../../contexts/MetaAdsContext';
 import { useAgency } from '../../contexts/AgencyContext';
 import { formatCurrency, formatNumber, formatPercent } from '../../shared/utils/format';
-import { Image, Download, Loader2, Sparkles, Copy, Check, Send, CheckCircle2, Target } from 'lucide-react';
+import { Image, Download, Loader2, Sparkles, Copy, Check, Send, CheckCircle2, Target, Link2, X, Trash2 } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
 import PeriodSelector from '../../shared/components/PeriodSelector';
 import {
   fetchAccountInsights, fetchCampaignsWithInsights,
@@ -957,6 +958,92 @@ export default function ReportVisual() {
     }
   }, [tagAccounts, campaigns, selectedPeriod, selectedObjective]);
 
+  // ── Share link with client ──
+  const { user } = useAuth();
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [shareList, setShareList] = useState([]);
+  const [shareLoading, setShareLoading] = useState(false);
+  const [shareCreating, setShareCreating] = useState(false);
+  const [shareError, setShareError] = useState(null);
+  const [copiedShareId, setCopiedShareId] = useState(null);
+
+  const buildShareUrl = useCallback((id) => `${window.location.origin}/r/${id}`, []);
+
+  const loadShares = useCallback(async () => {
+    if (!selectedAccount) return;
+    setShareLoading(true);
+    setShareError(null);
+    try {
+      const { data, error } = await supabase
+        .from('shared_reports')
+        .select('*')
+        .eq('account_id', selectedAccount)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setShareList(data || []);
+    } catch (err) {
+      setShareError(`Erro ao carregar links: ${err.message}`);
+    } finally {
+      setShareLoading(false);
+    }
+  }, [selectedAccount]);
+
+  useEffect(() => {
+    if (shareModalOpen) loadShares();
+  }, [shareModalOpen, loadShares]);
+
+  const handleCreateShare = useCallback(async () => {
+    if (!selectedAccount) return;
+    setShareCreating(true);
+    setShareError(null);
+    try {
+      const account = accounts.find(a => a.id === selectedAccount);
+      const id = Array.from(crypto.getRandomValues(new Uint8Array(9)))
+        .map(b => b.toString(36).padStart(2, '0'))
+        .join('')
+        .slice(0, 14);
+
+      const { error } = await supabase
+        .from('shared_reports')
+        .insert({
+          id,
+          owner_email: user?.email || null,
+          account_id: selectedAccount,
+          agency: agencyType,
+          objective: selectedObjective,
+          campaign_ids: hasCampaignFilter ? selectedCampaignIds : null,
+          client_label: account?.clientName || null,
+        });
+      if (error) throw error;
+      await loadShares();
+    } catch (err) {
+      setShareError(`Erro ao criar link: ${err.message}`);
+    } finally {
+      setShareCreating(false);
+    }
+  }, [selectedAccount, accounts, user, agencyType, selectedObjective, hasCampaignFilter, selectedCampaignIds, loadShares]);
+
+  const handleDeleteShare = useCallback(async (id) => {
+    if (!confirm('Remover este link? O cliente perderá acesso imediatamente.')) return;
+    try {
+      const { error } = await supabase.from('shared_reports').delete().eq('id', id);
+      if (error) throw error;
+      setShareList(prev => prev.filter(s => s.id !== id));
+    } catch (err) {
+      setShareError(`Erro ao remover: ${err.message}`);
+    }
+  }, []);
+
+  const handleCopyShareLink = useCallback(async (id) => {
+    try {
+      await navigator.clipboard.writeText(buildShareUrl(id));
+      setCopiedShareId(id);
+      setTimeout(() => setCopiedShareId(null), 2000);
+    } catch (err) {
+      setShareError(`Não foi possível copiar: ${err.message}`);
+    }
+  }, [buildShareUrl]);
+
   const d = reportData;
 
   return (
@@ -1172,6 +1259,21 @@ export default function ReportVisual() {
             </button>
           )}
 
+          {selectedAccount && (
+            <button
+              onClick={() => setShareModalOpen(true)}
+              className="group relative inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl font-semibold text-sm
+                bg-gradient-to-r from-emerald-600 to-emerald-500 text-white shadow-lg shadow-emerald-500/25
+                hover:shadow-xl hover:shadow-emerald-500/30 hover:scale-[1.02] active:scale-[0.98]
+                transition-all duration-300 ease-out"
+              title="Gerar link compartilhável com o cliente"
+            >
+              <Link2 size={16} />
+              Compartilhar com cliente
+              <div className="absolute inset-0 rounded-xl bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+            </button>
+          )}
+
           {agencyType === 'tag' && (
             <button
               onClick={handleSendTagSlack}
@@ -1368,6 +1470,134 @@ export default function ReportVisual() {
         <div className="bg-surface rounded-2xl border border-border p-12 text-center">
           <Image size={48} className="text-text-secondary/20 mx-auto mb-4" />
           <p className="text-text-secondary text-sm">Selecione uma agência, conta, período e clique em "Gerar Relatório"</p>
+        </div>
+      )}
+
+      {shareModalOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setShareModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-2xl rounded-2xl border border-border bg-surface shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-border p-5">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Link2 size={18} className="text-emerald-400" />
+                  <h2 className="text-lg font-bold text-text-primary">Links compartilháveis</h2>
+                </div>
+                <p className="mt-1 text-xs text-text-secondary">
+                  O cliente vê o relatório atualizado em tempo real e pode escolher o período. Sem expiração e sem senha.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShareModalOpen(false)}
+                className="rounded-lg p-1.5 text-text-secondary transition hover:bg-bg/60 hover:text-text-primary"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-5">
+              <div className="mb-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-xs text-text-secondary">
+                <p>
+                  <span className="font-semibold text-emerald-400">Conta selecionada:</span>{' '}
+                  {accounts.find(a => a.id === selectedAccount)?.clientName || '—'}
+                </p>
+                <p className="mt-1">
+                  <span className="font-semibold text-emerald-400">Objetivo:</span>{' '}
+                  {OBJECTIVE_OPTIONS.find(o => o.id === selectedObjective)?.label || selectedObjective}
+                  {hasCampaignFilter && (
+                    <> · <span className="font-semibold text-emerald-400">Campanhas:</span> {selectedCampaignIds.length} filtrada(s)</>
+                  )}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleCreateShare}
+                disabled={shareCreating || !selectedAccount}
+                className="mb-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-500/25 transition hover:shadow-xl hover:shadow-emerald-500/30 disabled:opacity-40"
+              >
+                {shareCreating ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                {shareCreating ? 'Gerando link...' : 'Gerar novo link'}
+              </button>
+
+              {shareError && (
+                <div className="mb-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+                  {shareError}
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
+                  Links existentes ({shareList.length})
+                </p>
+
+                {shareLoading && (
+                  <div className="flex items-center justify-center py-8 text-text-secondary">
+                    <Loader2 size={18} className="animate-spin" />
+                  </div>
+                )}
+
+                {!shareLoading && shareList.length === 0 && (
+                  <div className="rounded-xl border border-dashed border-border bg-bg/30 px-4 py-6 text-center text-sm text-text-secondary">
+                    Nenhum link gerado para esta conta ainda.
+                  </div>
+                )}
+
+                {!shareLoading && shareList.map((share) => {
+                  const url = buildShareUrl(share.id);
+                  const isCopied = copiedShareId === share.id;
+                  const filterCount = Array.isArray(share.campaign_ids) ? share.campaign_ids.length : 0;
+                  const created = new Date(share.created_at).toLocaleString('pt-BR', {
+                    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                  });
+                  return (
+                    <div
+                      key={share.id}
+                      className="group flex items-center gap-3 rounded-xl border border-border bg-bg/40 p-3 transition hover:border-primary/30"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <code className="truncate text-xs font-medium text-text-primary">{url}</code>
+                        </div>
+                        <p className="mt-1 text-[11px] text-text-secondary">
+                          {OBJECTIVE_OPTIONS.find(o => o.id === share.objective)?.label || share.objective}
+                          {filterCount > 0 ? ` · ${filterCount} campanha(s)` : ' · conta inteira'}
+                          {' · '}
+                          criado em {created}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyShareLink(share.id)}
+                        className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                          isCopied
+                            ? 'border-emerald-400/50 bg-emerald-500/15 text-emerald-400'
+                            : 'border-primary/30 bg-primary/10 text-primary-light hover:bg-primary/15'
+                        }`}
+                      >
+                        {isCopied ? <Check size={12} /> : <Copy size={12} />}
+                        {isCopied ? 'Copiado!' : 'Copiar'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteShare(share.id)}
+                        className="rounded-lg p-1.5 text-text-secondary transition hover:bg-danger/15 hover:text-danger"
+                        title="Remover link"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
