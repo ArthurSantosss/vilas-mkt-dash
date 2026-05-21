@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { supabase } from '../services/supabase';
 
 const STORAGE_KEYS = {
@@ -166,8 +166,17 @@ export function AgencyProvider({ children }) {
     return accountAgencies[accountId] || '';
   }, [accountAgencies]);
 
+  const value = useMemo(() => ({
+    agencies,
+    accountAgencies,
+    addAgency,
+    removeAgency,
+    setAccountAgency,
+    getAccountAgency,
+  }), [agencies, accountAgencies, addAgency, removeAgency, setAccountAgency, getAccountAgency]);
+
   return (
-    <AgencyContext.Provider value={{ agencies, accountAgencies, addAgency, removeAgency, setAccountAgency, getAccountAgency }}>
+    <AgencyContext.Provider value={value}>
       {children}
     </AgencyContext.Provider>
   );

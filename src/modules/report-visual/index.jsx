@@ -1,27 +1,21 @@
-import React, { useState, useMemo, useCallback, useEffect, useRef, createElement } from 'react';
-import { createRoot } from 'react-dom/client';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { supabase } from '../../services/supabase';
 import { useMetaAds } from '../../contexts/MetaAdsContext';
 import { useAgency } from '../../contexts/AgencyContext';
-import { formatCurrency, formatNumber, formatPercent } from '../../shared/utils/format';
+import { formatCurrency } from '../../shared/utils/format';
 import { Image, Download, Loader2, Sparkles, Copy, Check, Send, CheckCircle2, Target, Link2, X, Trash2 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import PeriodSelector from '../../shared/components/PeriodSelector';
+import ReportCard from '../../shared/components/ReportCard';
 import {
   fetchAccountInsights, fetchCampaignsWithInsights,
   fetchCampaignDailyInsights, getPreviousPeriodRange
 } from '../../services/metaApi';
 import { PRESETS } from '../../shared/utils/dateUtils';
 import { toPng } from 'html-to-image';
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip,
-} from 'recharts';
 
-const SLACK_WEBHOOK_TAG = import.meta.env.VITE_SLACK_WEBHOOK_TAG;
 const SHARE_BASE_URL = (import.meta.env.VITE_PUBLIC_SHARE_BASE_URL || '').trim();
-
-// ── Allowed agencies for visual reports ──
-const ALLOWED_AGENCIES_VISUAL = ['vilasmkt', 'tag'];
+const META_LOGO_SOURCES = ['/meta-ads-logo.png', '/logometa.png'];
 
 function matchAgencyVisual(name) {
   const n = (name || '').toLowerCase();
@@ -62,12 +56,6 @@ function formatPeriodLabel(period) {
   return { start: '??/??/????', end: '??/??/????', startShort: '??-??', endShort: '??-??' };
 }
 
-function formatCompact(value) {
-  if (value >= 1000000) return `${(value / 1000000).toFixed(1).replace('.0', '')} mi`;
-  if (value >= 1000) return `${(value / 1000).toFixed(1).replace('.0', '')} mil`;
-  return formatNumber(value);
-}
-
 function calcDiff(current, previous) {
   if (!previous || previous === 0) return null;
   return ((current - previous) / previous * 100).toFixed(1);
@@ -80,67 +68,6 @@ const LEAD_ACTION_TYPES = [
 ];
 
 const ENGAGEMENT_ACTION_TYPES = ['post_engagement', 'page_engagement'];
-
-const OBJECTIVES = {
-  messages: {
-    label: 'Mensagens',
-    metricLabel: 'Mensagens',
-    metricLabelSingular: 'mensagem',
-    dailyKey: 'leads',
-    dailyTitle: 'Mensagens por dia',
-    buildKpis: (d) => [
-      { label: 'Investimento', value: formatCurrency(d.spend), color: '#0FA5AE' },
-      { label: 'Mensagens', value: formatNumber(d.leads), color: '#1B8EC2' },
-      { label: 'Custo / Mensagem', value: formatCurrency(d.costPerLead), color: '#2196F3' },
-      { label: 'Alcance', value: formatNumber(d.reach), color: '#42A5F5' },
-      { label: 'Impressões', value: formatNumber(d.impressions), color: '#64B5F6' },
-    ],
-    buildFunnel: (d) => [
-      { label: 'Impressões', value: d.impressions, widthPct: 100, color: '#0B6E75' },
-      { label: 'Alcance', value: d.reach, widthPct: Math.max(40, Math.min(82, (d.reach / Math.max(d.impressions, 1)) * 100)), color: '#0FA5AE' },
-      { label: 'Cliques', value: d.clicks, widthPct: Math.max(24, Math.min(50, (d.clicks / Math.max(d.reach, 1)) * 100 + 20)), color: '#1B8EC2' },
-      { label: 'Mensagens', value: d.leads, widthPct: Math.max(14, Math.min(30, (d.leads / Math.max(d.clicks, 1)) * 100 + 10)), color: '#2196F3' },
-    ],
-  },
-  clicks: {
-    label: 'Cliques no link',
-    metricLabel: 'Cliques',
-    metricLabelSingular: 'clique',
-    dailyKey: 'clicks',
-    dailyTitle: 'Cliques por dia',
-    buildKpis: (d) => [
-      { label: 'Investimento', value: formatCurrency(d.spend), color: '#0FA5AE' },
-      { label: 'Cliques', value: formatNumber(d.clicks), color: '#1B8EC2' },
-      { label: 'Custo / Clique', value: formatCurrency(d.costPerClick), color: '#2196F3' },
-      { label: 'CTR', value: formatPercent(d.ctr), color: '#42A5F5' },
-      { label: 'Alcance', value: formatNumber(d.reach), color: '#64B5F6' },
-    ],
-    buildFunnel: (d) => [
-      { label: 'Impressões', value: d.impressions, widthPct: 100, color: '#0B6E75' },
-      { label: 'Alcance', value: d.reach, widthPct: Math.max(40, Math.min(82, (d.reach / Math.max(d.impressions, 1)) * 100)), color: '#0FA5AE' },
-      { label: 'Cliques', value: d.clicks, widthPct: Math.max(20, Math.min(55, (d.clicks / Math.max(d.reach, 1)) * 100 + 15)), color: '#2196F3' },
-    ],
-  },
-  engagements: {
-    label: 'Engajamentos',
-    metricLabel: 'Engajamentos',
-    metricLabelSingular: 'engajamento',
-    dailyKey: 'engagements',
-    dailyTitle: 'Engajamentos por dia',
-    buildKpis: (d) => [
-      { label: 'Investimento', value: formatCurrency(d.spend), color: '#0FA5AE' },
-      { label: 'Engajamentos', value: formatNumber(d.engagements), color: '#1B8EC2' },
-      { label: 'Custo / Engajamento', value: formatCurrency(d.costPerEngagement), color: '#2196F3' },
-      { label: 'Alcance', value: formatNumber(d.reach), color: '#42A5F5' },
-      { label: 'Impressões', value: formatNumber(d.impressions), color: '#64B5F6' },
-    ],
-    buildFunnel: (d) => [
-      { label: 'Impressões', value: d.impressions, widthPct: 100, color: '#0B6E75' },
-      { label: 'Alcance', value: d.reach, widthPct: Math.max(40, Math.min(82, (d.reach / Math.max(d.impressions, 1)) * 100)), color: '#0FA5AE' },
-      { label: 'Engajamentos', value: d.engagements, widthPct: Math.max(16, Math.min(46, (d.engagements / Math.max(d.reach, 1)) * 100 + 12)), color: '#42A5F5' },
-    ],
-  },
-};
 
 const OBJECTIVE_OPTIONS = [
   { id: 'messages', label: 'Mensagens' },
@@ -210,121 +137,21 @@ function getShareBaseUrl() {
   return '';
 }
 
-// (pie chart palette and gender labels removed — pies replaced by extended bar chart)
-
-// Meta Ads logo is rendered as an <img> from /meta-ads-logo.svg (converted to base64 at generate time)
-
-// ── KPI Card ──
-function ReportKPI({ label, value, color = '#2196F3' }) {
-  return (
-    <div style={{
-      background: 'linear-gradient(135deg, #1a2a3d, #1e2d3d)',
-      borderRadius: 12,
-      border: '1px solid #2a3a4d',
-      padding: '16px 18px',
-      flex: 1,
-      minWidth: 0,
-      position: 'relative',
-      overflow: 'hidden',
-    }}>
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: `linear-gradient(90deg, ${color}, ${color}60)` }} />
-      <div style={{ fontSize: 10, color: '#8899aa', marginBottom: 6, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase' }}>{label}</div>
-      <div style={{ fontSize: 22, fontWeight: 700, color: '#fff', fontFamily: 'Inter, system-ui, sans-serif', lineHeight: 1.2 }}>{value}</div>
-    </div>
-  );
-}
-
-// Meta logo uses /meta-ads-logo.svg converted to base64 at generate time
-
-// ── SVG Funnel (Premium Floating Layers) ──
-function SVGFunnel({ stages }) {
-  const height = 310;
-  const width = 240;
-  const cx = width / 2;
-  const stageCount = stages.length;
-  const gap = 8;
-
-  // Build widths at each boundary
-  const topWidths = [];
-  const bottomWidths = [];
-  
-  for (let i = 0; i < stageCount; i++) {
-    const curPct = stages[i].widthPct / 100;
-    const nextPct = i < stageCount - 1 ? stages[i + 1].widthPct / 100 : curPct * 0.45;
-    
-    let botW = width * nextPct;
-    if (i === stageCount - 1) botW = width * curPct * 0.5;
-    
-    topWidths.push(width * curPct);
-    bottomWidths.push(botW);
-  }
-
-  const stageH = height / stageCount;
-
-  return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ display: 'block', margin: '0 auto', overflow: 'visible' }}>
-      <defs>
-        {stages.map((s, i) => (
-          <linearGradient key={i} id={`funnelGrad${i}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={s.color} stopOpacity={0.95} />
-            <stop offset="100%" stopColor={s.color} stopOpacity={0.6} />
-          </linearGradient>
-        ))}
-        {stages.map((s, i) => (
-          <linearGradient key={`highLight${i}`} id={`highLight${i}`} x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor="#fff" stopOpacity={0.0} />
-            <stop offset="50%" stopColor="#fff" stopOpacity={0.3} />
-            <stop offset="100%" stopColor="#fff" stopOpacity={0.0} />
-          </linearGradient>
-        ))}
-      </defs>
-      {stages.map((s, i) => {
-        const topW = topWidths[i];
-        const bottomW = bottomWidths[i];
-        const y1 = i * stageH + (i === 0 ? 0 : gap / 2);
-        const y2 = (i + 1) * stageH - (i === stageCount - 1 ? 0 : gap / 2);
-        
-        const tl = cx - topW / 2;
-        const tr = cx + topW / 2;
-        const bl = cx - bottomW / 2;
-        const br = cx + bottomW / 2;
-        const midY = (y1 + y2) / 2;
-        
-        const pathData = `M ${tl} ${y1} 
-                          L ${tr} ${y1} 
-                          Q ${tr - (tr - br) * 0.15} ${midY}, ${br} ${y2} 
-                          L ${bl} ${y2} 
-                          Q ${tl + (tl - bl) * 0.15} ${midY}, ${tl} ${y1} 
-                          Z`;
-
-        return (
-          <g key={i}>
-            <path d={pathData} fill={`url(#funnelGrad${i})`} stroke={s.color} strokeWidth={1} strokeOpacity={0.5} />
-            <path d={`M ${tl+2} ${y1+1} L ${tr-2} ${y1+1}`} stroke={`url(#highLight${i})`} strokeWidth={1.5} fill="none" strokeLinecap="round" />
-            <text x={cx} y={midY - 10} textAnchor="middle" fill="#b0bec5" fontSize={10} fontWeight={700} letterSpacing={1.2}>
-              {s.label.toUpperCase()}
-            </text>
-            <text x={cx} y={midY + 16} textAnchor="middle" fill="#ffffff" fontSize={24} fontWeight={800} fontFamily="Inter, system-ui, sans-serif">
-              {formatCompact(s.value)}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
-  );
-}
-
 // ── Helper: convert image URL to base64 for html-to-image compatibility ──
 function resolveAssetUrl(url) {
   if (typeof window === 'undefined' || !url?.startsWith('/')) return url;
   return new URL(url, window.location.origin).toString();
 }
 
+function getAgencyLogoSources(agencyType) {
+  return agencyType === 'tag' ? ['/logotag.png'] : ['/favicon.png'];
+}
+
 async function toBase64(url) {
   try {
     const fullUrl = resolveAssetUrl(url);
     const res = await fetch(fullUrl);
-    if (!res.ok) { console.warn('[toBase64] fetch failed for', url, res.status); return url; }
+    if (!res.ok) { console.warn('[toBase64] fetch failed for', url, res.status); return null; }
     const blob = await res.blob();
     return new Promise((resolve) => {
       const reader = new FileReader();
@@ -334,7 +161,15 @@ async function toBase64(url) {
       };
       reader.readAsDataURL(blob);
     });
-  } catch (e) { console.warn('[toBase64] error for', url, e); return url; }
+  } catch (e) { console.warn('[toBase64] error for', url, e); return null; }
+}
+
+async function toBase64FromSources(sources) {
+  for (const source of sources) {
+    const base64 = await toBase64(source);
+    if (base64) return base64;
+  }
+  return null;
 }
 
 async function waitForImages(container) {
@@ -393,110 +228,18 @@ function getExportCacheKey(reportData) {
   });
 }
 
-// ── Standalone report card for off-screen rendering ──
-function ReportCard({ data, agencyLogoB64, metaLogoB64, agencyLabel: agLabel, objective = 'messages' }) {
-  const d = data;
-  const config = OBJECTIVES[objective] || OBJECTIVES.messages;
-  const kpis = config.buildKpis(d);
-  const funnelStages = config.buildFunnel(d);
-  return (
-    <div
-      style={{
-        width: 1200,
-        minHeight: 750,
-        background: 'linear-gradient(180deg, #0d1520 0%, #111827 100%)',
-        borderRadius: 16,
-        padding: 28,
-        fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
-        color: '#fff',
-      }}
-    >
-      {/* Header */}
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        background: 'linear-gradient(135deg, #1a2538, #1e2d3d)',
-        borderRadius: 14, padding: '18px 28px', marginBottom: 22,
-        border: '1px solid #2a3a4d', boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
-          <div style={{ display: 'flex', alignItems: 'center', minHeight: 44 }}>
-            {agencyLogoB64 ? (
-              <img src={agencyLogoB64} alt={agLabel} style={{ height: 44, width: 'auto', maxWidth: 180, objectFit: 'contain', display: 'block' }} />
-            ) : (
-              <span style={{ fontSize: 18, fontWeight: 700, color: '#ffffff', letterSpacing: 0.4 }}>{agLabel}</span>
-            )}
-          </div>
-          <div style={{ height: 32, width: 1, background: '#2a3a4d', flexShrink: 0 }} />
-          {metaLogoB64 && <img src={metaLogoB64} alt="Meta" width={38} height={38} style={{ width: 38, height: 38, objectFit: 'contain', display: 'block' }} />}
-        </div>
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          background: '#243044', borderRadius: 10, padding: '10px 18px', border: '1px solid #2a3a4d',
-        }}>
-          <span style={{ fontSize: 13, color: '#b0bec5', fontWeight: 500 }}>{d.period.start} — {d.period.end}</span>
-        </div>
-      </div>
-
-      {/* Account name */}
-      <div style={{
-        fontSize: 20, fontWeight: 700, color: '#fff', marginBottom: 18,
-        padding: '12px 20px', background: 'linear-gradient(135deg, #1a2a3d, #1e2d3d)',
-        borderRadius: 12, border: '1px solid #2a3a4d',
-      }}>
-        📊 {d.accountName}
-      </div>
-
-      {/* KPIs */}
-      <div style={{ display: 'flex', gap: 14, marginBottom: 22 }}>
-        {kpis.map((kpi, idx) => (
-          <ReportKPI key={idx} label={kpi.label} value={kpi.value} color={kpi.color} />
-        ))}
-      </div>
-
-      {/* Funnel */}
-      <div style={{
-        background: 'linear-gradient(135deg, #1a2a3d, #1e2d3d)',
-        borderRadius: 14, border: '1px solid #2a3a4d', padding: '20px 20px',
-        boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
-      }}>
-        <div style={{ fontSize: 11, color: '#8899aa', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 14, textAlign: 'center' }}>
-          Funil de Conversão — {config.metricLabel}
-        </div>
-        <SVGFunnel stages={funnelStages} />
-      </div>
-    </div>
-  );
-}
-
-async function renderCardToPng(reportCardProps) {
-  const container = document.createElement('div');
-  container.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1200px;z-index:-1;';
-  document.body.appendChild(container);
-
-  const root = createRoot(container);
-  root.render(createElement(ReportCard, reportCardProps));
-
-  // Wait for render + images
-  await new Promise(r => setTimeout(r, 500));
-  await waitForImages(container);
-  await new Promise(r => requestAnimationFrame(r));
-
-  const opts = { quality: 1, pixelRatio: 1.15, backgroundColor: '#0d1520', cacheBust: false, skipFonts: true };
-  // Warm-up pass
-  await toPng(container.firstChild, opts).catch(() => {});
-  await new Promise(r => requestAnimationFrame(r));
-  const dataUrl = await toPng(container.firstChild, opts);
-
-  root.unmount();
-  document.body.removeChild(container);
-
-  return dataUrlToBlob(dataUrl);
-}
-
 export default function ReportVisual() {
   const { accounts, campaigns, selectedPeriod, setSelectedPeriod } = useMetaAds();
   const { agencies, accountAgencies } = useAgency();
   const [selectedAccount, setSelectedAccount] = useState('');
+
+  const clientLogos = useMemo(() => {
+    try {
+      return JSON.parse(localStorage.getItem('client_logos')) || {};
+    } catch {
+      return {};
+    }
+  }, []);
   const [selectedAgency, setSelectedAgency] = useState('');
   const [selectedObjective, setSelectedObjective] = useState('messages');
   const [selectedCampaignIds, setSelectedCampaignIds] = useState([]);
@@ -506,7 +249,9 @@ export default function ReportVisual() {
   const [copying, setCopying] = useState(false);
   const [copied, setCopied] = useState(false);
   const reportRef = useRef(null);
+  const previewFrameRef = useRef(null);
   const exportCacheRef = useRef({ key: '', canvas: null, blob: null });
+  const [previewScale, setPreviewScale] = useState(1);
 
   // Filter agencies to only vilasmkt and tag
   const allowedAgencyList = useMemo(() => {
@@ -545,7 +290,7 @@ export default function ReportVisual() {
     return matchAgencyVisual(selectedAgency) || 'vilasmkt';
   }, [selectedAgency, selectedAccount, accountAgencies, accounts]);
 
-  const logoSrc = agencyType === 'tag' ? '/logotag.png' : '/favicon.png';
+  const logoSources = useMemo(() => getAgencyLogoSources(agencyType), [agencyType]);
   const agencyLabel = agencyType === 'tag' ? 'Grupo Tag' : 'Vilas Growth Marketing';
 
   const filteredAccounts = useMemo(() => {
@@ -558,7 +303,7 @@ export default function ReportVisual() {
     if (!selectedAccount) return [];
 
     return campaigns
-      .filter(campaign => campaign.accountId === selectedAccount)
+      .filter(campaign => campaign.accountId === selectedAccount && (campaign.metrics?.spend || 0) > 0)
       .sort((a, b) => {
         const spendDiff = (b.metrics?.spend || 0) - (a.metrics?.spend || 0);
         if (spendDiff !== 0) return spendDiff;
@@ -577,6 +322,28 @@ export default function ReportVisual() {
     () => buildCampaignScopeLabel(selectedCampaigns, accountCampaigns.length),
     [selectedCampaigns, accountCampaigns.length]
   );
+
+  useEffect(() => {
+    const element = previewFrameRef.current;
+    if (!element) return undefined;
+
+    const updateScale = () => {
+      const nextScale = Math.min(1, element.clientWidth / 1200);
+      setPreviewScale(nextScale > 0 ? nextScale : 1);
+    };
+
+    updateScale();
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateScale);
+      return () => window.removeEventListener('resize', updateScale);
+    }
+
+    const observer = new ResizeObserver(updateScale);
+    observer.observe(element);
+
+    return () => observer.disconnect();
+  }, [reportData]);
 
   useEffect(() => {
     if (filteredAccounts.length > 0 && !filteredAccounts.find(a => a.id === selectedAccount)) {
@@ -722,10 +489,16 @@ export default function ReportVisual() {
       const account = accounts.find(a => a.id === selectedAccount);
       const periodDates = formatPeriodLabel(selectedPeriod);
 
+      // Achar cliente associado para obter a logo
+      const clientLogoUrl = clientLogos[selectedAccount] ||
+        (account && clientLogos[account.accountId]) ||
+        (account && clientLogos[account.id]) ||
+        null;
+
       // Convert logos to base64 once, before export
       const [agencyLogoB64, metaLogoB64] = await Promise.all([
-        toBase64(logoSrc),
-        toBase64('/meta-ads-logo.svg'),
+        toBase64FromSources(logoSources),
+        toBase64FromSources(META_LOGO_SOURCES),
       ]);
 
       setReportData({
@@ -740,6 +513,7 @@ export default function ReportVisual() {
         diffs,
         dailyLeads, dailyClicks, dailyEngagements,
         agencyLogoB64, metaLogoB64,
+        clientLogoUrl,
       });
     } catch (err) {
       console.error('Erro ao gerar relatório visual:', err);
@@ -752,11 +526,12 @@ export default function ReportVisual() {
     selectedPeriod,
     selectedObjective,
     accounts,
-    logoSrc,
+    logoSources,
     hasCampaignFilter,
     selectedCampaignIds,
     selectedCampaigns,
     campaignScopeLabel,
+    clientLogos,
   ]);
 
   const buildExportAsset = useCallback(async () => {
@@ -838,147 +613,7 @@ export default function ReportVisual() {
     }
   }, [reportData, buildExportAsset]);
 
-  // ── Tag: send all accounts report to Slack ──
-  const [sendingTag, setSendingTag] = useState(false);
-  const [tagSent, setTagSent] = useState(false);
-  const [tagError, setTagError] = useState(null);
 
-  const tagAccounts = useMemo(() => {
-    return accounts.filter(a => {
-      const ag = accountAgencies[a.id];
-      return ag && matchAgencyVisual(ag) === 'tag';
-    });
-  }, [accounts, accountAgencies]);
-
-  const handleSendTagSlack = useCallback(async () => {
-    if (tagAccounts.length === 0) {
-      setTagError('Nenhuma conta Tag encontrada. Verifique as agências nas Configurações.');
-      return;
-    }
-    setSendingTag(true);
-    setTagSent(false);
-    setTagError(null);
-
-    try {
-      const periodDates = formatPeriodLabel(selectedPeriod);
-
-      // Pre-load logos as base64
-      const [agencyLogoB64, metaLogoB64] = await Promise.all([
-        toBase64('/logotag.png'),
-        toBase64('/meta-ads-logo.svg'),
-      ]);
-
-      let sentCount = 0;
-
-      for (const account of tagAccounts) {
-        const accountCamps = campaigns.filter(c => c.accountId === account.id && Number(c.metrics?.spend || 0) > 0);
-        if (accountCamps.length === 0) continue;
-
-        const totalSpend = accountCamps.reduce((s, c) => s + Number(c.metrics?.spend || 0), 0);
-        const totalImpressions = accountCamps.reduce((s, c) => s + Number(c.metrics?.impressions || 0), 0);
-        const totalReach = accountCamps.reduce((s, c) => s + Number(c.metrics?.reach || 0), 0);
-        const totalClicks = accountCamps.reduce((s, c) => s + Number(c.metrics?.clicks || c.metrics?.linkClicks || 0), 0);
-        const totalLeads = accountCamps.reduce((s, c) => s + Number(c.metrics?.messages || 0), 0);
-        const totalEngagements = accountCamps.reduce((s, c) => s + Number(c.metrics?.engagements || 0), 0);
-        const costPerLead = totalLeads > 0 ? totalSpend / totalLeads : 0;
-        const costPerEngagement = totalEngagements > 0 ? totalSpend / totalEngagements : 0;
-        const costPerClick = totalClicks > 0 ? totalSpend / totalClicks : 0;
-        const ctr = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
-
-        const cardData = {
-          accountName: account.clientName || 'Conta',
-          period: periodDates,
-          spend: totalSpend,
-          impressions: totalImpressions,
-          reach: totalReach,
-          clicks: totalClicks,
-          leads: totalLeads,
-          engagements: totalEngagements,
-          costPerLead,
-          costPerEngagement,
-          costPerClick,
-          ctr,
-        };
-
-        // Render card to PNG blob
-        const pngBlob = await renderCardToPng({
-          data: cardData,
-          agencyLogoB64,
-          metaLogoB64,
-          agencyLabel: 'Grupo Tag',
-          objective: selectedObjective,
-        });
-
-        // Upload to Supabase Storage
-        const fileName = `tag-${account.id}-${Date.now()}.png`;
-        const { error: uploadError } = await supabase.storage
-          .from('report-images')
-          .upload(fileName, pngBlob, { contentType: 'image/png', upsert: true });
-
-        if (uploadError) {
-          console.error('[ReportVisual] Upload error:', uploadError);
-          throw new Error(`Falha ao fazer upload da imagem: ${uploadError.message}`);
-        }
-
-        // Get public URL
-        const { data: urlData } = supabase.storage
-          .from('report-images')
-          .getPublicUrl(fileName);
-
-        const publicUrl = urlData?.publicUrl;
-        if (!publicUrl) throw new Error('Não foi possível obter URL pública da imagem');
-
-        // Send image to Slack via webhook
-        const slackPayload = {
-          text: `📊 Relatório Visual — ${account.clientName} (${periodDates.start} a ${periodDates.end})`,
-          blocks: [
-            {
-              type: 'section',
-              text: {
-                type: 'mrkdwn',
-                text: `⭐ *Relatório Visual — ${account.clientName}*\n📅 ${periodDates.start} a ${periodDates.end}`,
-              },
-            },
-            {
-              type: 'image',
-              image_url: publicUrl,
-              alt_text: `Relatório ${account.clientName}`,
-            },
-          ],
-        };
-
-        await fetch(SLACK_WEBHOOK_TAG, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: `payload=${encodeURIComponent(JSON.stringify(slackPayload))}`,
-        });
-
-        sentCount++;
-
-        // Clean up uploaded image after sending (async, no need to wait)
-        supabase.storage.from('report-images').remove([fileName]).catch(() => {});
-      }
-
-      if (sentCount === 0) {
-        setTagError('Nenhuma conta Tag com dados de campanhas no período selecionado.');
-        return;
-      }
-
-      setTagSent(true);
-      setTimeout(() => setTagSent(false), 4000);
-    } catch (err) {
-      console.error('[ReportVisual] Erro ao enviar relatórios Tag para Slack:', err);
-      const msg = err.message || 'Erro desconhecido';
-      if (msg.includes('Load failed') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
-        setTagError('Erro de rede: não foi possível conectar ao Slack.');
-      } else {
-        setTagError(`Erro: ${msg}`);
-      }
-    } finally {
-      setSendingTag(false);
-    }
-  }, [tagAccounts, campaigns, selectedPeriod, selectedObjective]);
 
   // ── Share link with client ──
   const { user } = useAuth();
@@ -1321,188 +956,58 @@ export default function ReportVisual() {
             </button>
           )}
 
-          {agencyType === 'tag' && (
-            <button
-              onClick={handleSendTagSlack}
-              disabled={sendingTag || tagAccounts.length === 0}
-              className="group relative inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl font-semibold text-sm
-                bg-gradient-to-r from-[#4A154B] to-[#611f69] text-white shadow-lg shadow-[#4A154B]/25
-                hover:shadow-xl hover:shadow-[#4A154B]/30 hover:scale-[1.02] active:scale-[0.98]
-                disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100
-                transition-all duration-300 ease-out"
-            >
-              {sendingTag ? <Loader2 size={16} className="animate-spin" /> : tagSent ? <CheckCircle2 size={16} /> : <Send size={16} />}
-              {sendingTag ? 'Enviando...' : tagSent ? 'Enviado ao Slack!' : `Todos Tag → Slack (${tagAccounts.length})`}
-              <div className="absolute inset-0 rounded-xl bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-            </button>
-          )}
+
         </div>
 
-        {tagError && agencyType === 'tag' && (
-          <div className="relative mt-3 mx-auto max-w-lg rounded-lg bg-danger/10 border border-danger/30 px-4 py-2.5 text-center">
-            <p className="text-sm text-danger">{tagError}</p>
-          </div>
-        )}
+
       </div>
 
       {/* REPORT CANVAS */}
       {d && !d.error && (
-        <div className="overflow-x-auto pb-4">
-          <div
-            ref={reportRef}
-            style={{
-              width: 1200,
-              minHeight: 750,
-              background: 'linear-gradient(180deg, #0d1520 0%, #111827 100%)',
-              borderRadius: 16,
-              padding: 28,
-              fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
-              color: '#fff',
-            }}
-          >
-            {/* ROW 1: Header — agency logo (base64) + Meta Ads logo + period */}
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              background: 'linear-gradient(135deg, #1a2538, #1e2d3d)',
-              borderRadius: 14,
-              padding: '18px 28px',
-              marginBottom: 22,
-              border: '1px solid #2a3a4d',
-              boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
-                {/* Agency Logo — base64 <img> for PNG export */}
-                <div style={{ display: 'flex', alignItems: 'center', minHeight: 44 }}>
-                  {d.agencyLogoB64 ? (
-                    <img
-                      src={d.agencyLogoB64}
-                      alt={agencyLabel}
-                      style={{ height: 44, width: 'auto', maxWidth: 180, objectFit: 'contain', display: 'block' }}
-                    />
-                  ) : (
-                    <span style={{ fontSize: 18, fontWeight: 700, color: '#ffffff', letterSpacing: 0.4 }}>
-                      {agencyLabel}
-                    </span>
-                  )}
-                </div>
-                <div style={{ height: 32, width: 1, background: '#2a3a4d', flexShrink: 0 }} />
-                {/* Meta Logo — base64 <img> from meta-ads-logo.svg */}
-                {d.metaLogoB64 && (
-                  <img
-                    src={d.metaLogoB64}
-                    alt="Meta"
-                    width={38}
-                    height={38}
-                    style={{ width: 38, height: 38, objectFit: 'contain', display: 'block' }}
+        <div className="pb-4">
+          <div className="rounded-[28px] border border-border/60 bg-gradient-to-b from-surface/90 to-bg/90 p-3 shadow-[0_24px_80px_rgba(0,0,0,0.28)] sm:p-5">
+            <div className="mb-3 flex items-center justify-between gap-3 px-1 sm:px-2">
+              <div>
+                <p className="text-sm font-semibold text-text-primary">Pré-visualização</p>
+                <p className="text-xs text-text-secondary">A tela e a exportação agora usam o mesmo componente-base.</p>
+              </div>
+              <span className="rounded-full border border-border bg-bg/60 px-3 py-1 text-[11px] font-medium text-text-secondary">
+                Escala {Math.round(previewScale * 100)}%
+              </span>
+            </div>
+            <div
+              ref={previewFrameRef}
+              className="overflow-x-auto rounded-2xl border border-border/50 bg-[#0a1018] p-3 sm:p-4"
+            >
+              <div
+                style={{
+                  width: `${1200 * previewScale}px`,
+                  height: `${750 * previewScale}px`,
+                  minWidth: previewScale < 1 ? `${1200 * previewScale}px` : 'auto',
+                  margin: '0 auto',
+                }}
+              >
+                <div
+                  style={{
+                    width: 1200,
+                    transform: `scale(${previewScale})`,
+                    transformOrigin: 'top center',
+                  }}
+                >
+                  <ReportCard
+                    data={d}
+                    agencyLogoSrc={d.agencyLogoB64 ? [d.agencyLogoB64] : logoSources}
+                    metaLogoSrc={d.metaLogoB64 ? [d.metaLogoB64] : META_LOGO_SOURCES}
+                    clientLogoSrc={d.clientLogoUrl}
+                    agencyLabel={agencyLabel}
+                    showAccountName={false}
+                    objective={d.objective || selectedObjective}
+                    withBarChart
+                    innerRef={reportRef}
                   />
-                )}
-              </div>
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                background: '#243044', borderRadius: 10, padding: '10px 18px', border: '1px solid #2a3a4d',
-              }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64B5F6" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                <span style={{ fontSize: 13, color: '#b0bec5', fontWeight: 500 }}>
-                  {d.period.start} — {d.period.end}
-                </span>
-              </div>
-            </div>
-
-            {/* ROW 2: KPI Cards */}
-            <div style={{ display: 'flex', gap: 14, marginBottom: 22 }}>
-              {(() => {
-                const config = OBJECTIVES[d.objective] || OBJECTIVES.messages;
-                return config.buildKpis(d).map((kpi, idx) => (
-                  <ReportKPI key={idx} label={kpi.label} value={kpi.value} color={kpi.color} />
-                ));
-              })()}
-            </div>
-
-            {/* ROW 3: Funnel + Full-width Bar Chart */}
-            {(() => {
-              const config = OBJECTIVES[d.objective] || OBJECTIVES.messages;
-              const dailyData = d[`daily${config.dailyKey.charAt(0).toUpperCase() + config.dailyKey.slice(1)}`] || [];
-              const metricLabel = config.metricLabel.toLowerCase();
-              return (
-            <div style={{ display: 'flex', gap: 16 }}>
-              {/* LEFT: Real SVG Funnel */}
-              <div style={{
-                width: 280,
-                background: 'linear-gradient(135deg, #1a2a3d, #1e2d3d)',
-                borderRadius: 14,
-                border: '1px solid #2a3a4d',
-                padding: '20px 20px',
-                flexShrink: 0,
-                boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
-              }}>
-                <div style={{ fontSize: 11, color: '#8899aa', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 14, textAlign: 'center' }}>
-                  Funil — {config.metricLabel}
                 </div>
-                <SVGFunnel stages={config.buildFunnel(d)} />
-              </div>
-
-              {/* RIGHT: Daily Bar Chart for selected objective */}
-              <div style={{
-                flex: 1,
-                background: 'linear-gradient(135deg, #1a2a3d, #1e2d3d)',
-                borderRadius: 14,
-                border: '1px solid #2a3a4d',
-                padding: '20px 20px',
-                minWidth: 0,
-                boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                  <div style={{ width: 10, height: 10, borderRadius: 3, background: 'linear-gradient(135deg, #0FA5AE, #2196F3)' }} />
-                  <span style={{ fontSize: 12, color: '#b0bec5', fontWeight: 600 }}>{config.dailyTitle}</span>
-                </div>
-                {dailyData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={290}>
-                    <BarChart data={dailyData} margin={{ top: 24, right: 10, left: -10, bottom: 5 }}>
-                      <defs>
-                        <linearGradient id="barGradVis" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#20CFCF" stopOpacity={1} />
-                          <stop offset="40%" stopColor="#0FA5AE" stopOpacity={0.92} />
-                          <stop offset="100%" stopColor="#0B6E75" stopOpacity={0.75} />
-                        </linearGradient>
-                        <linearGradient id="barGlowVis" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#20CFCF" stopOpacity={0.35} />
-                          <stop offset="100%" stopColor="#0FA5AE" stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e2d3d" vertical={false} />
-                      <XAxis dataKey="date" tick={{ fill: '#6b7f8e', fontSize: 10, fontWeight: 500 }} axisLine={false} tickLine={false} />
-                      <YAxis tick={{ fill: '#6b7f8e', fontSize: 10 }} axisLine={false} tickLine={false} allowDecimals={false} />
-                      <Tooltip
-                        cursor={{ fill: 'rgba(15,165,174,0.08)', radius: 6 }}
-                        contentStyle={{ background: 'linear-gradient(135deg, #1a2538, #1e2d3d)', border: '1px solid #0FA5AE40', borderRadius: 12, fontSize: 12, boxShadow: '0 12px 32px rgba(0,0,0,0.4)', backdropFilter: 'blur(8px)' }}
-                        labelStyle={{ color: '#8899aa', fontWeight: 600, marginBottom: 4 }}
-                        itemStyle={{ color: '#20CFCF', fontWeight: 700 }}
-                        formatter={(value) => [`${value} ${metricLabel}`, '']}
-                      />
-                      {/* Glow shadow bar behind main bar */}
-                      <Bar dataKey={config.dailyKey} fill="url(#barGlowVis)" radius={[8, 8, 0, 0]} barSize={dailyData.length > 20 ? 22 : 36} isAnimationActive={false} />
-                      {/* Main bar with gradient + value labels on top */}
-                      <Bar
-                        dataKey={config.dailyKey}
-                        fill="url(#barGradVis)"
-                        radius={[8, 8, 0, 0]}
-                        barSize={dailyData.length > 20 ? 18 : 32}
-                        label={{ position: 'top', fill: '#b0bec5', fontSize: 10, fontWeight: 700, offset: 6 }}
-                        isAnimationActive={false}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 290, color: '#6b7f8e', fontSize: 12 }}>
-                    Sem dados diários disponíveis
-                  </div>
-                )}
               </div>
             </div>
-              );
-            })()}
           </div>
         </div>
       )}

@@ -1,5 +1,100 @@
 const API_VERSION = 'v22.0';
 const BASE_URL = `https://graph.facebook.com/${API_VERSION}`;
+const IS_DEV = import.meta.env.DEV;
+const DEFAULT_GET_TTL_MS = 3 * 60 * 1000;
+const AD_ACCOUNTS_TTL_MS = 5 * 60 * 1000;
+const SESSION_STORAGE_PREFIX = 'meta_api_cache::';
+const SESSION_STORAGE_MAX_BYTES = 1_500_000; // ~1.5MB, dentro do limite de 5MB do sessionStorage
+const getCache = new Map();
+const inflightGetRequests = new Map();
+
+function serializeCacheValue(value) {
+    if (value === undefined || value === null) return '';
+    if (typeof value === 'string') return value;
+    return JSON.stringify(value);
+}
+
+function buildGetCacheKey(path, params, token) {
+    const normalizedParams = Object.entries(params)
+        .filter(([, value]) => value !== undefined && value !== null)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, value]) => `${key}:${serializeCacheValue(value)}`)
+        .join('|');
+
+    return `${token}::${path}::${normalizedParams}`;
+}
+
+function readSessionCache(cacheKey) {
+    if (typeof sessionStorage === 'undefined') return null;
+    try {
+        const raw = sessionStorage.getItem(SESSION_STORAGE_PREFIX + cacheKey);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed.expiresAt !== 'number') return null;
+        if (Date.now() > parsed.expiresAt) {
+            sessionStorage.removeItem(SESSION_STORAGE_PREFIX + cacheKey);
+            return null;
+        }
+        return parsed;
+    } catch {
+        return null;
+    }
+}
+
+function writeSessionCache(cacheKey, data, expiresAt) {
+    if (typeof sessionStorage === 'undefined') return;
+    try {
+        const payload = JSON.stringify({ data, expiresAt });
+        if (payload.length > SESSION_STORAGE_MAX_BYTES) return; // resposta grande: fica só em memória
+        sessionStorage.setItem(SESSION_STORAGE_PREFIX + cacheKey, payload);
+    } catch {
+        // QuotaExceeded ou similar: ignora silenciosamente
+    }
+}
+
+function clearSessionCache() {
+    if (typeof sessionStorage === 'undefined') return;
+    try {
+        const keysToRemove = [];
+        for (let i = 0; i < sessionStorage.length; i++) {
+            const key = sessionStorage.key(i);
+            if (key && key.startsWith(SESSION_STORAGE_PREFIX)) keysToRemove.push(key);
+        }
+        keysToRemove.forEach(k => sessionStorage.removeItem(k));
+    } catch { /* ignore */ }
+}
+
+function getCachedResponse(cacheKey) {
+    const memEntry = getCache.get(cacheKey);
+    if (memEntry) {
+        if (Date.now() > memEntry.expiresAt) {
+            getCache.delete(cacheKey);
+        } else {
+            return memEntry.data;
+        }
+    }
+
+    const sessionEntry = readSessionCache(cacheKey);
+    if (sessionEntry) {
+        getCache.set(cacheKey, { data: sessionEntry.data, expiresAt: sessionEntry.expiresAt });
+        return sessionEntry.data;
+    }
+
+    return null;
+}
+
+function setCachedResponse(cacheKey, data, ttlMs) {
+    if (!ttlMs || ttlMs <= 0) return;
+    const expiresAt = Date.now() + ttlMs;
+    getCache.set(cacheKey, { data, expiresAt });
+    writeSessionCache(cacheKey, data, expiresAt);
+}
+
+export function clearMetaGetCache() {
+    getCache.clear();
+    inflightGetRequests.clear();
+    clearSessionCache();
+}
 
 /**
  * Retorna o token de acesso.
@@ -9,14 +104,18 @@ const getAccessToken = () => {
     // Prioridade: token obtido via Facebook OAuth (salvo no callback)
     const oauthToken = localStorage.getItem('meta_provider_token');
     if (oauthToken) {
-        console.log('[metaApi] Usando token do localStorage (OAuth)');
+        if (IS_DEV) {
+            console.log('[metaApi] Usando token do localStorage (OAuth)');
+        }
         return oauthToken;
     }
 
     // Fallback: token fixo do .env (para desenvolvimento)
     const envToken = import.meta.env.VITE_META_ACCESS_TOKEN;
     if (envToken) {
-        console.log('[metaApi] Usando token do .env (fallback)');
+        if (IS_DEV) {
+            console.log('[metaApi] Usando token do .env (fallback)');
+        }
         return envToken;
     }
 
@@ -26,8 +125,23 @@ const getAccessToken = () => {
 /**
  * Função utilitária para fazer requisições GET à Graph API.
  */
-const fetchMeta = async (path, params = {}) => {
+const fetchMeta = async (path, params = {}, options = {}) => {
     const token = getAccessToken();
+    const { force = false, ttlMs = DEFAULT_GET_TTL_MS } = options;
+    const cacheKey = buildGetCacheKey(path, params, token);
+
+    if (!force) {
+        const cached = getCachedResponse(cacheKey);
+        if (cached) {
+            return cached;
+        }
+
+        const inflight = inflightGetRequests.get(cacheKey);
+        if (inflight) {
+            return inflight;
+        }
+    }
+
     const url = new URL(`${BASE_URL}${path}`);
 
     url.searchParams.append('access_token', token);
@@ -38,24 +152,40 @@ const fetchMeta = async (path, params = {}) => {
         }
     }
 
-    try {
-        const response = await fetch(url.toString(), {
-            method: 'GET',
-            headers: {
-                'Accept': 'application/json',
+    const request = (async () => {
+        try {
+            const response = await fetch(url.toString(), {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json',
+                }
+            });
+
+            const text = await response.text();
+            const data = text ? JSON.parse(text) : {};
+
+            if (!response.ok) {
+                throw new Error(data.error?.message || `Erro da Meta API (${response.status})`);
             }
-        });
 
-        const text = await response.text();
-        const data = text ? JSON.parse(text) : {};
-
-        if (!response.ok) {
-            throw new Error(data.error?.message || `Erro da Meta API (${response.status})`);
+            return data;
+        } catch (err) {
+            throw new Error(`Falha na requisição Meta API: ${err.message}`);
         }
+    })();
 
+    if (!force) {
+        inflightGetRequests.set(cacheKey, request);
+    }
+
+    try {
+        const data = await request;
+        if (!force) {
+            setCachedResponse(cacheKey, data, ttlMs);
+        }
         return data;
-    } catch (err) {
-        throw new Error(`Falha na requisição Meta API: ${err.message}`);
+    } finally {
+        inflightGetRequests.delete(cacheKey);
     }
 };
 
@@ -91,6 +221,7 @@ const postMeta = async (path, body = {}) => {
             throw new Error(data.error?.message || `Erro da Meta API (${response.status})`);
         }
 
+        clearMetaGetCache();
         return data;
     } catch (err) {
         throw new Error(`Falha na requisição Meta API: ${err.message}`);
@@ -104,7 +235,7 @@ export const fetchAdAccounts = async () => {
     const data = await fetchMeta('/me/adaccounts', {
         fields: 'id,account_id,name,account_status,currency,balance,amount_spent,spend_cap,is_prepay_account,funding_source_details',
         limit: 1000
-    });
+    }, { ttlMs: AD_ACCOUNTS_TTL_MS });
     return data.data || [];
 };
 
@@ -143,13 +274,13 @@ const applyPeriodParams = (params, period) => {
 /**
  * Busca os insights agregados de uma conta específica.
  */
-export const fetchAccountInsights = async (accountId, period = '7d') => {
+export const fetchAccountInsights = async (accountId, period = '7d', options) => {
     const params = applyPeriodParams({
         fields: 'spend,impressions,cpm,inline_link_clicks,cpc,actions,ctr,reach,frequency',
         level: 'account'
     }, period);
 
-    const data = await fetchMeta(`/${accountId}/insights`, params);
+    const data = await fetchMeta(`/${accountId}/insights`, params, options);
 
     return data.data && data.data.length > 0 ? data.data[0] : null;
 };
@@ -157,14 +288,14 @@ export const fetchAccountInsights = async (accountId, period = '7d') => {
 /**
  * Busca os insights diários de uma conta específica.
  */
-export const fetchAccountDailyInsights = async (accountId, period = '7d') => {
+export const fetchAccountDailyInsights = async (accountId, period = '7d', options) => {
     const params = applyPeriodParams({
         fields: 'spend,impressions,actions',
         time_increment: 1, // '1' indica granularidade diária
         level: 'account'
     }, period);
 
-    const data = await fetchMeta(`/${accountId}/insights`, params);
+    const data = await fetchMeta(`/${accountId}/insights`, params, options);
 
     return data.data || [];
 };
@@ -172,7 +303,7 @@ export const fetchAccountDailyInsights = async (accountId, period = '7d') => {
 /**
  * Busca as campanhas de uma conta e seus insights.
  */
-export const fetchCampaignsWithInsights = async (accountId, period = '7d') => {
+export const fetchCampaignsWithInsights = async (accountId, period = '7d', options) => {
     const preset = getPresetFromPeriod(period);
     // Para simplificar aninhamento com time_range, se for custom passamos no nível do request (date_preset vs time_range em nível de request funciona global para insights).
     // O edge GraphQL de campanhas permite que filtros globais se apliquem ao 'insights' nestado de certas formas.
@@ -186,9 +317,9 @@ export const fetchCampaignsWithInsights = async (accountId, period = '7d') => {
     }
 
     const data = await fetchMeta(`/${accountId}/campaigns`, {
-        fields: `id,name,status,objective,budget_remaining,daily_budget,lifetime_budget,${insightsField}{spend,impressions,cpm,inline_link_clicks,cpc,actions,ctr,purchase_roas,reach,frequency}`,
+        fields: `id,name,status,objective,budget_remaining,daily_budget,lifetime_budget,adsets{status,daily_budget},${insightsField}{spend,impressions,cpm,inline_link_clicks,cpc,actions,ctr,purchase_roas,reach,frequency}`,
         limit: 50
-    });
+    }, options);
 
     return data.data || [];
 };

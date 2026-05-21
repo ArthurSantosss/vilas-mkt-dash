@@ -13,7 +13,6 @@ const AGENCY_TABS = [
   { key: 'all', label: 'Todas', icon: Users },
   { key: 'TAG', label: 'TAG', icon: Building2 },
   { key: 'GDM', label: 'GDM', icon: Building2 },
-  { key: 'LAQUILA', label: "L'Aquila", icon: Building2 },
 ];
 
 function StatusBadge({ status, value }) {

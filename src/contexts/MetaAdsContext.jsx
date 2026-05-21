@@ -1,40 +1,26 @@
-import { createContext, useContext, useState, useMemo, useEffect, useCallback } from 'react';
-import { fetchAdAccounts, fetchAccountInsights, fetchAccountDailyInsights, fetchCampaignsWithInsights } from '../services/metaApi';
+import { createContext, useContext, useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import {
+  clearMetaGetCache,
+  fetchAdAccounts,
+  fetchAccountInsights,
+  fetchAccountDailyInsights,
+  fetchCampaignsWithInsights,
+} from '../services/metaApi';
 import { calculateMetaBalance } from '../shared/utils/metaBalance';
 
 const MetaAdsContext = createContext();
-
-// Cache em memória por (accountId, period) com TTL de 3min.
-// Reduz ~80% das chamadas ao Graph API ao trocar período ou remontar o provider.
-const CACHE_TTL_MS = 3 * 60 * 1000;
-const accountCache = new Map(); // key: `${actId}:${period}` → { timestamp, data }
-
-function getCached(actId, period) {
-  const key = `${actId}:${period}`;
-  const entry = accountCache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
-    accountCache.delete(key);
-    return null;
-  }
-  return entry.data;
-}
-
-function setCached(actId, period, data) {
-  accountCache.set(`${actId}:${period}`, { timestamp: Date.now(), data });
-}
-
-function clearCache() {
-  accountCache.clear();
-}
 
 export function MetaAdsProvider({ children }) {
   const [accounts, setAccounts] = useState([]);
   const [balances, setBalances] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
-  const [selectedPeriod, setSelectedPeriod] = useState('7d');
+  const [selectedPeriod, setSelectedPeriod] = useState('today');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // Cada chamada de loadMetaData ganha um id. Updates incrementais de chamadas
+  // antigas são descartados quando uma nova chamada começa (mudança de período, etc).
+  const loadIdRef = useRef(0);
 
   const loadMetaData = useCallback(async ({ force = false } = {}) => {
     // Verificar se temos token antes de tentar
@@ -45,11 +31,15 @@ export function MetaAdsProvider({ children }) {
       return;
     }
 
+    const myLoadId = ++loadIdRef.current;
+    const isStale = () => loadIdRef.current !== myLoadId;
+
     try {
       setLoading(true);
       setError(null);
 
       const rawAccounts = await fetchAdAccounts();
+      if (isStale()) return;
 
       // Ler contas desativadas no painel de configurações
       let disabledAccounts = [];
@@ -71,26 +61,25 @@ export function MetaAdsProvider({ children }) {
         activeRawAccounts = rawAccounts.filter(a => a.account_status === 1);
       }
 
-      const loadedAccounts = [];
-      const loadedBalances = [];
-      const loadedCampaigns = [];
+      // Reset incremental: cada conta entra no estado assim que termina,
+      // em vez de esperar todas. Cache TTL fica delegado ao metaApi (sessionStorage).
+      setAccounts([]);
+      setCampaigns([]);
+      setBalances([]);
 
-      const accountPromises = activeRawAccounts.map(async (account) => {
+      const fetchOpts = force ? { force: true } : undefined;
+      const accountOrder = activeRawAccounts.map(a => a.id);
+
+      const loadAccountData = async (account) => {
         const actId = account.id;
 
         try {
-          const cached = force ? null : getCached(actId, selectedPeriod);
-          const [insights, dailyInsights, accountCampaigns, monthInsights] = cached
-            ? cached
-            : await Promise.all([
-                fetchAccountInsights(actId, selectedPeriod),
-                fetchAccountDailyInsights(actId, selectedPeriod),
-                fetchCampaignsWithInsights(actId, selectedPeriod),
-                fetchAccountInsights(actId, 'month'),
-              ]);
-          if (!cached) {
-            setCached(actId, selectedPeriod, [insights, dailyInsights, accountCampaigns, monthInsights]);
-          }
+          const [insights, dailyInsights, accountCampaigns, monthInsights] = await Promise.all([
+            fetchAccountInsights(actId, selectedPeriod, fetchOpts),
+            fetchAccountDailyInsights(actId, selectedPeriod, fetchOpts),
+            fetchCampaignsWithInsights(actId, selectedPeriod, fetchOpts),
+            fetchAccountInsights(actId, 'month', fetchOpts),
+          ]);
 
           const getMessages = (actionsArray) => {
             if (!actionsArray) return 0;
@@ -111,6 +100,10 @@ export function MetaAdsProvider({ children }) {
                 status: camp.status.toLowerCase(),
                 objective: camp.objective,
                 dailyBudget: parseFloat(camp.daily_budget || 0) / 100,
+                adsets: camp.adsets?.data?.map(a => ({
+                  status: a.status?.toLowerCase() || '',
+                  dailyBudget: parseFloat(a.daily_budget || 0) / 100
+                })) || [],
                 metrics: {
                   spend: parseFloat(campInsights?.spend || 0),
                   impressions: parseInt(campInsights?.impressions || 0, 10),
@@ -194,26 +187,44 @@ export function MetaAdsProvider({ children }) {
             isPrepayAccount,
           };
 
-          return { account: formattedAccount, campaigns: formattedCampaigns, balance: formattedBalance };
+          if (isStale()) return null;
+
+          // Insere mantendo a ordem original das contas para evitar "pular" no UI.
+          setAccounts(prev => {
+            if (prev.some(a => a.id === actId)) return prev;
+            const next = [...prev, formattedAccount];
+            next.sort((a, b) => accountOrder.indexOf(a.id) - accountOrder.indexOf(b.id));
+            return next;
+          });
+          setBalances(prev => {
+            if (prev.some(b => b.accountId === actId)) return prev;
+            const next = [...prev, formattedBalance];
+            next.sort((a, b) => accountOrder.indexOf(a.accountId) - accountOrder.indexOf(b.accountId));
+            return next;
+          });
+          if (formattedCampaigns.length > 0) {
+            setCampaigns(prev => {
+              const filtered = prev.filter(c => c.accountId !== actId);
+              return [...filtered, ...formattedCampaigns];
+            });
+          }
+
+          return true;
         } catch (accountError) {
           console.warn(`Erro ao carregar dados da conta ${account.name} (${actId}):`, accountError);
           return null;
         }
-      });
+      };
 
-      const results = await Promise.allSettled(accountPromises);
+      // Carrega em lotes limitados (concorrência de 3 contas por vez) para não congestionar a rede e evitar rate limit da Meta
+      const batchLimit = 3;
+      for (let i = 0; i < activeRawAccounts.length; i += batchLimit) {
+        if (isStale()) return;
+        const batch = activeRawAccounts.slice(i, i + batchLimit);
+        await Promise.allSettled(batch.map(account => loadAccountData(account)));
+      }
+      if (isStale()) return;
 
-      results.forEach(result => {
-        if (result.status === 'fulfilled' && result.value) {
-          loadedAccounts.push(result.value.account);
-          loadedCampaigns.push(...result.value.campaigns);
-          loadedBalances.push(result.value.balance);
-        }
-      });
-
-      setAccounts(loadedAccounts);
-      setCampaigns(loadedCampaigns);
-      setBalances(loadedBalances);
       setLoading(false);
 
     } catch (err) {
@@ -225,25 +236,36 @@ export function MetaAdsProvider({ children }) {
 
   // Carregar dados na montagem e quando o período mudar
   useEffect(() => {
-    loadMetaData();
+    let cancelled = false;
+
+    queueMicrotask(() => {
+      if (!cancelled) {
+        loadMetaData();
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [loadMetaData]);
 
   // Escutar mudanças no token via storage event (quando outra aba/componente salva um novo token)
   useEffect(() => {
     const handleStorageChange = (e) => {
       if (e.key === 'meta_provider_token' && e.newValue) {
+        clearMetaGetCache();
         loadMetaData();
       }
     };
     // Custom event para mesma aba (storage event só funciona entre abas)
     const handleTokenUpdate = () => {
       console.log('[MetaAdsContext] ⚡ Evento meta-token-updated recebido! Recarregando dados...');
-      clearCache();
+      clearMetaGetCache();
       loadMetaData({ force: true });
     };
     const handleAccountToggle = () => {
       console.log('[MetaAdsContext] ⚡ Evento meta-accounts-toggled recebido! Recarregando dados...');
-      clearCache();
+      clearMetaGetCache();
       loadMetaData({ force: true });
     };
     window.addEventListener('storage', handleStorageChange);
@@ -269,7 +291,12 @@ export function MetaAdsProvider({ children }) {
     }, { spend: 0, messages: 0, impressions: 0 });
   }, [activeAccounts]);
 
-  const value = {
+  const refreshData = useCallback(() => {
+    clearMetaGetCache();
+    return loadMetaData({ force: true });
+  }, [loadMetaData]);
+
+  const value = useMemo(() => ({
     accounts,
     activeAccounts,
     balances,
@@ -279,8 +306,18 @@ export function MetaAdsProvider({ children }) {
     todayTotals,
     loading,
     error,
-    refreshData: () => { clearCache(); return loadMetaData({ force: true }); },
-  };
+    refreshData,
+  }), [
+    accounts,
+    activeAccounts,
+    balances,
+    campaigns,
+    selectedPeriod,
+    todayTotals,
+    loading,
+    error,
+    refreshData,
+  ]);
 
   return <MetaAdsContext.Provider value={value}>{children}</MetaAdsContext.Provider>;
 }

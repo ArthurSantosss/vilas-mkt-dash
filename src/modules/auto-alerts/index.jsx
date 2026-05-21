@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Bell, AlertTriangle, TrendingDown, DollarSign, Trash2,
   CheckCircle2, CreditCard, Send, Wallet, MessageSquareX,
@@ -7,28 +7,30 @@ import {
 import { useMetaAds } from '../../contexts/MetaAdsContext';
 import { useAgency } from '../../contexts/AgencyContext';
 import { isCreditCardPaymentMethod, readSavedPaymentMethods, getAccountPaymentMethod } from '../../shared/utils/paymentMethod';
-
-const SLACK_WEBHOOK = import.meta.env.VITE_SLACK_WEBHOOK_ALERTS;
-
-const STORAGE_KEY = 'auto_alerts_thresholds';
-
-const DEFAULT_THRESHOLDS = {
-  balance_critical: 50,
-  balance_warning: 150,
-  high_cost_lead: 25,
-};
+import {
+  AUTO_ALERT_REMINDER_HOURS,
+  AUTO_ALERTS_STORAGE_KEY,
+  DEFAULT_AUTO_ALERT_THRESHOLDS,
+  normalizeAutoAlertThresholds,
+} from '../../shared/constants/autoAlerts';
 
 function loadThresholds() {
   try {
-    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    return { ...DEFAULT_THRESHOLDS, ...stored };
+    const stored = JSON.parse(localStorage.getItem(AUTO_ALERTS_STORAGE_KEY));
+    return normalizeAutoAlertThresholds(stored);
   } catch {
-    return { ...DEFAULT_THRESHOLDS };
+    return { ...DEFAULT_AUTO_ALERT_THRESHOLDS };
   }
 }
 
 function saveThresholds(thresholds) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(thresholds));
+  localStorage.setItem(AUTO_ALERTS_STORAGE_KEY, JSON.stringify(thresholds));
+  window.dispatchEvent(new CustomEvent('local-storage-map-updated', {
+    detail: {
+      key: AUTO_ALERTS_STORAGE_KEY,
+      value: thresholds,
+    },
+  }));
 }
 
 function loadBalances() {
@@ -40,7 +42,7 @@ function loadBalances() {
 }
 
 export default function AutoAlerts() {
-  const { accounts, balances: contextBalances, campaigns } = useMetaAds();
+  const { accounts, balances: contextBalances } = useMetaAds();
   const { accountAgencies } = useAgency();
 
   const [thresholds, setThresholds] = useState(loadThresholds);
@@ -211,70 +213,6 @@ export default function AutoAlerts() {
   const dangerCount = visibleAlerts.filter(a => a.severity === 'danger').length;
   const warningCount = visibleAlerts.filter(a => a.severity === 'warning').length;
 
-  // ── Slack webhook: send new alerts ──
-  const sentAlertsRef = useRef(new Set());
-
-  useEffect(() => {
-    if (allAlerts.length === 0) return;
-
-    const today = new Date().toLocaleDateString('pt-BR');
-    const newAlerts = allAlerts.filter(a => !sentAlertsRef.current.has(`${a.id}-${today}`));
-    if (newAlerts.length === 0) return;
-
-    const severityEmoji = { danger: ':red_circle:', warning: ':large_yellow_circle:', info: ':large_blue_circle:' };
-    const severityLabel = { danger: 'CRÍTICO', warning: 'AVISO', info: 'INFO' };
-    const typeHeaders = {
-      balance_low: ':moneybag: Saldo Baixo',
-      payment_error: ':credit_card: Erro no Pagamento',
-      high_cost: ':chart_with_downwards_trend: Custo Alto',
-      no_messages: ':no_entry_sign: Sem Mensagens',
-    };
-
-    // Group alerts by type
-    const grouped = {};
-    newAlerts.forEach(a => {
-      if (!grouped[a.type]) grouped[a.type] = [];
-      grouped[a.type].push(a);
-    });
-
-    const blocks = [
-      { type: 'header', text: { type: 'plain_text', text: `⚠️ Alertas Vilas MKT — ${today}`, emoji: true } },
-    ];
-
-    Object.entries(grouped).forEach(([type, alerts]) => {
-      blocks.push({ type: 'divider' });
-      blocks.push({
-        type: 'section',
-        text: { type: 'mrkdwn', text: `*${typeHeaders[type] || type}* (${alerts.length})` },
-      });
-
-      alerts.slice(0, 15).forEach(alert => {
-        const emoji = severityEmoji[alert.severity];
-        const agency = alert.agency ? ` _(${alert.agency})_` : '';
-        let text = `${emoji} *${alert.accountName}*${agency}\n${alert.message}`;
-        if (alert.detail) text += `\n${alert.detail}`;
-        blocks.push({ type: 'section', text: { type: 'mrkdwn', text } });
-      });
-    });
-
-    blocks.push({ type: 'divider' });
-    blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `_Vilas MKT Dash • ${today}_` }] });
-
-    fetch(SLACK_WEBHOOK, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ blocks }),
-    })
-      .then(res => {
-        if (res.ok) {
-          newAlerts.forEach(a => sentAlertsRef.current.add(`${a.id}-${today}`));
-        } else {
-          console.warn('[AutoAlerts] Slack webhook retornou status:', res.status);
-        }
-      })
-      .catch(err => console.error('[AutoAlerts] Erro ao enviar para Slack:', err));
-  }, [allAlerts]);
-
   // ── Scheduled reminders now handled by Vercel Cron (api/cron/slack-alerts.js) ──
 
   // ── Send balance summary to Slack ──
@@ -287,44 +225,14 @@ export default function AutoAlerts() {
     setBalanceSent(false);
 
     try {
-      const today = new Date().toLocaleDateString('pt-BR');
-      const paymentMethods = readSavedPaymentMethods();
-
-      const sorted = [...balances].sort((a, b) => {
-        const pmA = paymentMethods[a.accountId] || '';
-        const pmB = paymentMethods[b.accountId] || '';
-        if (isCreditCardPaymentMethod(pmA) && !isCreditCardPaymentMethod(pmB)) return 1;
-        if (!isCreditCardPaymentMethod(pmA) && isCreditCardPaymentMethod(pmB)) return -1;
-        return (a.currentBalance || 0) - (b.currentBalance || 0);
-      });
-
-      const lines = sorted.map(b => {
-        const pm = paymentMethods[b.accountId] || '';
-        const agency = accountAgencies[b.accountId];
-        const agencyTag = agency ? ` _(${agency})_` : '';
-
-        if (isCreditCardPaymentMethod(pm)) {
-          return `:credit_card: *${b.clientName}*${agencyTag} — Cartão`;
-        }
-
-        const emoji = b.currentBalance <= 0 ? ':red_circle:' : b.currentBalance < 50 ? ':large_orange_circle:' : b.currentBalance < 150 ? ':large_yellow_circle:' : ':large_green_circle:';
-        const days = b.estimatedDaysRemaining > 0 ? ` (~${b.estimatedDaysRemaining.toFixed(0)} dias)` : '';
-        return `${emoji} *${b.clientName}*${agencyTag} — R$ ${b.currentBalance.toFixed(2)}${days}`;
-      });
-
-      const blocks = [
-        { type: 'header', text: { type: 'plain_text', text: `💰 Saldos das Contas — ${today}`, emoji: true } },
-        { type: 'divider' },
-        { type: 'section', text: { type: 'mrkdwn', text: lines.join('\n').slice(0, 3000) } },
-        { type: 'divider' },
-        { type: 'context', elements: [{ type: 'mrkdwn', text: `_${balances.length} contas • Vilas MKT Dash_` }] },
-      ];
-
-      await fetch(SLACK_WEBHOOK, {
+      const response = await fetch('/api/alerts/send-balances', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ blocks }),
       });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error || `Resumo de saldos retornou ${response.status}`);
+      }
 
       setBalanceSent(true);
       setTimeout(() => setBalanceSent(false), 3000);
@@ -333,7 +241,7 @@ export default function AutoAlerts() {
     } finally {
       setSendingBalances(false);
     }
-  }, [balances, accountAgencies]);
+  }, [balances]);
 
   const severityConfig = {
     danger: { bg: 'bg-red-500/10', border: 'border-red-500/20', text: 'text-red-400', badge: 'bg-red-500/15 text-red-400 border-red-500/30' },
@@ -365,7 +273,7 @@ export default function AutoAlerts() {
             <div>
               <h1 className="text-2xl font-bold text-text-primary tracking-tight">Avisos Automáticos</h1>
               <p className="text-sm text-text-secondary">
-                Monitoramento automático de todas as {accounts.length} contas
+                Monitoramento em tempo real na tela e lembretes enviados pelo servidor
               </p>
             </div>
           </div>
@@ -613,7 +521,7 @@ export default function AutoAlerts() {
               Se houver alertas pendentes, um lembrete é enviado automaticamente nos horários (Brasília):
             </p>
             <div className="flex flex-wrap gap-1.5 mt-2">
-              {REMINDER_HOURS.map(h => (
+              {AUTO_ALERT_REMINDER_HOURS.map(h => (
                 <span key={h} className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-bg border border-border text-text-secondary">
                   {h}h
                 </span>

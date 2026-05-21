@@ -1,5 +1,6 @@
 import { createContext, useEffect, useRef } from 'react';
 import { supabase } from '../services/supabase';
+import { AUTO_ALERTS_STORAGE_KEY } from '../shared/constants/autoAlerts';
 
 // Chaves do localStorage que serão espelhadas e sincronizadas na Nuvem (Supabase)
 const CLOUD_KEYS = [
@@ -15,6 +16,8 @@ const CLOUD_KEYS = [
   'disabled_ad_accounts',
   'meta_provider_token',
   'meta_user_info',
+  'client_logos',
+  AUTO_ALERTS_STORAGE_KEY,
 ];
 
 export const PreferencesContext = createContext();

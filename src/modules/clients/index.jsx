@@ -151,6 +151,11 @@ export default function Clients() {
                   </div>
                 </Field>
                 {selectedClient.metaAccountId && <Field label="ID Meta" value={selectedClient.metaAccountId} />}
+                {selectedClient.logoUrl && (
+                  <Field label="Logo do Cliente">
+                    <img src={selectedClient.logoUrl} alt="Logo do Cliente" style={{ height: 36, width: 'auto', maxWidth: 120, objectFit: 'contain', display: 'block' }} className="rounded border border-border bg-bg/50 p-1" />
+                  </Field>
+                )}
                 <div>
                   <span className="text-text-secondary block mb-1">Observações</span>
                   <p className="text-text-primary bg-bg/50 p-3 rounded-lg border border-border/50">{selectedClient.notes}</p>
@@ -197,6 +202,7 @@ function ClientModal({ client, onSave, onClose }) {
     niche: client?.niche || 'previdenciario',
     platforms: client?.platforms || ['meta'],
     metaAccountId: client?.metaAccountId || '',
+    logoUrl: client?.logoUrl || '',
     monthlyBudget: client?.monthlyBudget || 2000,
     contractStartDate: client?.contractStartDate || new Date().toISOString().split('T')[0],
     paymentDueDay: client?.paymentDueDay || 10,
@@ -249,12 +255,27 @@ function ClientModal({ client, onSave, onClose }) {
                 </select>
               </FormField>
             </div>
-            <FormField label="Plataformas">
-              <div className="flex gap-2">
-                <button onClick={() => togglePlatform('meta')}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${form.platforms.includes('meta') ? 'bg-meta/20 text-meta border-meta/40' : 'bg-bg text-text-secondary border-border'}`}>
-                  Meta Ads
-                </button>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <FormField label="Plataformas">
+                <div className="flex gap-2 mt-1">
+                  <button onClick={() => togglePlatform('meta')}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${form.platforms.includes('meta') ? 'bg-meta/20 text-meta border-meta/40' : 'bg-bg text-text-secondary border-border'}`}>
+                    Meta Ads
+                  </button>
+                </div>
+              </FormField>
+              <FormField label="ID da Conta Meta (Ads)">
+                <input value={form.metaAccountId} onChange={e => update('metaAccountId', e.target.value)} placeholder="Ex: act_123456" className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary" />
+              </FormField>
+            </div>
+            <FormField label="URL da Logo do Cliente">
+              <div className="flex items-center gap-3">
+                <input value={form.logoUrl} onChange={e => update('logoUrl', e.target.value)} placeholder="https://exemplo.com/logo.png" className="flex-1 bg-bg border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary" />
+                {form.logoUrl && (
+                  <div className="h-10 w-10 flex-shrink-0 rounded border border-border bg-bg/50 p-1 flex items-center justify-center">
+                    <img src={form.logoUrl} alt="Preview" className="max-h-full max-w-full object-contain" onError={(e) => { e.target.style.display = 'none'; }} />
+                  </div>
+                )}
               </div>
             </FormField>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

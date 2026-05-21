@@ -20,6 +20,7 @@ const LEAD_ACTION_TYPES = [
 
 const ENGAGEMENT_ACTION_TYPES = ['post_engagement', 'page_engagement'];
 const SHARE_BASE_URL = (import.meta.env.VITE_PUBLIC_SHARE_BASE_URL || '').trim();
+const META_LOGO_SOURCES = ['/meta-ads-logo.png', '/logometa.png'];
 
 function normalizeHost(hostname) {
   return (hostname || '').replace(/^www\./, '').toLowerCase();
@@ -273,9 +274,23 @@ async function fetchReportInBrowser(shareId, selectedPeriod) {
     }
   }
 
+  let clientLogoUrl = null;
+  try {
+    const { data: prefData } = await supabase
+      .from('app_preferences')
+      .select('value')
+      .eq('key', 'client_logos')
+      .maybeSingle();
+    const logosMap = prefData?.value || {};
+    clientLogoUrl = logosMap[share.account_id] || null;
+  } catch (err) {
+    console.warn('Erro ao buscar logo do cliente no browser fallback:', err);
+  }
+
   return {
     empty: false,
     accountName: share.client_label || 'Conta',
+    clientLogoUrl,
     agency: share.agency || null,
     objective,
     hasCampaignFilter: Boolean(campaignFilter),
@@ -322,7 +337,7 @@ export default function PublicReport({ shareKey: shareKeyProp = null }) {
 
   const agencyType = data?.agency === 'tag' ? 'tag' : 'vilasmkt';
   const agencyLabel = agencyType === 'tag' ? 'Grupo Tag' : 'Vilas Growth Marketing';
-  const agencyLogoSrc = agencyType === 'tag' ? '/logotag.png' : '/favicon.png';
+  const agencyLogoSrc = agencyType === 'tag' ? ['/logotag.png'] : ['/favicon.png'];
 
   const fetchReport = useCallback(async () => {
     if (!shareKey) return;
@@ -421,7 +436,8 @@ export default function PublicReport({ shareKey: shareKeyProp = null }) {
             <ReportCard
               data={data}
               agencyLogoSrc={agencyLogoSrc}
-              metaLogoSrc="/meta-ads-logo.svg"
+              metaLogoSrc={META_LOGO_SOURCES}
+              clientLogoSrc={data.clientLogoUrl}
               agencyLabel={agencyLabel}
               showAccountName={false}
               objective={data.objective || 'messages'}

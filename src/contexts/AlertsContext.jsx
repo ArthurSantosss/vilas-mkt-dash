@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useMemo } from 'react';
+import { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
 import { useMetaAds } from './MetaAdsContext';
 import { isCreditCardPaymentMethod, readSavedPaymentMethods, getAccountPaymentMethod } from '../shared/utils/paymentMethod';
 
@@ -168,15 +168,21 @@ export function AlertsProvider({ children }) {
   const unreadCount = useMemo(() => alerts.filter(a => !a.read).length, [alerts]);
   const criticalCount = useMemo(() => alerts.filter(a => a.type === 'critical' && !a.read).length, [alerts]);
 
-  const markAsRead = (alertId) => {
+  const markAsRead = useCallback((alertId) => {
     setReadIds(prev => new Set([...prev, alertId]));
-  };
+  }, []);
 
-  const markAllAsRead = () => {
+  const markAllAsRead = useCallback(() => {
     setReadIds(new Set(generatedAlerts.map(a => a.id)));
-  };
+  }, [generatedAlerts]);
 
-  const value = { alerts, unreadCount, criticalCount, markAsRead, markAllAsRead };
+  const value = useMemo(() => ({
+    alerts,
+    unreadCount,
+    criticalCount,
+    markAsRead,
+    markAllAsRead,
+  }), [alerts, unreadCount, criticalCount, markAsRead, markAllAsRead]);
   return <AlertsContext.Provider value={value}>{children}</AlertsContext.Provider>;
 }
 

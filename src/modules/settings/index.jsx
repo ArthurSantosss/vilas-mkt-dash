@@ -16,6 +16,37 @@ function FacebookIcon({ className = 'w-5 h-5' }) {
   );
 }
 
+const FB_SDK_SRC = 'https://connect.facebook.net/pt_BR/sdk.js';
+let fbSdkPromise = null;
+
+function loadFacebookSDK() {
+  if (typeof window === 'undefined') return Promise.resolve(null);
+  if (window.FB) return Promise.resolve(window.FB);
+  if (fbSdkPromise) return fbSdkPromise;
+
+  fbSdkPromise = new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[src="${FB_SDK_SRC}"]`);
+    if (existing) {
+      existing.addEventListener('load', () => resolve(window.FB));
+      existing.addEventListener('error', reject);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = FB_SDK_SRC;
+    script.async = true;
+    script.defer = true;
+    script.crossOrigin = 'anonymous';
+    script.onload = () => resolve(window.FB);
+    script.onerror = (err) => {
+      fbSdkPromise = null;
+      reject(err);
+    };
+    document.head.appendChild(script);
+  });
+
+  return fbSdkPromise;
+}
+
 
 function StatusBadge({ connected }) {
   return connected ? (
@@ -38,6 +69,26 @@ export default function Settings() {
   const [newAgencyName, setNewAgencyName] = useState('');
   const [showOnlyActive, setShowOnlyActive] = useState(false);
 
+  const [clientLogos, setClientLogos] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('client_logos')) || {};
+    } catch {
+      return {};
+    }
+  });
+
+  const saveClientLogo = (accountId, logoUrl) => {
+    const updated = { ...clientLogos };
+    if (!logoUrl || !logoUrl.trim()) {
+      delete updated[accountId];
+    } else {
+      updated[accountId] = logoUrl.trim();
+    }
+    setClientLogos(updated);
+    localStorage.setItem('client_logos', JSON.stringify(updated));
+    window.dispatchEvent(new CustomEvent('local-storage-map-updated'));
+  };
+
   const [metaToken, setMetaToken] = useState(() => localStorage.getItem(STORAGE_KEYS.META_TOKEN));
   const [metaUser, setMetaUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.META_USER)); } catch { return null; }
@@ -57,12 +108,20 @@ export default function Settings() {
   useEffect(() => {
     const appId = import.meta.env.VITE_META_APP_ID;
     if (!appId || appId === 'SEU_META_APP_ID_AQUI') return;
+
+    let cancelled = false;
     window.fbAsyncInit = function () {
       window.FB.init({ appId, cookie: true, xfbml: false, version: 'v22.0' });
     };
-    if (window.FB) {
-      window.FB.init({ appId, cookie: true, xfbml: false, version: 'v22.0' });
-    }
+
+    loadFacebookSDK()
+      .then((FB) => {
+        if (cancelled || !FB) return;
+        FB.init({ appId, cookie: true, xfbml: false, version: 'v22.0' });
+      })
+      .catch((err) => console.warn('[Settings] Falha ao carregar Facebook SDK:', err));
+
+    return () => { cancelled = true; };
   }, []);
 
   const fetchMetaAccounts = useCallback(async (token) => {
@@ -122,7 +181,8 @@ export default function Settings() {
   const handleConnectMeta = async () => {
     setError(null);
     const appId = import.meta.env.VITE_META_APP_ID;
-    if (!window.FB || !appId || appId === 'SEU_META_APP_ID_AQUI') {
+
+    if (!appId || appId === 'SEU_META_APP_ID_AQUI') {
       const token = window.prompt('Cole o token de acesso da Meta:');
       if (token && token.trim()) {
         const trimmed = token.trim();
@@ -133,6 +193,28 @@ export default function Settings() {
       }
       return;
     }
+
+    if (!window.FB) {
+      try {
+        const FB = await loadFacebookSDK();
+        if (FB) FB.init({ appId, cookie: true, xfbml: false, version: 'v22.0' });
+      } catch (err) {
+        console.warn('[Settings] Não foi possível carregar Facebook SDK:', err);
+      }
+    }
+
+    if (!window.FB) {
+      const token = window.prompt('Cole o token de acesso da Meta:');
+      if (token && token.trim()) {
+        const trimmed = token.trim();
+        setMetaToken(trimmed);
+        localStorage.setItem(STORAGE_KEYS.META_TOKEN, trimmed);
+        window.dispatchEvent(new CustomEvent('local-storage-map-updated'));
+        await fetchMetaAccounts(trimmed);
+      }
+      return;
+    }
+
     setLoadingMeta(true);
     window.FB.login(
       (response) => {
@@ -343,11 +425,34 @@ export default function Settings() {
                       </div>
                     </div>
                     <div className="flex w-full flex-col gap-3 sm:ml-4 sm:w-auto sm:flex-row sm:items-center sm:justify-end">
+                      <div className="flex items-center gap-2 w-full sm:w-[220px]">
+                        <input
+                          type="text"
+                          value={clientLogos[account.id] || ''}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setClientLogos(prev => ({ ...prev, [account.id]: val }));
+                          }}
+                          onBlur={e => saveClientLogo(account.id, e.target.value)}
+                          placeholder="URL da Logo do Cliente"
+                          className="w-full bg-bg border border-border rounded-lg px-3 py-1.5 text-xs text-text-primary focus:outline-none focus:border-primary"
+                        />
+                        {clientLogos[account.id] && (
+                          <img
+                            src={clientLogos[account.id]}
+                            alt="Logo preview"
+                            onError={(e) => { e.target.style.display = 'none'; }}
+                            className="w-7 h-7 object-contain rounded border border-border bg-bg/50 p-0.5 shrink-0"
+                            style={{ display: 'block' }}
+                          />
+                        )}
+                      </div>
+
                       {agencies.length > 0 && (
                         <select
                           value={accountAgencies[account.id] || ''}
                           onChange={e => setAccountAgency(account.id, e.target.value)}
-                          className="w-full bg-bg border border-border rounded-lg px-2 py-2 text-xs text-text-primary focus:outline-none focus:border-primary sm:w-[180px]"
+                          className="w-full bg-bg border border-border rounded-lg px-2 py-2 text-xs text-text-primary focus:outline-none focus:border-primary sm:w-[150px]"
                         >
                           <option value="">Sem agencia</option>
                           {agencies.map(ag => <option key={ag} value={ag}>{ag}</option>)}

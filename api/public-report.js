@@ -183,6 +183,26 @@ async function fetchShare(shareId, supabaseUrl, supabaseAnonKey) {
   return Array.isArray(rows) ? rows[0] || null : null;
 }
 
+async function fetchClientLogo(accountId, supabaseUrl, supabaseAnonKey) {
+  try {
+    const url = `${supabaseUrl}/rest/v1/app_preferences?key=eq.client_logos&select=value`;
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        apikey: supabaseAnonKey,
+        Authorization: `Bearer ${supabaseAnonKey}`,
+      },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const logosMap = data?.[0]?.value || {};
+    return logosMap[accountId] || null;
+  } catch (err) {
+    console.error('[public-report API] Error fetching client logo:', err);
+    return null;
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
 
@@ -304,10 +324,12 @@ export default async function handler(req, res) {
     }
 
     const accountName = share.client_label || (await fetchAccountName(share.account_id, metaToken)) || 'Conta';
+    const clientLogoUrl = await fetchClientLogo(share.account_id, supabaseUrl, supabaseAnonKey);
 
     return res.status(200).json({
       empty: false,
       accountName,
+      clientLogoUrl,
       agency: share.agency || null,
       objective,
       hasCampaignFilter: Boolean(campaignFilter),

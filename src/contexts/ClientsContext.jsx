@@ -14,6 +14,7 @@ function toFrontend(row) {
     niche: row.niche,
     platforms: row.platforms || ['meta'],
     metaAccountId: row.meta_account_id,
+    logoUrl: row.logo_url,
     monthlyBudget: parseFloat(row.monthly_budget) || 0,
     contractStartDate: row.contract_start_date,
     paymentDueDay: row.payment_due_day,
@@ -34,6 +35,7 @@ function toDatabase(data) {
   if (data.niche !== undefined) map.niche = data.niche;
   if (data.platforms !== undefined) map.platforms = data.platforms;
   if (data.metaAccountId !== undefined) map.meta_account_id = data.metaAccountId;
+  if (data.logoUrl !== undefined) map.logo_url = data.logoUrl;
   if (data.monthlyBudget !== undefined) map.monthly_budget = data.monthlyBudget;
   if (data.contractStartDate !== undefined) map.contract_start_date = data.contractStartDate;
   if (data.paymentDueDay !== undefined) map.payment_due_day = data.paymentDueDay;

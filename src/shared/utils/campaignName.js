@@ -25,20 +25,4 @@ export function simplifyCampaignName(fullName = '') {
   return cleaned;
 }
 
-export function simplifyLaquilaCampaignName(fullName = '') {
-  const originalName = String(fullName || '').trim();
-  if (!originalName) return '';
 
-  let cleaned = simplifyCampaignName(originalName);
-
-  cleaned = cleaned.replace(/\s*-\s*(?:c[oó]pia|copy)\b.*$/i, '');
-  cleaned = cleaned.replace(/\s+(?:c[oó]pia|copy)\b.*$/i, '');
-  cleaned = cleaned.replace(/\s*-\s*$/g, '');
-  cleaned = collapseSpaces(cleaned);
-
-  if (!cleaned || cleaned.length < 3) {
-    return simplifyCampaignName(originalName);
-  }
-
-  return cleaned;
-}

@@ -6,7 +6,6 @@ import AppLayout from './layout/AppLayout';
 import { MetaAdsProvider } from './contexts/MetaAdsContext';
 import { AgencyProvider } from './contexts/AgencyContext';
 import { AlertsProvider } from './contexts/AlertsContext';
-import { ChangeLogProvider } from './contexts/ChangeLogContext';
 import { PreferencesProvider } from './contexts/PreferencesContext';
 
 // Code-split: cada rota carrega seu bundle sob demanda
@@ -21,7 +20,7 @@ const ReportText = lazy(() => import('./modules/report-text'));
 const ReportVisual = lazy(() => import('./modules/report-visual'));
 const PublicReport = lazy(() => import('./modules/public-report'));
 const PublicReportEntry = lazy(() => import('./modules/public-report').then((module) => ({ default: module.PublicReportEntry })));
-const CampaignAnalysis = lazy(() => import('./modules/campaign-analysis'));
+
 const AutoAlerts = lazy(() => import('./modules/auto-alerts'));
 
 function PageLoader() {
@@ -38,50 +37,50 @@ function PageLoader() {
   );
 }
 
+function ProtectedAppShell() {
+  return (
+    <PrivateRoute>
+      <PreferencesProvider>
+        <AgencyProvider>
+          <MetaAdsProvider>
+            <AlertsProvider>
+              <AppLayout />
+            </AlertsProvider>
+          </MetaAdsProvider>
+        </AgencyProvider>
+      </PreferencesProvider>
+    </PrivateRoute>
+  );
+}
+
 export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <PreferencesProvider>
-          <AgencyProvider>
-            <MetaAdsProvider>
-              <AlertsProvider>
-                <ChangeLogProvider>
-                <Suspense fallback={<PageLoader />}>
-                  <Routes>
-                    {/* Public routes */}
-                    <Route path="/login" element={<LoginPage />} />
-                    <Route path="/auth/callback" element={<AuthCallback />} />
-                    <Route path="/r/:shareId" element={<PublicReport />} />
-                    <Route path="/:shareSlug" element={<PublicReportEntry />} />
+        <Suspense fallback={<PageLoader />}>
+          <Routes>
+            {/* Public routes */}
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/auth/callback" element={<AuthCallback />} />
+            <Route path="/r/:shareId" element={<PublicReport />} />
+            <Route path="/:shareSlug" element={<PublicReportEntry />} />
 
-                    {/* Protected routes — require login */}
-                    <Route
-                      element={
-                        <PrivateRoute>
-                          <AppLayout />
-                        </PrivateRoute>
-                      }
-                    >
-                      <Route index element={<Dashboard />} />
-                      <Route path="meta-ads" element={<MetaAdsOverview />} />
-                      <Route path="saldos-meta" element={<MetaBalances />} />
-                      <Route path="visao-detalhada" element={<DetailedView />} />
-                      <Route path="relatorio-texto" element={<ReportText />} />
-                      <Route path="relatorio-visual" element={<ReportVisual />} />
-                      <Route path="analise-ia" element={<CampaignAnalysis />} />
-                      <Route path="avisos" element={<AutoAlerts />} />
-                      <Route path="configuracoes" element={<Settings />} />
-                    </Route>
+            {/* Protected routes — require login */}
+            <Route element={<ProtectedAppShell />}>
+              <Route index element={<Dashboard />} />
+              <Route path="meta-ads" element={<MetaAdsOverview />} />
+              <Route path="saldos-meta" element={<MetaBalances />} />
+              <Route path="visao-detalhada" element={<DetailedView />} />
+              <Route path="relatorio-texto" element={<ReportText />} />
+              <Route path="relatorio-visual" element={<ReportVisual />} />
 
-                    <Route path="*" element={<Navigate to="/" replace />} />
-                  </Routes>
-                </Suspense>
-                </ChangeLogProvider>
-              </AlertsProvider>
-            </MetaAdsProvider>
-          </AgencyProvider>
-        </PreferencesProvider>
+              <Route path="avisos" element={<AutoAlerts />} />
+              <Route path="configuracoes" element={<Settings />} />
+            </Route>
+
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
       </AuthProvider>
     </BrowserRouter>
   );

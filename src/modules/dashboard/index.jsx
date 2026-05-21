@@ -5,9 +5,10 @@ import { formatCurrency, formatNumber } from '../../shared/utils/format';
 import { isCreditCardPaymentMethod, readSavedPaymentMethods, getAccountPaymentMethod } from '../../shared/utils/paymentMethod';
 import {
   LayoutDashboard, Users, DollarSign, MessageCircle,
-  AlertTriangle, AlertCircle, Info, TrendingUp, Wallet, Target
+  AlertTriangle, AlertCircle, Info, TrendingUp, Wallet, Target, RefreshCw
 } from 'lucide-react';
 import ScrollReveal from '../../shared/components/ScrollReveal';
+import PeriodSelector from '../../shared/components/PeriodSelector';
 
 export default function Dashboard() {
   const {
@@ -15,9 +16,19 @@ export default function Dashboard() {
     balances: metaBalances,
     campaigns: metaCampaigns,
     loading: metaLoading,
+    selectedPeriod,
+    setSelectedPeriod,
+    loadMetaData,
   } = useMetaAds();
   const { alerts, markAsRead, markAllAsRead } = useAlerts();
   const [paymentMethods, setPaymentMethods] = useState(() => readSavedPaymentMethods());
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await loadMetaData({ force: true });
+    setRefreshing(false);
+  };
 
   useEffect(() => {
     const syncPaymentMethods = () => setPaymentMethods(readSavedPaymentMethods());
@@ -222,13 +233,27 @@ export default function Dashboard() {
           <div className="absolute -top-20 -right-20 h-60 w-60 rounded-full bg-primary/5 blur-3xl" />
           <div className="absolute -bottom-10 -left-10 h-40 w-40 rounded-full bg-primary-light/5 blur-3xl" />
         </div>
-        <div className="relative flex items-center gap-3">
-          <div className="flex items-center justify-center w-11 h-11 rounded-xl bg-gradient-to-br from-primary to-primary-light shadow-lg shadow-primary/20">
-            <LayoutDashboard size={22} className="text-white" />
+        <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center justify-center w-11 h-11 rounded-xl bg-gradient-to-br from-primary to-primary-light shadow-lg shadow-primary/20">
+              <LayoutDashboard size={22} className="text-white" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-text-primary tracking-tight">Dashboard</h1>
+              <p className="text-sm text-text-secondary">Prioridades, saúde da operação e contas que pedem ação.</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-2xl font-bold text-text-primary tracking-tight">Dashboard</h1>
-            <p className="text-sm text-text-secondary">Prioridades, saúde da operação e contas que pedem ação.</p>
+          <div className="flex flex-wrap items-center gap-3 z-50 shrink-0">
+            <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} />
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing || metaLoading}
+              className="flex items-center justify-center px-4 py-2.5 rounded-xl bg-surface border border-border text-text-secondary hover:text-primary hover:border-primary/30 transition-all disabled:opacity-50"
+              title="Atualizar dados"
+            >
+              <RefreshCw size={16} className={`mr-2 ${refreshing || metaLoading ? 'animate-spin' : ''}`} />
+              {refreshing || metaLoading ? 'Atualizando...' : 'Atualizar'}
+            </button>
           </div>
         </div>
       </div>

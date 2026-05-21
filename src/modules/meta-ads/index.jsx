@@ -63,7 +63,7 @@ function readSavedNotes() {
 }
 
 // ── Account Name Editor ──
-function AccountNameEditor({ accountId, defaultName, customNames, setCustomNames }) {
+const AccountNameEditor = React.memo(function AccountNameEditor({ accountId, defaultName, customNames, setCustomNames }) {
   const [editing, setEditing] = useState(false);
   const currentName = customNames[accountId] || defaultName;
   const [draft, setDraft] = useState('');
@@ -131,10 +131,10 @@ function AccountNameEditor({ accountId, defaultName, customNames, setCustomNames
       </button>
     </div>
   );
-}
+});
 
 // ── Meta-style Toggle Switch ──
-function MetaToggle({ isActive, isToggling, onToggle, size = 'md', title }) {
+const MetaToggle = React.memo(function MetaToggle({ isActive, isToggling, onToggle, size = 'md', title }) {
   const sizes = {
     sm: { w: 'w-8', h: 'h-[18px]', dot: 'w-3.5 h-3.5', translate: 'translate-x-[14px]' },
     md: { w: 'w-10', h: 'h-[22px]', dot: 'w-[18px] h-[18px]', translate: 'translate-x-[18px]' },
@@ -165,10 +165,10 @@ function MetaToggle({ isActive, isToggling, onToggle, size = 'md', title }) {
       )}
     </button>
   );
-}
+});
 
 // ── Budget Edit Inline Component ──
-function BudgetEditor({ currentBudget, onSave, saving }) {
+const BudgetEditor = React.memo(function BudgetEditor({ currentBudget, onSave, saving }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const inputRef = useRef(null);
@@ -242,10 +242,10 @@ function BudgetEditor({ currentBudget, onSave, saving }) {
       {currentBudget > 0 ? formatCurrency(currentBudget) : 'Definir'}
     </button>
   );
-}
+});
 
 // ── Next Payment Editor ──
-function NextPaymentEditor({ accountId, computedDate, overrideDate, onSave }) {
+const NextPaymentEditor = React.memo(function NextPaymentEditor({ accountId, computedDate, overrideDate, onSave }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const inputRef = useRef(null);
@@ -343,10 +343,10 @@ function NextPaymentEditor({ accountId, computedDate, overrideDate, onSave }) {
       <Pencil size={10} className="opacity-0 group-hover:opacity-60 text-text-secondary transition-opacity" />
     </button>
   );
-}
+});
 
 // ── Notes Editor ──
-function NotesEditor({ entityId, note, onSave, level = 'account' }) {
+const NotesEditor = React.memo(function NotesEditor({ entityId, note, onSave, level = 'account' }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const textareaRef = useRef(null);
@@ -435,20 +435,20 @@ function NotesEditor({ entityId, note, onSave, level = 'account' }) {
       <Pencil size={9} className="opacity-0 group-hover:opacity-60 text-text-secondary mt-0.5 flex-shrink-0 transition-opacity" />
     </button>
   );
-}
+});
 
 // ── Budget Source Info Badge ──
-function BudgetSourceBadge({ type, label }) {
+const BudgetSourceBadge = React.memo(function BudgetSourceBadge({ type, label }) {
   return (
     <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-primary/8 text-primary-light border border-primary/15" title={label}>
       <Info size={9} />
       {type === 'campaign' ? 'Orç. na Campanha' : 'Orç. no Conjunto'}
     </span>
   );
-}
+});
 
 // ── Balance Summary Cards ──
-function BalanceSummaryCards({ balances, filteredAccountIds, monthlyGoals }) {
+const BalanceSummaryCards = React.memo(function BalanceSummaryCards({ balances, filteredAccountIds, monthlyGoals }) {
   const relevantBalances = useMemo(() => {
     const withGoals = balances.filter((b) => {
       const goal = monthlyGoals?.[b.accountId] || 0;
@@ -529,10 +529,10 @@ function BalanceSummaryCards({ balances, filteredAccountIds, monthlyGoals }) {
       </div>
     </div>
   );
-}
+});
 
 // ── Individual Account Balance Badges ──
-function AccountBalanceBadge({ balance, monthlyGoal }) {
+const AccountBalanceBadge = React.memo(function AccountBalanceBadge({ balance, monthlyGoal }) {
   if (!balance) return null;
 
   const spentThisMonth = balance.spentThisMonth || 0;
@@ -556,13 +556,23 @@ function AccountBalanceBadge({ balance, monthlyGoal }) {
       )}
     </span>
   );
-}
+});
 
 // ── Helper: get total daily budget for an account's campaigns ──
 function getTotalBudget(accountCampaigns) {
   let total = 0;
   for (const c of accountCampaigns) {
-    total += c.dailyBudget || 0;
+    if (c.status === 'active') {
+      if (c.dailyBudget && c.dailyBudget > 0) {
+        total += c.dailyBudget;
+      } else if (c.adsets && c.adsets.length > 0) {
+        for (const a of c.adsets) {
+          if (a.status === 'active') {
+            total += a.dailyBudget || 0;
+          }
+        }
+      }
+    }
   }
   return total;
 }
@@ -765,7 +775,22 @@ export default function MetaAdsOverview() {
       case 'spend': return formatCurrency(m?.spend || 0);
       case 'balance': {
         if (isCreditCard) {
-          return <span className="flex items-center gap-1 text-text-secondary font-medium"><CreditCard size={12} /> Cartão</span>;
+          const spentThisMonth = balance?.spentThisMonth || 0;
+          const remainingGoal = monthlyGoal > 0 ? Math.max(0, monthlyGoal - spentThisMonth) : null;
+          const availableCard = remainingGoal !== null ? remainingGoal : (balance?.remainingSpendCap > 0 ? balance.remainingSpendCap : null);
+
+          if (availableCard !== null) {
+            const color = availableCard < 50 ? 'text-danger' : availableCard < 150 ? 'text-warning' : 'text-success';
+            return (
+              <div className="flex flex-col items-end leading-tight" title={remainingGoal !== null ? 'Saldo baseado na Meta Mensal' : 'Saldo baseado no Limite de Gastos da Conta (Meta API)'}>
+                <span className={`font-medium ${color}`}>{formatCurrency(availableCard)}</span>
+                <span className="flex items-center gap-1 text-[10px] text-text-secondary/80 mt-0.5">
+                  <CreditCard size={10} /> {remainingGoal !== null ? 'Meta' : 'Limite'}
+                </span>
+              </div>
+            );
+          }
+          return <span className="flex items-center justify-end gap-1 text-text-secondary font-medium"><CreditCard size={12} /> Cartão</span>;
         }
         if (!balance || balance.hasReliableBalance === false || balance.currentBalance <= 0) return '—';
         const val = balance.currentBalance;

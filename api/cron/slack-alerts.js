@@ -1,3 +1,12 @@
+/* global process */
+
+import {
+  AUTO_ALERT_REMINDER_HOURS,
+  AUTO_ALERTS_STORAGE_KEY,
+  DEFAULT_AUTO_ALERT_THRESHOLDS,
+  normalizeAutoAlertThresholds,
+} from '../../src/shared/constants/autoAlerts.js';
+
 const META_API_BASE = 'https://graph.facebook.com/v22.0';
 
 function parseMoneyFromCents(value) {
@@ -68,10 +77,19 @@ function isCreditCard(pm) {
 }
 
 function getBrasiliaHour() {
-  const now = new Date();
-  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
-  const brasilia = new Date(utc - 3 * 3600000);
-  return brasilia.getHours();
+  const formatted = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    hour: '2-digit',
+    hour12: false,
+  }).format(new Date());
+  const parsed = Number.parseInt(formatted, 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getBrasiliaDateLabel() {
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+  }).format(new Date());
 }
 
 async function fetchMetaAccounts(token) {
@@ -131,6 +149,32 @@ async function fetchPaymentMethods(supabaseUrl, supabaseKey) {
   }
 }
 
+async function fetchAlertThresholds(supabaseUrl, supabaseKey) {
+  if (!supabaseUrl || !supabaseKey) {
+    return { ...DEFAULT_AUTO_ALERT_THRESHOLDS };
+  }
+
+  try {
+    const url = `${supabaseUrl}/rest/v1/app_preferences?select=value&key=eq.${encodeURIComponent(AUTO_ALERTS_STORAGE_KEY)}`;
+    const res = await fetch(url, {
+      headers: {
+        apikey: supabaseKey,
+        Authorization: `Bearer ${supabaseKey}`,
+      },
+    });
+
+    if (!res.ok) {
+      return { ...DEFAULT_AUTO_ALERT_THRESHOLDS };
+    }
+
+    const data = await res.json();
+    const stored = Array.isArray(data) && data.length > 0 ? data[0]?.value : null;
+    return normalizeAutoAlertThresholds(stored);
+  } catch {
+    return { ...DEFAULT_AUTO_ALERT_THRESHOLDS };
+  }
+}
+
 function fmtR$(val) {
   return `R$ ${val.toFixed(2).replace('.', ',')}`;
 }
@@ -152,17 +196,20 @@ export default async function handler(req, res) {
   if (!slackWebhook) return res.status(500).json({ error: 'SLACK_WEBHOOK_ALERTS not configured' });
 
   try {
-    // Thresholds (same as frontend defaults)
-    const THRESHOLDS = {
-      balance_critical: 50,
-      balance_warning: 150,
-      high_cost_lead: 25,
-    };
+    const brasiliaHour = getBrasiliaHour();
+    if (!AUTO_ALERT_REMINDER_HOURS.includes(brasiliaHour)) {
+      return res.status(200).json({
+        message: 'Outside reminder window',
+        hour_brasilia: brasiliaHour,
+        reminder_hours: AUTO_ALERT_REMINDER_HOURS,
+      });
+    }
 
-    // 1. Fetch accounts + payment methods
-    const [rawAccounts, paymentMethods] = await Promise.all([
+    // 1. Fetch accounts + config used by the UI
+    const [rawAccounts, paymentMethods, thresholds] = await Promise.all([
       fetchMetaAccounts(metaToken),
       supabaseUrl && supabaseKey ? fetchPaymentMethods(supabaseUrl, supabaseKey) : new Map(),
+      fetchAlertThresholds(supabaseUrl, supabaseKey),
     ]);
 
     // 2. Evaluate alerts
@@ -201,21 +248,21 @@ export default async function handler(req, res) {
 
       // Low balance
       if (!isCard && hasReliableBalance && currentBalance > 0) {
-        if (currentBalance < THRESHOLDS.balance_critical) {
+        if (currentBalance < thresholds.balance_critical) {
           alerts.push({
             type: 'balance_low',
             severity: 'danger',
             accountName,
             message: `Saldo crítico: ${fmtR$(currentBalance)}`,
-            detail: `Limite: ${fmtR$(THRESHOLDS.balance_critical)}`,
+            detail: `Limite: ${fmtR$(thresholds.balance_critical)}`,
           });
-        } else if (currentBalance < THRESHOLDS.balance_warning) {
+        } else if (currentBalance < thresholds.balance_warning) {
           alerts.push({
             type: 'balance_low',
             severity: 'warning',
             accountName,
             message: `Saldo em atenção: ${fmtR$(currentBalance)}`,
-            detail: `Limite: ${fmtR$(THRESHOLDS.balance_warning)}`,
+            detail: `Limite: ${fmtR$(thresholds.balance_warning)}`,
           });
         }
       }
@@ -236,8 +283,8 @@ export default async function handler(req, res) {
 
         if (daily.messages > 0) {
           const costPerLead = daily.spend / daily.messages;
-          if (costPerLead >= THRESHOLDS.high_cost_lead) {
-            const isCritical = costPerLead >= THRESHOLDS.high_cost_lead * 1.5;
+          if (costPerLead >= thresholds.high_cost_lead) {
+            const isCritical = costPerLead >= thresholds.high_cost_lead * 1.5;
             alerts.push({
               type: 'high_cost',
               severity: isCritical ? 'danger' : 'warning',
@@ -256,8 +303,7 @@ export default async function handler(req, res) {
     }
 
     // 4. Build Slack message
-    const brasiliaHour = getBrasiliaHour();
-    const today = new Date().toLocaleDateString('pt-BR');
+    const today = getBrasiliaDateLabel();
     const severityEmoji = { danger: ':red_circle:', warning: ':large_yellow_circle:', info: ':large_blue_circle:' };
     const typeHeaders = {
       balance_low: ':moneybag: Saldo Baixo',
@@ -324,6 +370,8 @@ export default async function handler(req, res) {
     return res.status(200).json({
       message: 'OK',
       hour_brasilia: brasiliaHour,
+      reminder_hours: AUTO_ALERT_REMINDER_HOURS,
+      thresholds,
       alerts_sent: alerts.length,
       types: Object.fromEntries(Object.entries(grouped).map(([k, v]) => [k, v.length])),
     });

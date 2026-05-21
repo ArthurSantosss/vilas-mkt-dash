@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useMemo, useCallback } from 'react';
 import { supabase } from '../services/supabase';
 
 const AuthContext = createContext();
@@ -19,25 +19,23 @@ const BACKUP_KEYS = [
   'meta_provider_token'
 ];
 
+function readStoredUser() {
+    try {
+        const stored = localStorage.getItem(AUTH_KEY);
+        if (!stored) return null;
+
+        const parsed = JSON.parse(stored);
+        return parsed?.email && parsed?.loggedAt ? parsed : null;
+    } catch {
+        return null;
+    }
+}
+
 export function AuthProvider({ children }) {
-    const [user, setUser] = useState(null);
-    const [isLoading, setIsLoading] = useState(true);
+    const [user, setUser] = useState(readStoredUser);
+    const isLoading = false;
 
-    // Restaurar sessão do localStorage
-    useEffect(() => {
-        try {
-            const stored = localStorage.getItem(AUTH_KEY);
-            if (stored) {
-                const parsed = JSON.parse(stored);
-                if (parsed?.email && parsed?.loggedAt) {
-                    setUser(parsed);
-                }
-            }
-        } catch { /* ignore */ }
-        setIsLoading(false);
-    }, []);
-
-    const syncToCloud = async (email) => {
+    const syncToCloud = useCallback(async (email) => {
         try {
             const upserts = [];
             for (const key of BACKUP_KEYS) {
@@ -46,7 +44,9 @@ export function AuthProvider({ children }) {
                     try {
                         const localParsed = key === 'meta_provider_token' ? localStr : JSON.parse(localStr);
                         upserts.push({ key: `${email}_${key}`, value: localParsed, updated_at: new Date().toISOString() });
-                    } catch {}
+                    } catch {
+                        // Ignore invalid local payloads during backup sync.
+                    }
                 }
             }
             if (upserts.length > 0) {
@@ -58,9 +58,9 @@ export function AuthProvider({ children }) {
             console.error('Erro ao sincronizar com nuvem:', e);
             return false;
         }
-    };
+    }, []);
 
-    const loadFromCloud = async (email) => {
+    const loadFromCloud = useCallback(async (email) => {
         try {
             const { data } = await supabase.from('app_preferences').select('key, value').like('key', `${email}_%`);
             if (data && data.length > 0) {
@@ -76,9 +76,9 @@ export function AuthProvider({ children }) {
             console.error('Erro ao buscar backup na nuvem:', e);
             return false;
         }
-    };
+    }, []);
 
-    const signIn = async (email, password) => {
+    const signIn = useCallback(async (email, password) => {
         const normalizedEmail = email.trim().toLowerCase();
         const authorizedEmail = import.meta.env.VITE_AUTH_EMAIL;
         const authorizedPass = import.meta.env.VITE_AUTH_PASS;
@@ -101,28 +101,28 @@ export function AuthProvider({ children }) {
         };
 
         localStorage.setItem(AUTH_KEY, JSON.stringify(userData));
-        
+
         // Força um recarregamento da página para que os contextos AgencyProvider 
         // e MetaAdsProvider leiam o localStorage repopulado pela nuvem!
         window.location.href = '/';
-    };
+    }, [loadFromCloud]);
 
-    const signOut = async () => {
+    const signOut = useCallback(async () => {
         if (user?.email) {
             await syncToCloud(user.email);
         }
         localStorage.removeItem(AUTH_KEY);
         setUser(null);
-    };
+    }, [syncToCloud, user]);
 
-    const value = {
+    const value = useMemo(() => ({
         user,
         isLoading,
         signIn,
         signOut,
         syncToCloud,
         loadFromCloud
-    };
+    }), [user, isLoading, signIn, signOut, syncToCloud, loadFromCloud]);
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

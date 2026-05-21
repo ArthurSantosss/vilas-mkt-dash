@@ -6,7 +6,7 @@
  * 2. Public gviz/tq CSV endpoint — works only with "published to web" spreadsheets
  *
  * Spreadsheet: ARTHUR VILAS
- * Sheets: TAG, GDM, LAQUILA
+ * Sheets: TAG, GDM
  */
 
 const SPREADSHEET_ID = '1b1vjzOhpMsBI77mRp2luV0NJySR-RQMjP-Rzw8qFiWs';
@@ -14,7 +14,6 @@ const SPREADSHEET_ID = '1b1vjzOhpMsBI77mRp2luV0NJySR-RQMjP-Rzw8qFiWs';
 const SHEET_CONFIGS = [
   { name: 'TAG', valueColumn: 'VALOR DO PIX', range: 'TAG!A1:Z200' },
   { name: 'GDM', valueColumn: 'VALOR DIA', range: 'GDM!A1:Z200' },
-  { name: 'LAQUILA', valueColumn: null, skipFirstRow: true, range: 'LAQUILA!A1:Z200' },
 ];
 
 function parseCSVLine(line) {
