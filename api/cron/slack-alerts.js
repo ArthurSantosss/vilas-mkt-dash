@@ -155,7 +155,11 @@ async function fetchAlertThresholds(supabaseUrl, supabaseKey) {
   }
 
   try {
-    const url = `${supabaseUrl}/rest/v1/app_preferences?select=value&key=eq.${encodeURIComponent(AUTO_ALERTS_STORAGE_KEY)}`;
+    const email = (process.env.VITE_AUTH_EMAIL || '').trim().toLowerCase();
+    const prefixedKey = email ? `${email}_${AUTO_ALERTS_STORAGE_KEY}` : '';
+    const keysToTry = prefixedKey ? [prefixedKey, AUTO_ALERTS_STORAGE_KEY] : [AUTO_ALERTS_STORAGE_KEY];
+    const inParam = keysToTry.map(k => encodeURIComponent(k)).join(',');
+    const url = `${supabaseUrl}/rest/v1/app_preferences?select=key,value&key=in.(${inParam})`;
     const res = await fetch(url, {
       headers: {
         apikey: supabaseKey,
@@ -168,8 +172,11 @@ async function fetchAlertThresholds(supabaseUrl, supabaseKey) {
     }
 
     const data = await res.json();
-    const stored = Array.isArray(data) && data.length > 0 ? data[0]?.value : null;
-    return normalizeAutoAlertThresholds(stored);
+    if (Array.isArray(data) && data.length > 0) {
+      const found = data.find(row => row.key === prefixedKey) || data[0];
+      return normalizeAutoAlertThresholds(found?.value);
+    }
+    return { ...DEFAULT_AUTO_ALERT_THRESHOLDS };
   } catch {
     return { ...DEFAULT_AUTO_ALERT_THRESHOLDS };
   }

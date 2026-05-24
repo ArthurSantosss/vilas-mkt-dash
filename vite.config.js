@@ -7,6 +7,14 @@ export default defineConfig({
   esbuild: {
     drop: ['console', 'debugger'],
   },
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3000', // Vercel Dev server or local express if needed
+        changeOrigin: true,
+      }
+    }
+  },
   build: {
     target: 'es2020',
     minify: 'esbuild',

@@ -1,6 +1,7 @@
 import { createContext, useEffect, useRef } from 'react';
 import { supabase } from '../services/supabase';
 import { AUTO_ALERTS_STORAGE_KEY } from '../shared/constants/autoAlerts';
+import { useAuth } from './AuthContext';
 
 // Chaves do localStorage que serão espelhadas e sincronizadas na Nuvem (Supabase)
 const CLOUD_KEYS = [
@@ -14,24 +15,26 @@ const CLOUD_KEYS = [
   'meta_ads_column_order',
   'meta_ad_accounts',
   'disabled_ad_accounts',
-  'meta_provider_token',
   'meta_user_info',
   'client_logos',
   AUTO_ALERTS_STORAGE_KEY,
 ];
 
-export const PreferencesContext = createContext();
+const PreferencesContext = createContext();
 
 export function PreferencesProvider({ children }) {
   const isHydrated = useRef(false);
   const syncTimeout = useRef(null);
+  const { user } = useAuth();
+  const email = user?.email;
 
   useEffect(() => {
     let mounted = true;
 
     async function hydrateFromCloud() {
+      if (!email) return;
       try {
-        const { data, error } = await supabase.from('app_preferences').select('key, value');
+        const { data, error } = await supabase.from('app_preferences').select('key, value').like('key', `${email}_%`);
         if (error) {
           console.error('[PreferencesSync] Erro ao ler app_preferences:', error.message, error.hint || '');
           throw error;
@@ -43,7 +46,8 @@ export function PreferencesProvider({ children }) {
         let changedLocal = false;
         const cloudMap = {};
         for (const row of data || []) {
-          cloudMap[row.key] = row.value;
+          const originalKey = row.key.replace(`${email}_`, '');
+          cloudMap[originalKey] = row.value;
         }
 
         const upserts = [];
@@ -71,7 +75,7 @@ export function PreferencesProvider({ children }) {
              }
           } else if (localParsed !== null && localParsed !== undefined) {
              upserts.push({
-               key,
+               key: `${email}_${key}`,
                value: localParsed,
                updated_at: new Date().toISOString()
              });
@@ -101,10 +105,11 @@ export function PreferencesProvider({ children }) {
 
     hydrateFromCloud();
     return () => { mounted = false; };
-  }, []);
+  }, [email]);
 
   // Escuta se alguma página modificou uma preferência. Se modificou, joga na nuvem (Debounced)
   useEffect(() => {
+    if (!email) return;
     const handleStorageMapped = (e) => {
       // Ignora os eventos emitidos pela PRÓPRIA nuvem para não gerar loop infinito
       if (e?.detail?.fromCloud) return;
@@ -119,7 +124,7 @@ export function PreferencesProvider({ children }) {
           if (localStr !== null && localStr !== 'undefined' && localStr !== '') {
              try {
                const localParsed = key === 'meta_provider_token' ? localStr : JSON.parse(localStr);
-               upserts.push({ key, value: localParsed, updated_at: new Date().toISOString() });
+               upserts.push({ key: `${email}_${key}`, value: localParsed, updated_at: new Date().toISOString() });
              } catch { /* skip unparseable */ }
           }
         }
@@ -140,7 +145,7 @@ export function PreferencesProvider({ children }) {
 
     window.addEventListener('local-storage-map-updated', handleStorageMapped);
     return () => window.removeEventListener('local-storage-map-updated', handleStorageMapped);
-  }, []);
+  }, [email]);
 
   return (
     <PreferencesContext.Provider value={{}}>

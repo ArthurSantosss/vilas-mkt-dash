@@ -1,150 +1,35 @@
-const API_VERSION = 'v22.0';
-const BASE_URL = `https://graph.facebook.com/${API_VERSION}`;
 const IS_DEV = import.meta.env.DEV;
-const DEFAULT_GET_TTL_MS = 3 * 60 * 1000;
-const AD_ACCOUNTS_TTL_MS = 5 * 60 * 1000;
-const SESSION_STORAGE_PREFIX = 'meta_api_cache::';
-const SESSION_STORAGE_MAX_BYTES = 1_500_000; // ~1.5MB, dentro do limite de 5MB do sessionStorage
-const getCache = new Map();
-const inflightGetRequests = new Map();
+// Em produção, todas as requisições passam pelo proxy backend (token Meta fica server-side).
+// Em desenvolvimento, vai direto à Graph API (sem precisar de servidor Vercel local).
+const USE_PROXY = !IS_DEV;
+const PROXY_PATH = '/api/meta-proxy';
+const META_DIRECT_BASE = 'https://graph.facebook.com/v22.0';
 
-function serializeCacheValue(value) {
-    if (value === undefined || value === null) return '';
-    if (typeof value === 'string') return value;
-    return JSON.stringify(value);
-}
+const getAccessToken = () => localStorage.getItem('meta_provider_token');
 
-function buildGetCacheKey(path, params, token) {
-    const normalizedParams = Object.entries(params)
-        .filter(([, value]) => value !== undefined && value !== null)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, value]) => `${key}:${serializeCacheValue(value)}`)
-        .join('|');
-
-    return `${token}::${path}::${normalizedParams}`;
-}
-
-function readSessionCache(cacheKey) {
-    if (typeof sessionStorage === 'undefined') return null;
-    try {
-        const raw = sessionStorage.getItem(SESSION_STORAGE_PREFIX + cacheKey);
-        if (!raw) return null;
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed.expiresAt !== 'number') return null;
-        if (Date.now() > parsed.expiresAt) {
-            sessionStorage.removeItem(SESSION_STORAGE_PREFIX + cacheKey);
-            return null;
-        }
-        return parsed;
-    } catch {
-        return null;
-    }
-}
-
-function writeSessionCache(cacheKey, data, expiresAt) {
-    if (typeof sessionStorage === 'undefined') return;
-    try {
-        const payload = JSON.stringify({ data, expiresAt });
-        if (payload.length > SESSION_STORAGE_MAX_BYTES) return; // resposta grande: fica só em memória
-        sessionStorage.setItem(SESSION_STORAGE_PREFIX + cacheKey, payload);
-    } catch {
-        // QuotaExceeded ou similar: ignora silenciosamente
-    }
-}
-
-function clearSessionCache() {
-    if (typeof sessionStorage === 'undefined') return;
-    try {
-        const keysToRemove = [];
-        for (let i = 0; i < sessionStorage.length; i++) {
-            const key = sessionStorage.key(i);
-            if (key && key.startsWith(SESSION_STORAGE_PREFIX)) keysToRemove.push(key);
-        }
-        keysToRemove.forEach(k => sessionStorage.removeItem(k));
-    } catch { /* ignore */ }
-}
-
-function getCachedResponse(cacheKey) {
-    const memEntry = getCache.get(cacheKey);
-    if (memEntry) {
-        if (Date.now() > memEntry.expiresAt) {
-            getCache.delete(cacheKey);
-        } else {
-            return memEntry.data;
-        }
-    }
-
-    const sessionEntry = readSessionCache(cacheKey);
-    if (sessionEntry) {
-        getCache.set(cacheKey, { data: sessionEntry.data, expiresAt: sessionEntry.expiresAt });
-        return sessionEntry.data;
-    }
-
-    return null;
-}
-
-function setCachedResponse(cacheKey, data, ttlMs) {
-    if (!ttlMs || ttlMs <= 0) return;
-    const expiresAt = Date.now() + ttlMs;
-    getCache.set(cacheKey, { data, expiresAt });
-    writeSessionCache(cacheKey, data, expiresAt);
-}
-
-export function clearMetaGetCache() {
-    getCache.clear();
-    inflightGetRequests.clear();
-    clearSessionCache();
-}
-
-/**
- * Retorna o token de acesso.
- * Prioridade: 1) Token OAuth salvo via login Facebook  2) Token fixo do .env
- */
-const getAccessToken = () => {
-    // Prioridade: token obtido via Facebook OAuth (salvo no callback)
-    const oauthToken = localStorage.getItem('meta_provider_token');
-    if (oauthToken) {
-        if (IS_DEV) {
-            console.log('[metaApi] Usando token do localStorage (OAuth)');
-        }
-        return oauthToken;
-    }
-
-    // Fallback: token fixo do .env (para desenvolvimento)
-    const envToken = import.meta.env.VITE_META_ACCESS_TOKEN;
-    if (envToken) {
-        if (IS_DEV) {
-            console.log('[metaApi] Usando token do .env (fallback)');
-        }
-        return envToken;
-    }
-
-    throw new Error('Meta Access Token não encontrado. Conecte sua conta em Configurações.');
-};
-
-/**
- * Função utilitária para fazer requisições GET à Graph API.
- */
-const fetchMeta = async (path, params = {}, options = {}) => {
+// Constrói URL + headers de acordo com modo (proxy ou direto). Token OAuth do user
+// vai via header `x-meta-token` em modo proxy, para não vazar em logs do servidor.
+function buildRequest(path, params = {}, method = 'GET', body = null) {
     const token = getAccessToken();
-    const { force = false, ttlMs = DEFAULT_GET_TTL_MS } = options;
-    const cacheKey = buildGetCacheKey(path, params, token);
+    const headers = { Accept: 'application/json' };
+    let url;
 
-    if (!force) {
-        const cached = getCachedResponse(cacheKey);
-        if (cached) {
-            return cached;
-        }
-
-        const inflight = inflightGetRequests.get(cacheKey);
-        if (inflight) {
-            return inflight;
+    if (USE_PROXY) {
+        url = new URL(window.location.origin + PROXY_PATH);
+        url.searchParams.append('path', path);
+        if (token) headers['x-meta-token'] = token;
+    } else {
+        url = new URL(`${META_DIRECT_BASE}${path}`);
+        if (token) {
+            url.searchParams.append('access_token', token);
+        } else if (IS_DEV) {
+            // Fallback dev-only: o branch é eliminado por dead-code do esbuild
+            // em produção (IS_DEV vira false), portanto VITE_META_ACCESS_TOKEN
+            // nunca aparece no bundle de prod mesmo que a env esteja definida.
+            const fallbackToken = import.meta.env.VITE_META_ACCESS_TOKEN;
+            if (fallbackToken) url.searchParams.append('access_token', fallbackToken);
         }
     }
-
-    const url = new URL(`${BASE_URL}${path}`);
-
-    url.searchParams.append('access_token', token);
 
     for (const [key, value] of Object.entries(params)) {
         if (value !== undefined && value !== null) {
@@ -152,81 +37,36 @@ const fetchMeta = async (path, params = {}, options = {}) => {
         }
     }
 
-    const request = (async () => {
-        try {
-            const response = await fetch(url.toString(), {
-                method: 'GET',
-                headers: {
-                    'Accept': 'application/json',
-                }
-            });
-
-            const text = await response.text();
-            const data = text ? JSON.parse(text) : {};
-
-            if (!response.ok) {
-                throw new Error(data.error?.message || `Erro da Meta API (${response.status})`);
-            }
-
-            return data;
-        } catch (err) {
-            throw new Error(`Falha na requisição Meta API: ${err.message}`);
+    const fetchOptions = { method, headers };
+    if (method === 'POST' && body) {
+        headers['Content-Type'] = 'application/x-www-form-urlencoded';
+        const formData = new URLSearchParams();
+        for (const [key, value] of Object.entries(body)) {
+            if (value !== undefined && value !== null) formData.append(key, value);
         }
-    })();
-
-    if (!force) {
-        inflightGetRequests.set(cacheKey, request);
+        fetchOptions.body = formData.toString();
     }
 
+    return { url: url.toString(), fetchOptions };
+}
+
+async function runRequest(path, params, method, body) {
+    const { url, fetchOptions } = buildRequest(path, params, method, body);
     try {
-        const data = await request;
-        if (!force) {
-            setCachedResponse(cacheKey, data, ttlMs);
-        }
-        return data;
-    } finally {
-        inflightGetRequests.delete(cacheKey);
-    }
-};
-
-/**
- * Função utilitária para fazer requisições POST à Graph API.
- */
-const postMeta = async (path, body = {}) => {
-    const token = getAccessToken();
-    const url = new URL(`${BASE_URL}${path}`);
-    url.searchParams.append('access_token', token);
-
-    const formData = new URLSearchParams();
-    for (const [key, value] of Object.entries(body)) {
-        if (value !== undefined && value !== null) {
-            formData.append(key, value);
-        }
-    }
-
-    try {
-        const response = await fetch(url.toString(), {
-            method: 'POST',
-            headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/x-www-form-urlencoded',
-            },
-            body: formData.toString()
-        });
-
+        const response = await fetch(url, fetchOptions);
         const text = await response.text();
         const data = text ? JSON.parse(text) : {};
-
         if (!response.ok) {
             throw new Error(data.error?.message || `Erro da Meta API (${response.status})`);
         }
-
-        clearMetaGetCache();
         return data;
     } catch (err) {
         throw new Error(`Falha na requisição Meta API: ${err.message}`);
     }
-};
+}
+
+const fetchMeta = (path, params = {}) => runRequest(path, params, 'GET', null);
+const postMeta = (path, body = {}) => runRequest(path, {}, 'POST', body);
 
 /**
  * Busca as contas de anúncios disponíveis para o usuário (Business Manager).
@@ -235,7 +75,7 @@ export const fetchAdAccounts = async () => {
     const data = await fetchMeta('/me/adaccounts', {
         fields: 'id,account_id,name,account_status,currency,balance,amount_spent,spend_cap,is_prepay_account,funding_source_details',
         limit: 1000
-    }, { ttlMs: AD_ACCOUNTS_TTL_MS });
+    });
     return data.data || [];
 };
 
@@ -274,13 +114,13 @@ const applyPeriodParams = (params, period) => {
 /**
  * Busca os insights agregados de uma conta específica.
  */
-export const fetchAccountInsights = async (accountId, period = '7d', options) => {
+export const fetchAccountInsights = async (accountId, period = '7d') => {
     const params = applyPeriodParams({
         fields: 'spend,impressions,cpm,inline_link_clicks,cpc,actions,ctr,reach,frequency',
         level: 'account'
     }, period);
 
-    const data = await fetchMeta(`/${accountId}/insights`, params, options);
+    const data = await fetchMeta(`/${accountId}/insights`, params);
 
     return data.data && data.data.length > 0 ? data.data[0] : null;
 };
@@ -288,14 +128,14 @@ export const fetchAccountInsights = async (accountId, period = '7d', options) =>
 /**
  * Busca os insights diários de uma conta específica.
  */
-export const fetchAccountDailyInsights = async (accountId, period = '7d', options) => {
+export const fetchAccountDailyInsights = async (accountId, period = '7d') => {
     const params = applyPeriodParams({
         fields: 'spend,impressions,actions',
         time_increment: 1, // '1' indica granularidade diária
         level: 'account'
     }, period);
 
-    const data = await fetchMeta(`/${accountId}/insights`, params, options);
+    const data = await fetchMeta(`/${accountId}/insights`, params);
 
     return data.data || [];
 };
@@ -303,11 +143,8 @@ export const fetchAccountDailyInsights = async (accountId, period = '7d', option
 /**
  * Busca as campanhas de uma conta e seus insights.
  */
-export const fetchCampaignsWithInsights = async (accountId, period = '7d', options) => {
+export const fetchCampaignsWithInsights = async (accountId, period = '7d') => {
     const preset = getPresetFromPeriod(period);
-    // Para simplificar aninhamento com time_range, se for custom passamos no nível do request (date_preset vs time_range em nível de request funciona global para insights).
-    // O edge GraphQL de campanhas permite que filtros globais se apliquem ao 'insights' nestado de certas formas.
-    // Outra opçnao: `insights.time_range({'since':'2024-01-01','until':'2024-01-31'})`
 
     let insightsField = 'insights';
     if (preset) {
@@ -319,7 +156,7 @@ export const fetchCampaignsWithInsights = async (accountId, period = '7d', optio
     const data = await fetchMeta(`/${accountId}/campaigns`, {
         fields: `id,name,status,objective,budget_remaining,daily_budget,lifetime_budget,adsets{status,daily_budget},${insightsField}{spend,impressions,cpm,inline_link_clicks,cpc,actions,ctr,purchase_roas,reach,frequency}`,
         limit: 50
-    }, options);
+    });
 
     return data.data || [];
 };
@@ -452,7 +289,7 @@ export const fetchPlacementBreakdown = async (entityId, period = '7d') => {
  */
 export const fetchCampaignDailyInsights = async (campaignId, period = '7d') => {
     const params = applyPeriodParams({
-        fields: 'spend,impressions,cpm,ctr,actions,reach,frequency',
+        fields: 'spend,impressions,cpm,ctr,inline_link_clicks,actions,reach,frequency',
         time_increment: 1,
     }, period);
     const data = await fetchMeta(`/${campaignId}/insights`, params);

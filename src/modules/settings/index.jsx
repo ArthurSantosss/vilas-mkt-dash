@@ -63,6 +63,54 @@ const STORAGE_KEYS = {
   DISABLED_ACCOUNTS: 'disabled_ad_accounts',
 };
 
+const META_PROXY_PATH = '/api/meta-proxy';
+const META_DIRECT_BASE = 'https://graph.facebook.com/v22.0';
+
+async function fetchMetaProxy(path, token, params = {}) {
+  if (import.meta.env.DEV) {
+    const url = new URL(`${META_DIRECT_BASE}${path}`);
+    if (token) {
+      url.searchParams.append('access_token', token);
+    }
+
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== null) {
+        url.searchParams.append(key, value);
+      }
+    }
+
+    const response = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
+    const payload = await response.json();
+
+    if (!response.ok) {
+      throw new Error(payload?.error?.message || payload?.error || `Erro da Meta API (${response.status})`);
+    }
+
+    return payload;
+  }
+
+  const headers = { Accept: 'application/json' };
+  if (token) headers['x-meta-token'] = token;
+
+  const url = new URL(window.location.origin + META_PROXY_PATH);
+  url.searchParams.append('path', path);
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null) {
+      url.searchParams.append(key, value);
+    }
+  }
+
+  const response = await fetch(url.toString(), { headers });
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || payload?.error || `Erro da Meta API (${response.status})`);
+  }
+
+  return payload;
+}
+
 export default function Settings() {
   const { agencies, accountAgencies, addAgency, removeAgency, setAccountAgency } = useAgency();
   const { user, signOut, syncToCloud } = useAuth();
@@ -130,18 +178,16 @@ export default function Settings() {
       setLoadingMeta(true);
       setError(null);
 
-      const userRes = await fetch(`https://graph.facebook.com/v22.0/me?access_token=${token}&fields=id,name,email,picture`);
-      const userData = await userRes.json();
-      if (userData.error) throw new Error(userData.error.message);
+      const [userData, accountsData] = await Promise.all([
+        fetchMetaProxy('/me', token, { fields: 'id,name,email,picture' }),
+        fetchMetaProxy('/me/adaccounts', token, {
+          fields: 'id,name,account_id,account_status,balance,currency,business_name,amount_spent,spend_cap,is_prepay_account',
+          limit: 100,
+        }),
+      ]);
 
       setMetaUser(userData);
       localStorage.setItem(STORAGE_KEYS.META_USER, JSON.stringify(userData));
-
-      const accountsRes = await fetch(
-        `https://graph.facebook.com/v22.0/me/adaccounts?access_token=${token}&fields=id,name,account_id,account_status,balance,currency,business_name,amount_spent,spend_cap,is_prepay_account&limit=100`
-      );
-      const accountsData = await accountsRes.json();
-      if (accountsData.error) throw new Error(accountsData.error.message);
 
       const accounts = accountsData.data || [];
       setMetaAccounts(accounts);

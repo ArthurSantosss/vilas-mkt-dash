@@ -18,9 +18,7 @@ export default function AuthCallback() {
             } else if (provider === 'google') {
                 localStorage.setItem('google_provider_token', session.provider_token);
                 localStorage.setItem('google_calendar_token', session.provider_token);
-                if (session.provider_refresh_token) {
-                    localStorage.setItem('google_provider_refresh_token', session.provider_refresh_token);
-                }
+                localStorage.removeItem('google_provider_refresh_token');
                 window.dispatchEvent(new Event('storage'));
                 console.log('✅ Token Google salvo com sucesso');
             }

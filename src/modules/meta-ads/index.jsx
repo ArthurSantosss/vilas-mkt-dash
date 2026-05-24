@@ -469,7 +469,6 @@ const BalanceSummaryCards = React.memo(function BalanceSummaryCards({ balances, 
   );
 
   const totalRemaining = Math.max(0, totalGoal - totalSpent);
-  const pctUsed = totalGoal > 0 ? (totalSpent / totalGoal) * 100 : 0;
 
   const totalAvgDaily = useMemo(() =>
     relevantBalances.reduce((sum, b) => sum + (b.avgDailySpend7d || 0), 0),
@@ -535,7 +534,6 @@ const BalanceSummaryCards = React.memo(function BalanceSummaryCards({ balances, 
 const AccountBalanceBadge = React.memo(function AccountBalanceBadge({ balance, monthlyGoal }) {
   if (!balance) return null;
 
-  const spentThisMonth = balance.spentThisMonth || 0;
   const hasGoal = monthlyGoal && monthlyGoal > 0;
   const hasBalance = balance.hasReliableBalance !== false && balance.currentBalance > 0;
 
@@ -765,7 +763,7 @@ export default function MetaAdsOverview() {
     return msg ? parseInt(msg.value, 10) : 0;
   };
 
-  const renderAccountCell = (col, account, { balance, monthlyGoal, totalBudget } = {}) => {
+  const renderAccountCell = (col, account, { balance, monthlyGoal } = {}) => {
     const m = account.metrics;
     const accountId = account.id || account.accountId;
     const paymentMethod = getAccountPaymentMethod(paymentMethods, account.id, account.accountId, accountId) || 'credit_card';

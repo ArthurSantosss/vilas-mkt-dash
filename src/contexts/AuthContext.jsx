@@ -14,10 +14,13 @@ const BACKUP_KEYS = [
   'meta_balance_snapshots',
   'custom_account_names',
   'meta_ads_column_order',
-  'meta_accounts',
-  'disabled_accounts',
-  'meta_provider_token'
+  'meta_ad_accounts',
+  'disabled_ad_accounts',
+  'meta_user_info',
+  'client_logos',
+  'auto_alerts_thresholds'
 ];
+const LEGACY_SENSITIVE_KEYS = ['meta_provider_token'];
 
 function readStoredUser() {
     try {
@@ -37,6 +40,13 @@ export function AuthProvider({ children }) {
 
     const syncToCloud = useCallback(async (email) => {
         try {
+            if (LEGACY_SENSITIVE_KEYS.length > 0) {
+                await supabase.from('app_preferences').delete().in(
+                    'key',
+                    LEGACY_SENSITIVE_KEYS.map((key) => `${email}_${key}`)
+                );
+            }
+
             const upserts = [];
             for (const key of BACKUP_KEYS) {
                 const localStr = localStorage.getItem(key);
@@ -62,10 +72,18 @@ export function AuthProvider({ children }) {
 
     const loadFromCloud = useCallback(async (email) => {
         try {
+            if (LEGACY_SENSITIVE_KEYS.length > 0) {
+                await supabase.from('app_preferences').delete().in(
+                    'key',
+                    LEGACY_SENSITIVE_KEYS.map((key) => `${email}_${key}`)
+                );
+            }
+
             const { data } = await supabase.from('app_preferences').select('key, value').like('key', `${email}_%`);
             if (data && data.length > 0) {
                 data.forEach(row => {
                     const originalKey = row.key.replace(`${email}_`, '');
+                    if (!BACKUP_KEYS.includes(originalKey)) return;
                     const strToSave = originalKey === 'meta_provider_token' ? row.value : JSON.stringify(row.value);
                     localStorage.setItem(originalKey, strToSave);
                 });
@@ -80,15 +98,21 @@ export function AuthProvider({ children }) {
 
     const signIn = useCallback(async (email, password) => {
         const normalizedEmail = email.trim().toLowerCase();
-        const authorizedEmail = import.meta.env.VITE_AUTH_EMAIL;
-        const authorizedPass = import.meta.env.VITE_AUTH_PASS;
 
-        if (!authorizedEmail || !authorizedPass) {
-            throw new Error('Credenciais de autenticação não configuradas. Verifique o arquivo .env');
-        }
+        try {
+            const response = await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: normalizedEmail, password })
+            });
 
-        if (normalizedEmail !== authorizedEmail.toLowerCase() || password !== authorizedPass) {
-            throw new Error('Email ou senha incorretos.');
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Erro ao fazer login.');
+            }
+        } catch (err) {
+            throw new Error(err.message || 'Erro ao conectar com o servidor.');
         }
 
         // Antes de finalizar o login, descarrega a nuvem pro celular
@@ -110,6 +134,11 @@ export function AuthProvider({ children }) {
     const signOut = useCallback(async () => {
         if (user?.email) {
             await syncToCloud(user.email);
+        }
+        try {
+            await fetch('/api/logout', { method: 'POST' });
+        } catch {
+            // A limpeza principal ainda acontece no cliente.
         }
         localStorage.removeItem(AUTH_KEY);
         setUser(null);

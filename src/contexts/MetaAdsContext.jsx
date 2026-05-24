@@ -1,6 +1,6 @@
-import { createContext, useContext, useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { createContext, useContext, useState, useMemo, useEffect, useCallback } from 'react';
+import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
 import {
-  clearMetaGetCache,
   fetchAdAccounts,
   fetchAccountInsights,
   fetchAccountDailyInsights,
@@ -11,262 +11,26 @@ import { calculateMetaBalance } from '../shared/utils/metaBalance';
 const MetaAdsContext = createContext();
 
 export function MetaAdsProvider({ children }) {
-  const [accounts, setAccounts] = useState([]);
-  const [balances, setBalances] = useState([]);
-  const [campaigns, setCampaigns] = useState([]);
+  const queryClient = useQueryClient();
   const [selectedPeriod, setSelectedPeriod] = useState('today');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [hasToken, setHasToken] = useState(
+    () => !!localStorage.getItem('meta_provider_token') || true // Assume true inicialmente, proxy resolve
+  );
 
-  // Cada chamada de loadMetaData ganha um id. Updates incrementais de chamadas
-  // antigas são descartados quando uma nova chamada começa (mudança de período, etc).
-  const loadIdRef = useRef(0);
-
-  const loadMetaData = useCallback(async ({ force = false } = {}) => {
-    // Verificar se temos token antes de tentar
-    const hasToken = localStorage.getItem('meta_provider_token') || import.meta.env.VITE_META_ACCESS_TOKEN;
-    if (!hasToken) {
-      setLoading(false);
-      setError('Nenhum token Meta encontrado. Conecte sua conta em Configurações.');
-      return;
-    }
-
-    const myLoadId = ++loadIdRef.current;
-    const isStale = () => loadIdRef.current !== myLoadId;
-
-    try {
-      setLoading(true);
-      setError(null);
-
-      const rawAccounts = await fetchAdAccounts();
-      if (isStale()) return;
-
-      // Ler contas desativadas no painel de configurações
-      let disabledAccounts = [];
-      try {
-        disabledAccounts = JSON.parse(localStorage.getItem('disabled_ad_accounts')) || [];
-      } catch (err) {
-        console.warn('Erro ao ler contas desabilitadas:', err);
-      }
-
-      // Filtrar contas: usa a seleção do usuário nas Configurações como autoridade
-      // Se o usuário tem contas desabilitadas salvas, usa esse filtro
-      // Senão, mostra todas as contas ativas (account_status === 1) por padrão
-      let activeRawAccounts;
-      if (disabledAccounts.length > 0 || localStorage.getItem('disabled_ad_accounts') !== null) {
-        // Usuário já configurou quais contas quer ver — respeitar escolha
-        activeRawAccounts = rawAccounts.filter(a => !disabledAccounts.includes(a.id));
-      } else {
-        // Sem configuração — comportamento padrão: só contas ativas
-        activeRawAccounts = rawAccounts.filter(a => a.account_status === 1);
-      }
-
-      // Reset incremental: cada conta entra no estado assim que termina,
-      // em vez de esperar todas. Cache TTL fica delegado ao metaApi (sessionStorage).
-      setAccounts([]);
-      setCampaigns([]);
-      setBalances([]);
-
-      const fetchOpts = force ? { force: true } : undefined;
-      const accountOrder = activeRawAccounts.map(a => a.id);
-
-      const loadAccountData = async (account) => {
-        const actId = account.id;
-
-        try {
-          const [insights, dailyInsights, accountCampaigns, monthInsights] = await Promise.all([
-            fetchAccountInsights(actId, selectedPeriod, fetchOpts),
-            fetchAccountDailyInsights(actId, selectedPeriod, fetchOpts),
-            fetchCampaignsWithInsights(actId, selectedPeriod, fetchOpts),
-            fetchAccountInsights(actId, 'month', fetchOpts),
-          ]);
-
-          const getMessages = (actionsArray) => {
-            if (!actionsArray) return 0;
-            const msgAction = actionsArray.find(a =>
-              a.action_type === 'onsite_conversion.messaging_conversation_started_7d'
-            );
-            return msgAction ? parseInt(msgAction.value, 10) : 0;
-          };
-
-          const formattedCampaigns = [];
-          if (accountCampaigns) {
-            accountCampaigns.forEach(camp => {
-              const campInsights = camp.insights?.data?.[0];
-              formattedCampaigns.push({
-                id: camp.id,
-                accountId: actId,
-                name: camp.name,
-                status: camp.status.toLowerCase(),
-                objective: camp.objective,
-                dailyBudget: parseFloat(camp.daily_budget || 0) / 100,
-                adsets: camp.adsets?.data?.map(a => ({
-                  status: a.status?.toLowerCase() || '',
-                  dailyBudget: parseFloat(a.daily_budget || 0) / 100
-                })) || [],
-                metrics: {
-                  spend: parseFloat(campInsights?.spend || 0),
-                  impressions: parseInt(campInsights?.impressions || 0, 10),
-                  cpc: parseFloat(campInsights?.cpc || 0),
-                  cpm: parseFloat(campInsights?.cpm || 0),
-                  ctr: parseFloat(campInsights?.ctr || 0),
-                  reach: parseInt(campInsights?.reach || 0, 10),
-                  frequency: parseFloat(campInsights?.frequency || 0),
-                  messages: getMessages(campInsights?.actions),
-                  costPerMessage: getMessages(campInsights?.actions) ? parseFloat(campInsights?.spend || 0) / getMessages(campInsights?.actions) : 0,
-                  roas: parseFloat(campInsights?.purchase_roas?.[0]?.value || 0)
-                }
-              });
-            });
-          }
-
-          const formattedAccount = {
-            id: actId,
-            clientId: `client_${actId}`,
-            clientName: account.name,
-            accountId: account.account_id,
-            status: account.account_status === 1 ? 'active' : 'paused',
-            niche: 'Geral',
-            monthlyBudget: 0,
-            metrics: {
-              spend: parseFloat(insights?.spend || 0),
-              impressions: parseInt(insights?.impressions || 0, 10),
-              cpm: parseFloat(insights?.cpm || 0),
-              linkClicks: parseInt(insights?.inline_link_clicks || 0, 10),
-              cpc: parseFloat(insights?.cpc || 0),
-              messagingConversationsStarted: getMessages(insights?.actions),
-              costPerMessage: getMessages(insights?.actions) ? parseFloat(insights?.spend || 0) / getMessages(insights?.actions) : 0,
-              ctr: parseFloat(insights?.ctr || 0),
-              reach: parseInt(insights?.reach || 0, 10),
-              frequency: parseFloat(insights?.frequency || 0)
-            },
-            dailyMetrics: dailyInsights.map(d => ({
-              date: d.date_start,
-              spend: parseFloat(d.spend || 0),
-              messages: getMessages(d.actions),
-              impressions: parseInt(d.impressions || 0, 10)
-            }))
-          };
-
-          const {
-            rawBillingBalance,
-            spendCap,
-            amountSpent,
-            amountDue,
-            currentBalance,
-            hasReliableBalance,
-            balanceSource,
-            isPrepayAccount,
-          } = calculateMetaBalance(account);
-
-          const todayMetric = dailyInsights.length > 0 ? dailyInsights[dailyInsights.length - 1] : null;
-          const spentToday = todayMetric ? parseFloat(todayMetric.spend || 0) : 0;
-          const spentThisMonth = monthInsights ? parseFloat(monthInsights.spend || 0) : 0;
-          const daysToAverage = Math.min(dailyInsights.length, 7);
-          const sum7d = dailyInsights.slice(-daysToAverage).reduce((sum, day) => sum + parseFloat(day.spend || 0), 0);
-          const avgDailySpend7d = daysToAverage > 0 ? sum7d / daysToAverage : 0;
-
-          const estimatedDaysRemaining = hasReliableBalance && avgDailySpend7d > 0
-            ? Math.max(0, currentBalance / avgDailySpend7d)
-            : 0;
-
-          const formattedBalance = {
-            accountId: actId,
-            clientName: account.name,
-            currentBalance,
-            creditLimit: spendCap > 0 ? spendCap : 0,
-            amountSpent,
-            rawBillingBalance,
-            amountDue,
-            spentToday,
-            spentThisMonth,
-            avgDailySpend7d,
-            estimatedDaysRemaining,
-            hasReliableBalance,
-            balanceSource,
-            isPrepayAccount,
-          };
-
-          if (isStale()) return null;
-
-          // Insere mantendo a ordem original das contas para evitar "pular" no UI.
-          setAccounts(prev => {
-            if (prev.some(a => a.id === actId)) return prev;
-            const next = [...prev, formattedAccount];
-            next.sort((a, b) => accountOrder.indexOf(a.id) - accountOrder.indexOf(b.id));
-            return next;
-          });
-          setBalances(prev => {
-            if (prev.some(b => b.accountId === actId)) return prev;
-            const next = [...prev, formattedBalance];
-            next.sort((a, b) => accountOrder.indexOf(a.accountId) - accountOrder.indexOf(b.accountId));
-            return next;
-          });
-          if (formattedCampaigns.length > 0) {
-            setCampaigns(prev => {
-              const filtered = prev.filter(c => c.accountId !== actId);
-              return [...filtered, ...formattedCampaigns];
-            });
-          }
-
-          return true;
-        } catch (accountError) {
-          console.warn(`Erro ao carregar dados da conta ${account.name} (${actId}):`, accountError);
-          return null;
-        }
-      };
-
-      // Carrega em lotes limitados (concorrência de 3 contas por vez) para não congestionar a rede e evitar rate limit da Meta
-      const batchLimit = 3;
-      for (let i = 0; i < activeRawAccounts.length; i += batchLimit) {
-        if (isStale()) return;
-        const batch = activeRawAccounts.slice(i, i + batchLimit);
-        await Promise.allSettled(batch.map(account => loadAccountData(account)));
-      }
-      if (isStale()) return;
-
-      setLoading(false);
-
-    } catch (err) {
-      console.error('Erro ao buscar dados do Meta:', err);
-      setError(err.message);
-      setLoading(false);
-    }
-  }, [selectedPeriod]);
-
-  // Carregar dados na montagem e quando o período mudar
-  useEffect(() => {
-    let cancelled = false;
-
-    queueMicrotask(() => {
-      if (!cancelled) {
-        loadMetaData();
-      }
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [loadMetaData]);
-
-  // Escutar mudanças no token via storage event (quando outra aba/componente salva um novo token)
+  // Escutar mudanças no token (login oauth)
   useEffect(() => {
     const handleStorageChange = (e) => {
-      if (e.key === 'meta_provider_token' && e.newValue) {
-        clearMetaGetCache();
-        loadMetaData();
+      if (e.key === 'meta_provider_token') {
+        setHasToken(!!e.newValue);
+        queryClient.invalidateQueries({ queryKey: ['meta'] });
       }
     };
-    // Custom event para mesma aba (storage event só funciona entre abas)
     const handleTokenUpdate = () => {
-      console.log('[MetaAdsContext] ⚡ Evento meta-token-updated recebido! Recarregando dados...');
-      clearMetaGetCache();
-      loadMetaData({ force: true });
+      setHasToken(true);
+      queryClient.invalidateQueries({ queryKey: ['meta'] });
     };
     const handleAccountToggle = () => {
-      console.log('[MetaAdsContext] ⚡ Evento meta-accounts-toggled recebido! Recarregando dados...');
-      clearMetaGetCache();
-      loadMetaData({ force: true });
+      queryClient.invalidateQueries({ queryKey: ['meta', 'adAccounts'] });
     };
     window.addEventListener('storage', handleStorageChange);
     window.addEventListener('meta-token-updated', handleTokenUpdate);
@@ -276,7 +40,180 @@ export function MetaAdsProvider({ children }) {
       window.removeEventListener('meta-token-updated', handleTokenUpdate);
       window.removeEventListener('meta-accounts-toggled', handleAccountToggle);
     };
-  }, [loadMetaData]);
+  }, [queryClient]);
+
+  // 1. Buscar contas de anúncios
+  const {
+    data: rawAccounts = [],
+    isLoading: loadingAccounts,
+    error: accountsError,
+  } = useQuery({
+    queryKey: ['meta', 'adAccounts'],
+    queryFn: fetchAdAccounts,
+    enabled: hasToken,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const activeRawAccounts = useMemo(() => {
+    if (!rawAccounts.length) return [];
+    let disabledAccounts = [];
+    try {
+      disabledAccounts = JSON.parse(localStorage.getItem('disabled_ad_accounts')) || [];
+    } catch {
+      // ignora payload inválido em localStorage
+    }
+    if (disabledAccounts.length > 0 || localStorage.getItem('disabled_ad_accounts') !== null) {
+      return rawAccounts.filter(a => !disabledAccounts.includes(a.id));
+    }
+    return rawAccounts.filter(a => a.account_status === 1);
+  }, [rawAccounts]);
+
+  // 2. Criar queries para cada conta
+  const accountQueries = useQueries({
+    queries: activeRawAccounts.map(account => ({
+      queryKey: ['meta', 'accountData', account.id, selectedPeriod],
+      queryFn: async () => {
+        const actId = account.id;
+        const [insights, dailyInsights, accountCampaigns, monthInsights] = await Promise.all([
+          fetchAccountInsights(actId, selectedPeriod),
+          fetchAccountDailyInsights(actId, selectedPeriod),
+          fetchCampaignsWithInsights(actId, selectedPeriod),
+          fetchAccountInsights(actId, 'month'),
+        ]);
+
+        return { account, insights, dailyInsights, accountCampaigns, monthInsights };
+      },
+      enabled: hasToken,
+      staleTime: 2 * 60 * 1000, // Dados expiram em 2 min
+    })),
+  });
+
+  // 3. Processar resultados (Agregação não bloqueante - exibe o que já carregou)
+  const { accounts, balances, campaigns } = useMemo(() => {
+    const getMessages = (actionsArray) => {
+      if (!actionsArray) return 0;
+      const msgAction = actionsArray.find(a =>
+        a.action_type === 'onsite_conversion.messaging_conversation_started_7d'
+      );
+      return msgAction ? parseInt(msgAction.value, 10) : 0;
+    };
+
+    const accs = [];
+    const bals = [];
+    let camps = [];
+
+    accountQueries.forEach(query => {
+      if (!query.data) return; // Se não carregou ainda, pula
+
+      const { account, insights, dailyInsights, accountCampaigns, monthInsights } = query.data;
+      const actId = account.id;
+
+      const formattedCampaigns = [];
+      if (accountCampaigns) {
+        accountCampaigns.forEach(camp => {
+          const campInsights = camp.insights?.data?.[0];
+          formattedCampaigns.push({
+            id: camp.id,
+            accountId: actId,
+            name: camp.name,
+            status: camp.status.toLowerCase(),
+            objective: camp.objective,
+            dailyBudget: parseFloat(camp.daily_budget || 0) / 100,
+            adsets: camp.adsets?.data?.map(a => ({
+              status: a.status?.toLowerCase() || '',
+              dailyBudget: parseFloat(a.daily_budget || 0) / 100
+            })) || [],
+            metrics: {
+              spend: parseFloat(campInsights?.spend || 0),
+              impressions: parseInt(campInsights?.impressions || 0, 10),
+              cpc: parseFloat(campInsights?.cpc || 0),
+              cpm: parseFloat(campInsights?.cpm || 0),
+              ctr: parseFloat(campInsights?.ctr || 0),
+              reach: parseInt(campInsights?.reach || 0, 10),
+              frequency: parseFloat(campInsights?.frequency || 0),
+              messages: getMessages(campInsights?.actions),
+              costPerMessage: getMessages(campInsights?.actions) ? parseFloat(campInsights?.spend || 0) / getMessages(campInsights?.actions) : 0,
+              roas: parseFloat(campInsights?.purchase_roas?.[0]?.value || 0)
+            }
+          });
+        });
+      }
+
+      const formattedAccount = {
+        id: actId,
+        clientId: `client_${actId}`,
+        clientName: account.name,
+        accountId: account.account_id,
+        status: account.account_status === 1 ? 'active' : 'paused',
+        niche: 'Geral',
+        monthlyBudget: 0,
+        metrics: {
+          spend: parseFloat(insights?.spend || 0),
+          impressions: parseInt(insights?.impressions || 0, 10),
+          cpm: parseFloat(insights?.cpm || 0),
+          linkClicks: parseInt(insights?.inline_link_clicks || 0, 10),
+          cpc: parseFloat(insights?.cpc || 0),
+          messagingConversationsStarted: getMessages(insights?.actions),
+          costPerMessage: getMessages(insights?.actions) ? parseFloat(insights?.spend || 0) / getMessages(insights?.actions) : 0,
+          ctr: parseFloat(insights?.ctr || 0),
+          reach: parseInt(insights?.reach || 0, 10),
+          frequency: parseFloat(insights?.frequency || 0)
+        },
+        dailyMetrics: dailyInsights.map(d => ({
+          date: d.date_start,
+          spend: parseFloat(d.spend || 0),
+          messages: getMessages(d.actions),
+          impressions: parseInt(d.impressions || 0, 10)
+        }))
+      };
+
+      const {
+        rawBillingBalance, spendCap, amountSpent, amountDue,
+        currentBalance, hasReliableBalance, balanceSource, isPrepayAccount,
+      } = calculateMetaBalance(account);
+
+      const todayMetric = dailyInsights.length > 0 ? dailyInsights[dailyInsights.length - 1] : null;
+      const spentToday = todayMetric ? parseFloat(todayMetric.spend || 0) : 0;
+      const spentThisMonth = monthInsights ? parseFloat(monthInsights.spend || 0) : 0;
+      const daysToAverage = Math.min(dailyInsights.length, 7);
+      const sum7d = dailyInsights.slice(-daysToAverage).reduce((sum, day) => sum + parseFloat(day.spend || 0), 0);
+      const avgDailySpend7d = daysToAverage > 0 ? sum7d / daysToAverage : 0;
+      const estimatedDaysRemaining = hasReliableBalance && avgDailySpend7d > 0
+        ? Math.max(0, currentBalance / avgDailySpend7d) : 0;
+
+      const formattedBalance = {
+        accountId: actId,
+        clientName: account.name,
+        currentBalance,
+        creditLimit: spendCap > 0 ? spendCap : 0,
+        amountSpent,
+        rawBillingBalance,
+        amountDue,
+        spentToday,
+        spentThisMonth,
+        avgDailySpend7d,
+        estimatedDaysRemaining,
+        hasReliableBalance,
+        balanceSource,
+        isPrepayAccount,
+      };
+
+      accs.push(formattedAccount);
+      bals.push(formattedBalance);
+      camps = camps.concat(formattedCampaigns);
+    });
+
+    // Manter a ordem original
+    const accountOrder = activeRawAccounts.map(a => a.id);
+    accs.sort((a, b) => accountOrder.indexOf(a.id) - accountOrder.indexOf(b.id));
+    bals.sort((a, b) => accountOrder.indexOf(a.accountId) - accountOrder.indexOf(b.accountId));
+
+    return { accounts: accs, balances: bals, campaigns: camps };
+  }, [accountQueries, activeRawAccounts]);
+
+  const loading = !hasToken ? false : loadingAccounts || accountQueries.some(q => q.isLoading);
+  const error = !hasToken ? 'Nenhum token Meta encontrado. Conecte sua conta em Configurações.' : 
+                accountsError?.message || accountQueries.find(q => q.error)?.error?.message || null;
 
   const activeAccounts = useMemo(() => accounts.filter(a => a.status === 'active'), [accounts]);
 
@@ -291,10 +228,9 @@ export function MetaAdsProvider({ children }) {
     }, { spend: 0, messages: 0, impressions: 0 });
   }, [activeAccounts]);
 
-  const refreshData = useCallback(() => {
-    clearMetaGetCache();
-    return loadMetaData({ force: true });
-  }, [loadMetaData]);
+  const refreshData = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: ['meta'] });
+  }, [queryClient]);
 
   const value = useMemo(() => ({
     accounts,

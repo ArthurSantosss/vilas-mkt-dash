@@ -69,6 +69,13 @@ const LEAD_ACTION_TYPES = [
 
 const ENGAGEMENT_ACTION_TYPES = ['post_engagement', 'page_engagement'];
 
+const IG_PROFILE_VISIT_ACTION_TYPES = [
+  'onsite_conversion.ig_profile_visit_total',
+  'ig_profile_visit',
+  'omni_profile_visit',
+  'profile_visit',
+];
+
 const OBJECTIVE_OPTIONS = [
   { id: 'messages', label: 'Mensagens' },
   { id: 'clicks', label: 'Cliques no link' },
@@ -86,6 +93,7 @@ function aggregateCampaignMetrics(campaigns = []) {
     acc.clicks += parseInt(insight?.inline_link_clicks || 0, 10);
     acc.leads += getActionValueMulti(actions, LEAD_ACTION_TYPES);
     acc.engagements += getActionValueMulti(actions, ENGAGEMENT_ACTION_TYPES);
+    acc.igProfileVisits += getActionValueMulti(actions, IG_PROFILE_VISIT_ACTION_TYPES);
 
     return acc;
   }, {
@@ -95,6 +103,7 @@ function aggregateCampaignMetrics(campaigns = []) {
     clicks: 0,
     leads: 0,
     engagements: 0,
+    igProfileVisits: 0,
   });
 
   return {
@@ -223,6 +232,7 @@ function getExportCacheKey(reportData) {
     leads: reportData.leads,
     clicks: reportData.clicks,
     engagements: reportData.engagements,
+    igProfileVisits: reportData.igProfileVisits,
     agencyLogoB64: reportData.agencyLogoB64?.slice(0, 64),
     metaLogoB64: reportData.metaLogoB64?.slice(0, 64),
   });
@@ -375,9 +385,14 @@ export default function ReportVisual() {
       let clicks = 0;
       let leads = 0;
       let engagements = 0;
+      let igProfileVisits = 0;
+      let prevIgProfileVisits = 0;
       let costPerLead = 0;
       let costPerEngagement = 0;
       let prevSpend = 0;
+      let prevImpressions = 0;
+      let prevReach = 0;
+      let prevClicks = 0;
       let prevLeads = 0;
       let prevEngagements = 0;
       let prevCostPerLead = 0;
@@ -409,11 +424,16 @@ export default function ReportVisual() {
         clicks = currentSummary.clicks;
         leads = currentSummary.leads;
         engagements = currentSummary.engagements;
+        igProfileVisits = currentSummary.igProfileVisits;
         costPerLead = currentSummary.costPerLead;
         costPerEngagement = currentSummary.costPerEngagement;
         prevSpend = previousSummary.spend;
+        prevImpressions = previousSummary.impressions;
+        prevReach = previousSummary.reach;
+        prevClicks = previousSummary.clicks;
         prevLeads = previousSummary.leads;
         prevEngagements = previousSummary.engagements;
+        prevIgProfileVisits = previousSummary.igProfileVisits;
         prevCostPerLead = previousSummary.costPerLead;
         prevCostPerEngagement = previousSummary.costPerEngagement;
         selectedCampaignNames = selectedCampaigns.map(campaign => campaign.name);
@@ -437,10 +457,15 @@ export default function ReportVisual() {
         reach = parseInt(insights.reach || 0, 10);
         clicks = parseInt(insights.inline_link_clicks || 0, 10);
         prevSpend = parseFloat(prevInsights?.spend || 0);
+        prevImpressions = parseInt(prevInsights?.impressions || 0, 10);
+        prevReach = parseInt(prevInsights?.reach || 0, 10);
+        prevClicks = parseInt(prevInsights?.inline_link_clicks || 0, 10);
         leads = getActionValueMulti(actions, LEAD_ACTION_TYPES);
         prevLeads = getActionValueMulti(prevActions, LEAD_ACTION_TYPES);
         engagements = getActionValueMulti(actions, ENGAGEMENT_ACTION_TYPES);
         prevEngagements = getActionValueMulti(prevActions, ENGAGEMENT_ACTION_TYPES);
+        igProfileVisits = getActionValueMulti(actions, IG_PROFILE_VISIT_ACTION_TYPES);
+        prevIgProfileVisits = getActionValueMulti(prevActions, IG_PROFILE_VISIT_ACTION_TYPES);
         costPerLead = leads > 0 ? spend / leads : 0;
         prevCostPerLead = prevLeads > 0 ? prevSpend / prevLeads : 0;
         costPerEngagement = engagements > 0 ? spend / engagements : 0;
@@ -450,13 +475,17 @@ export default function ReportVisual() {
 
       const costPerClick = clicks > 0 ? spend / clicks : 0;
       const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+      const prevCtr = prevImpressions > 0 ? (prevClicks / prevImpressions) * 100 : 0;
 
       const diffs = {
         spend: calcDiff(spend, prevSpend),
+        reach: calcDiff(reach, prevReach),
         leads: calcDiff(leads, prevLeads),
+        ctr: calcDiff(ctr, prevCtr),
         costPerLead: calcDiff(costPerLead, prevCostPerLead),
         engagements: calcDiff(engagements, prevEngagements),
         costPerEngagement: calcDiff(costPerEngagement, prevCostPerEngagement),
+        igProfileVisits: calcDiff(igProfileVisits, prevIgProfileVisits),
       };
 
       // Daily series: leads, clicks, engagements from the same campaign fetch
@@ -508,7 +537,7 @@ export default function ReportVisual() {
         filteredCampaignCount: hasCampaignFilter ? selectedCampaignIds.length : 0,
         period: periodDates,
         objective: selectedObjective,
-        spend, impressions, reach, clicks, leads, engagements,
+        spend, impressions, reach, clicks, leads, engagements, igProfileVisits,
         costPerLead, costPerEngagement, costPerClick, ctr,
         diffs,
         dailyLeads, dailyClicks, dailyEngagements,

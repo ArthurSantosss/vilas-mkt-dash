@@ -1,3 +1,5 @@
+/* global process */
+
 const META_API_BASE = 'https://graph.facebook.com/v22.0';
 
 const LEAD_ACTION_TYPES = [
@@ -7,6 +9,13 @@ const LEAD_ACTION_TYPES = [
 ];
 
 const ENGAGEMENT_ACTION_TYPES = ['post_engagement', 'page_engagement'];
+
+const IG_PROFILE_VISIT_ACTION_TYPES = [
+  'onsite_conversion.ig_profile_visit_total',
+  'ig_profile_visit',
+  'omni_profile_visit',
+  'profile_visit',
+];
 
 function getActionValue(actions, actionType) {
   if (!actions || !Array.isArray(actions)) return 0;
@@ -115,7 +124,7 @@ async function fetchCampaignsWithInsights(accountId, range, token) {
 
 async function fetchCampaignDailyInsights(campaignId, range, token) {
   const data = await metaGet(`/${campaignId}/insights`, {
-    fields: 'spend,impressions,actions',
+    fields: 'spend,impressions,inline_link_clicks,actions',
     time_increment: 1,
     time_range: timeRangeParam(range),
   }, token);
@@ -123,7 +132,7 @@ async function fetchCampaignDailyInsights(campaignId, range, token) {
 }
 
 function aggregateCampaigns(campaigns) {
-  const sum = { spend: 0, impressions: 0, reach: 0, clicks: 0, leads: 0, engagements: 0 };
+  const sum = { spend: 0, impressions: 0, reach: 0, clicks: 0, leads: 0, engagements: 0, igProfileVisits: 0 };
   for (const c of campaigns) {
     const ins = c.insights?.data?.[0];
     if (!ins) continue;
@@ -134,6 +143,7 @@ function aggregateCampaigns(campaigns) {
     sum.clicks += parseInt(ins.inline_link_clicks || 0, 10);
     sum.leads += getActionValueMulti(actions, LEAD_ACTION_TYPES);
     sum.engagements += getActionValueMulti(actions, ENGAGEMENT_ACTION_TYPES);
+    sum.igProfileVisits += getActionValueMulti(actions, IG_PROFILE_VISIT_ACTION_TYPES);
   }
   return sum;
 }
@@ -185,7 +195,11 @@ async function fetchShare(shareId, supabaseUrl, supabaseAnonKey) {
 
 async function fetchClientLogo(accountId, supabaseUrl, supabaseAnonKey) {
   try {
-    const url = `${supabaseUrl}/rest/v1/app_preferences?key=eq.client_logos&select=value`;
+    const email = (process.env.VITE_AUTH_EMAIL || '').trim().toLowerCase();
+    const prefixedKey = email ? `${email}_client_logos` : '';
+    const keysToTry = prefixedKey ? [prefixedKey, 'client_logos'] : ['client_logos'];
+    const inParam = keysToTry.map(k => encodeURIComponent(k)).join(',');
+    const url = `${supabaseUrl}/rest/v1/app_preferences?select=key,value&key=in.(${inParam})`;
     const res = await fetch(url, {
       method: 'GET',
       headers: {
@@ -195,8 +209,12 @@ async function fetchClientLogo(accountId, supabaseUrl, supabaseAnonKey) {
     });
     if (!res.ok) return null;
     const data = await res.json();
-    const logosMap = data?.[0]?.value || {};
-    return logosMap[accountId] || null;
+    if (Array.isArray(data) && data.length > 0) {
+      const found = data.find(row => row.key === prefixedKey) || data[0];
+      const logosMap = found?.value || {};
+      return logosMap[accountId] || null;
+    }
+    return null;
   } catch (err) {
     console.error('[public-report API] Error fetching client logo:', err);
     return null;
@@ -277,6 +295,7 @@ export default async function handler(req, res) {
         clicks: parseInt(insights.inline_link_clicks || 0, 10),
         leads: getActionValueMulti(actions, LEAD_ACTION_TYPES),
         engagements: getActionValueMulti(actions, ENGAGEMENT_ACTION_TYPES),
+        igProfileVisits: getActionValueMulti(actions, IG_PROFILE_VISIT_ACTION_TYPES),
       };
       prevMetrics = {
         spend: parseFloat(prevInsights?.spend || 0),
@@ -285,6 +304,7 @@ export default async function handler(req, res) {
         clicks: parseInt(prevInsights?.inline_link_clicks || 0, 10),
         leads: getActionValueMulti(prevActions, LEAD_ACTION_TYPES),
         engagements: getActionValueMulti(prevActions, ENGAGEMENT_ACTION_TYPES),
+        igProfileVisits: getActionValueMulti(prevActions, IG_PROFILE_VISIT_ACTION_TYPES),
       };
       campaignsForDaily = allCampaigns;
     }
@@ -296,6 +316,7 @@ export default async function handler(req, res) {
 
     const prevCostPerLead = prevMetrics.leads > 0 ? prevMetrics.spend / prevMetrics.leads : 0;
     const prevCostPerEngagement = prevMetrics.engagements > 0 ? prevMetrics.spend / prevMetrics.engagements : 0;
+    const prevCtr = prevMetrics.impressions > 0 ? (prevMetrics.clicks / prevMetrics.impressions) * 100 : 0;
 
     let dailyLeads = [];
     let dailyClicks = [];
@@ -345,10 +366,13 @@ export default async function handler(req, res) {
       costPerLead, costPerEngagement, costPerClick, ctr,
       diffs: {
         spend: calcDiff(metrics.spend, prevMetrics.spend),
+        reach: calcDiff(metrics.reach, prevMetrics.reach),
         leads: calcDiff(metrics.leads, prevMetrics.leads),
+        ctr: calcDiff(ctr, prevCtr),
         costPerLead: calcDiff(costPerLead, prevCostPerLead),
         engagements: calcDiff(metrics.engagements, prevMetrics.engagements),
         costPerEngagement: calcDiff(costPerEngagement, prevCostPerEngagement),
+        igProfileVisits: calcDiff(metrics.igProfileVisits, prevMetrics.igProfileVisits),
       },
       dailyLeads, dailyClicks, dailyEngagements,
     });

@@ -18,7 +18,7 @@ export default function Dashboard() {
     loading: metaLoading,
     selectedPeriod,
     setSelectedPeriod,
-    loadMetaData,
+    refreshData,
   } = useMetaAds();
   const { alerts, markAsRead, markAllAsRead } = useAlerts();
   const [paymentMethods, setPaymentMethods] = useState(() => readSavedPaymentMethods());
@@ -26,7 +26,7 @@ export default function Dashboard() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await loadMetaData({ force: true });
+    await refreshData();
     setRefreshing(false);
   };
 

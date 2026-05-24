@@ -1,5 +1,7 @@
 /* global process */
 
+import { isAuthenticatedRequest } from '../_auth.js';
+
 const META_API_BASE = 'https://graph.facebook.com/v22.0';
 
 function parseMoneyFromCents(value) {
@@ -113,6 +115,10 @@ async function fetchPaymentMethods(supabaseUrl, supabaseKey) {
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  if (!isAuthenticatedRequest(req)) {
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
   const metaToken = process.env.META_ACCESS_TOKEN || process.env.VITE_META_ACCESS_TOKEN;

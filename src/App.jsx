@@ -1,5 +1,6 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './contexts/AuthContext';
 import PrivateRoute from './components/PrivateRoute';
 import AppLayout from './layout/AppLayout';
@@ -7,6 +8,16 @@ import { MetaAdsProvider } from './contexts/MetaAdsContext';
 import { AgencyProvider } from './contexts/AgencyContext';
 import { AlertsProvider } from './contexts/AlertsContext';
 import { PreferencesProvider } from './contexts/PreferencesContext';
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      retry: 2,
+      staleTime: 5 * 60 * 1000, // 5 minutos de cache em memória
+    },
+  },
+});
 
 // Code-split: cada rota carrega seu bundle sob demanda
 const LoginPage = lazy(() => import('./modules/login'));
@@ -55,8 +66,9 @@ function ProtectedAppShell() {
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <AuthProvider>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <AuthProvider>
         <Suspense fallback={<PageLoader />}>
           <Routes>
             {/* Public routes */}
@@ -81,7 +93,8 @@ export default function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>
-      </AuthProvider>
-    </BrowserRouter>
+        </AuthProvider>
+      </BrowserRouter>
+    </QueryClientProvider>
   );
 }
