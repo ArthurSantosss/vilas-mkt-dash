@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useMetaAds } from '../../contexts/MetaAdsContext';
+import { useGoogleAds } from '../../contexts/GoogleAdsContext';
 import { useAgency } from '../../contexts/AgencyContext';
 import { formatCurrency, formatNumber } from '../../shared/utils/format';
 import {
@@ -7,6 +8,7 @@ import {
   fetchAgeBreakdown, fetchGenderBreakdown,
   fetchAccountInsights, fetchCampaignsWithInsights
 } from '../../services/metaApi';
+import { fetchGoogleAdsAccountOverview } from '../../services/googleAdsApi';
 import {
   BarChart, Bar, AreaChart, Area, PieChart, Pie, Cell,
   XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend
@@ -207,8 +209,14 @@ function resolveCurrentRange(period) {
       start.setDate(start.getDate() - 1);
       end.setDate(end.getDate() - 1);
       break;
+    case 'today_yesterday':
+      start.setDate(start.getDate() - 1);
+      break;
     case '7d':
       start.setDate(start.getDate() - 6);
+      break;
+    case '14d':
+      start.setDate(start.getDate() - 13);
       break;
     case '30d':
       start.setDate(start.getDate() - 29);
@@ -216,6 +224,11 @@ function resolveCurrentRange(period) {
     case 'month':
       start.setDate(1);
       break;
+    case 'last_month': {
+      const previousMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      const previousMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
+      return { start: previousMonthStart, end: previousMonthEnd };
+    }
     default:
       start.setDate(start.getDate() - 6);
       break;
@@ -248,29 +261,35 @@ export default function DetailedView() {
     campaigns: metaCampaigns,
     loading: metaLoading,
     refreshData: metaRefreshData,
+    selectedPeriod: metaSelectedPeriod,
     setSelectedPeriod: metaSetPeriod,
   } = useMetaAds();
+  const {
+    accounts: googleAccounts,
+    campaigns: googleCampaigns,
+    loading: googleLoading,
+    refreshData: googleRefreshData,
+    selectedPeriod: googleSelectedPeriod,
+    setSelectedPeriod: googleSetPeriod,
+  } = useGoogleAds();
   const { agencies, accountAgencies } = useAgency();
 
-  const [platform] = useState('meta');
+  const [platform, setPlatform] = useState('meta');
   const [selectedAgency, setSelectedAgency] = useState('all');
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [selectedCampaignId, setSelectedCampaignId] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
 
-
-  // Period — synced with context, shared PeriodSelector component drives this
-  const [currentPeriod, setCurrentPeriod] = useState('30d');
-
   // Breakdown data (fetched on demand for selected account/campaign)
   const [breakdowns, setBreakdowns] = useState({ regions: [], platforms: [], placements: [], video: null, ages: [], genders: [] });
   const [loadingBreakdowns, setLoadingBreakdowns] = useState(false);
   const [previousPeriodMetrics, setPreviousPeriodMetrics] = useState(null);
 
-  const allAccounts = metaAccounts;
-  const allCampaigns = metaCampaigns;
-  const loading = metaLoading;
+  const currentPeriod = platform === 'meta' ? metaSelectedPeriod : googleSelectedPeriod;
+  const allAccounts = platform === 'meta' ? metaAccounts : googleAccounts;
+  const allCampaigns = platform === 'meta' ? metaCampaigns : googleCampaigns;
+  const loading = platform === 'meta' ? metaLoading : googleLoading;
 
   // Filter accounts by agency (same logic as Meta Ads overview)
   const accounts = useMemo(() => {
@@ -343,9 +362,11 @@ export default function DetailedView() {
     return account.dailyMetrics.map(d => ({
       ...d,
       dateLabel: new Date(d.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
-      conversas: d.messages || getMessagesFromActions(d.actions) || 0,
+      conversas: platform === 'meta'
+        ? (d.messages || getMessagesFromActions(d.actions) || 0)
+        : (d.conversions || d.messages || 0),
     }));
-  }, [account]);
+  }, [account, platform]);
 
   // ── Spend diff vs yesterday ──
   useEffect(() => {
@@ -363,6 +384,38 @@ export default function DetailedView() {
           startDate: toYMD(prevStart),
           endDate: toYMD(prevEnd),
         };
+
+        if (platform === 'google') {
+          const overview = await fetchGoogleAdsAccountOverview(
+            selectedAccountId,
+            prevPeriod,
+            account?.loginCustomerId
+          );
+          const prevCampaign = selectedCampaignId
+            ? (overview.campaigns || []).find(c => c.id === selectedCampaignId)
+            : null;
+          const metrics = prevCampaign?.metrics || overview.totals || {};
+          const spend = metrics.spend || 0;
+          const conversions = metrics.conversions || 0;
+
+          if (!cancelled) {
+            setPreviousPeriodMetrics({
+              spend,
+              messages: conversions,
+              costPerMessage: conversions > 0 ? (metrics.costPerConversion || spend / conversions) : 0,
+              impressions: metrics.impressions || 0,
+              reach: 0,
+              cpm: metrics.cpm || 0,
+              frequency: 0,
+              ctr: metrics.ctr || 0,
+              conversions,
+              costPerConversion: metrics.costPerConversion || 0,
+              plays: 0,
+              avgWatchTime: 0,
+            });
+          }
+          return;
+        }
 
         if (selectedCampaignId) {
           const [prevCampaigns, prevVideoDataRaw] = await Promise.all([
@@ -415,17 +468,17 @@ export default function DetailedView() {
 
     loadPreviousPeriod();
     return () => { cancelled = true; };
-  }, [currentPeriod, selectedAccountId, selectedCampaignId]);
+  }, [account?.loginCustomerId, currentPeriod, platform, selectedAccountId, selectedCampaignId]);
 
   // ── Local campaign analysis (Diagnóstico & Sugestões) ──
   useEffect(() => {
-    if (!selectedCampaignId || !metaCampaigns?.length) {
+    if (!selectedCampaignId || !allCampaigns?.length) {
       setAnalysisResult(null);
       return;
     }
-    const campList = Array.isArray(metaCampaigns)
-      ? metaCampaigns
-      : (metaCampaigns[selectedAccountId] || []);
+    const campList = Array.isArray(allCampaigns)
+      ? allCampaigns
+      : (allCampaigns[selectedAccountId] || []);
     const camp = campList.find(c => c.id === selectedCampaignId);
     if (!camp) { setAnalysisResult(null); return; }
 
@@ -433,15 +486,15 @@ export default function DetailedView() {
     const result = analyzeLocal({
       spend: parseFloat(m.spend || 0),
       impressions: parseInt(m.impressions || 0, 10),
-      messages: parseInt(m.messages || 0, 10),
+      messages: parseInt(m.messages || m.conversions || 0, 10),
       cpc: parseFloat(m.cpc || 0),
       cpm: parseFloat(m.cpm || 0),
       ctr: parseFloat(m.ctr || 0),
       frequency: parseFloat(m.frequency || 0),
-      costPerMessage: parseFloat(m.costPerMessage || 0),
+      costPerMessage: parseFloat(m.costPerMessage || m.costPerConversion || 0),
     });
     setAnalysisResult(result);
-  }, [selectedCampaignId, metaCampaigns, selectedAccountId]);
+  }, [allCampaigns, selectedCampaignId, selectedAccountId]);
 
 
   // ── Breakdown chart data ──
@@ -566,6 +619,7 @@ export default function DetailedView() {
   useEffect(() => {
     if (!selectedAccountId || platform !== 'meta') {
       setBreakdowns({ regions: [], platforms: [], placements: [], video: null, ages: [], genders: [] });
+      setLoadingBreakdowns(false);
       return;
     }
 
@@ -610,17 +664,29 @@ export default function DetailedView() {
   // ═══════════════════════════════════════════════════════
 
   const handlePeriodChange = (period) => {
-    setCurrentPeriod(period);
-    if (platform === 'meta') metaSetPeriod(period);
+    metaSetPeriod(period);
+    googleSetPeriod(period);
   };
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      if (platform === 'meta') await metaRefreshData?.();
+      if (platform === 'meta') {
+        await metaRefreshData?.();
+      } else {
+        await googleRefreshData?.();
+      }
     } catch { /* refresh errors are silently ignored */ } finally {
       setIsRefreshing(false);
     }
+  };
+
+  const handlePlatformChange = (nextPlatform) => {
+    setPlatform(nextPlatform);
+    setSelectedAgency('all');
+    setSelectedAccountId('');
+    setSelectedCampaignId('');
+    setPreviousPeriodMetrics(null);
   };
 
   const handleSelectAccount = (accountId) => {
@@ -656,6 +722,8 @@ export default function DetailedView() {
 
         {/* Selectors */}
         <div className="relative mt-5 grid grid-cols-1 min-[560px]:grid-cols-2 sm:flex sm:flex-wrap items-end justify-center gap-3 sm:gap-5">
+
+
           {agencies.length > 0 && (
             <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px]">
               <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Agência</label>
@@ -676,7 +744,7 @@ export default function DetailedView() {
             <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Conta</label>
             <select value={selectedAccountId} onChange={e => handleSelectAccount(e.target.value)}
               className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer">
-              <option value="">Selecione uma conta</option>
+              <option value="">Selecione uma conta Meta</option>
               {accounts.map(a => <option key={a.id} value={a.id}>{a.clientName}</option>)}
             </select>
           </div>
@@ -727,7 +795,7 @@ export default function DetailedView() {
             <div className="absolute inset-0 rounded-xl bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
           </button>
 
-          {loadingBreakdowns && (
+          {platform === 'meta' && loadingBreakdowns && (
             <span className="text-xs text-text-secondary flex items-center gap-1">
               <RefreshCw size={12} className="animate-spin" /> Carregando detalhes...
             </span>

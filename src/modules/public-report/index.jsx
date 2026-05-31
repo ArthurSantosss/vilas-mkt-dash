@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Navigate, useParams } from 'react-router-dom';
-import { Loader2, AlertCircle, RefreshCw } from 'lucide-react';
+import { Loader2, AlertCircle, RefreshCw, Target } from 'lucide-react';
 import { supabase } from '../../services/supabase';
 import {
   fetchAccountInsights,
@@ -21,6 +21,12 @@ const LEAD_ACTION_TYPES = [
 const ENGAGEMENT_ACTION_TYPES = ['post_engagement', 'page_engagement'];
 const SHARE_BASE_URL = (import.meta.env.VITE_PUBLIC_SHARE_BASE_URL || '').trim();
 const META_LOGO_SOURCES = ['/meta-ads-logo.png', '/logometa.png'];
+
+const OBJECTIVE_OPTIONS = [
+  { id: 'messages', label: 'Mensagens' },
+  { id: 'clicks', label: 'Cliques no link' },
+  { id: 'engagements', label: 'Engajamento' },
+];
 
 function normalizeHost(hostname) {
   return (hostname || '').replace(/^www\./, '').toLowerCase();
@@ -240,6 +246,10 @@ async function fetchReportInBrowser(shareId, selectedPeriod) {
   const previousCostPerEngagement = previousMetrics.engagements > 0
     ? previousMetrics.spend / previousMetrics.engagements
     : 0;
+  const previousCostPerClick = previousMetrics.clicks > 0 ? previousMetrics.spend / previousMetrics.clicks : 0;
+  const previousCtr = previousMetrics.impressions > 0
+    ? (previousMetrics.clicks / previousMetrics.impressions) * 100
+    : 0;
 
   let dailyLeads = [];
   let dailyClicks = [];
@@ -304,8 +314,12 @@ async function fetchReportInBrowser(shareId, selectedPeriod) {
     ctr,
     diffs: {
       spend: calcDiff(metrics.spend, previousMetrics.spend),
+      reach: calcDiff(metrics.reach, previousMetrics.reach),
+      clicks: calcDiff(metrics.clicks, previousMetrics.clicks),
       leads: calcDiff(metrics.leads, previousMetrics.leads),
+      ctr: calcDiff(ctr, previousCtr),
       costPerLead: calcDiff(costPerLead, previousCostPerLead),
+      costPerClick: calcDiff(costPerClick, previousCostPerClick),
       engagements: calcDiff(metrics.engagements, previousMetrics.engagements),
       costPerEngagement: calcDiff(costPerEngagement, previousCostPerEngagement),
     },
@@ -334,6 +348,8 @@ export default function PublicReport({ shareKey: shareKeyProp = null }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [selectedObjective, setSelectedObjective] = useState('messages');
+  const [objectiveTouched, setObjectiveTouched] = useState(false);
 
   const agencyType = data?.agency === 'tag' ? 'tag' : 'vilasmkt';
   const agencyLabel = agencyType === 'tag' ? 'Grupo Tag' : 'Vilas Growth Marketing';
@@ -365,13 +381,16 @@ export default function PublicReport({ shareKey: shareKeyProp = null }) {
       }
 
       setData(report);
+      if (!objectiveTouched && report.objective) {
+        setSelectedObjective(report.objective);
+      }
     } catch (err) {
       setError(`Erro ao carregar relatório: ${err.message}`);
       setData(null);
     } finally {
       setLoading(false);
     }
-  }, [shareKey, selectedPeriod]);
+  }, [shareKey, selectedPeriod, objectiveTouched]);
 
   useEffect(() => {
     fetchReport();
@@ -388,7 +407,41 @@ export default function PublicReport({ shareKey: shareKeyProp = null }) {
               Relatório atualizado em tempo real. Selecione o período abaixo.
             </p>
           </div>
-          <div className="flex items-end gap-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="w-full sm:w-auto">
+              <label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-text-secondary">
+                <Target size={12} className="text-primary-light" />
+                Objetivo
+              </label>
+              <div
+                role="tablist"
+                aria-label="Selecionar objetivo"
+                className="inline-flex h-[42px] items-center rounded-xl border border-border bg-surface p-1"
+              >
+                {OBJECTIVE_OPTIONS.map(opt => {
+                  const active = selectedObjective === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => {
+                        setSelectedObjective(opt.id);
+                        setObjectiveTouched(true);
+                      }}
+                      className={`h-full rounded-lg px-3 text-xs font-semibold transition sm:text-sm ${
+                        active
+                          ? 'bg-primary/15 text-primary-light shadow-sm'
+                          : 'text-text-secondary hover:text-text-primary'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             <div className="z-50 w-full sm:w-[260px]">
               <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-text-secondary">Período</label>
               <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} className="w-full" />
@@ -440,7 +493,7 @@ export default function PublicReport({ shareKey: shareKeyProp = null }) {
               clientLogoSrc={data.clientLogoUrl}
               agencyLabel={agencyLabel}
               showAccountName={false}
-              objective={data.objective || 'messages'}
+              objective={selectedObjective}
               withBarChart
             />
           </div>

@@ -316,6 +316,7 @@ export default async function handler(req, res) {
 
     const prevCostPerLead = prevMetrics.leads > 0 ? prevMetrics.spend / prevMetrics.leads : 0;
     const prevCostPerEngagement = prevMetrics.engagements > 0 ? prevMetrics.spend / prevMetrics.engagements : 0;
+    const prevCostPerClick = prevMetrics.clicks > 0 ? prevMetrics.spend / prevMetrics.clicks : 0;
     const prevCtr = prevMetrics.impressions > 0 ? (prevMetrics.clicks / prevMetrics.impressions) * 100 : 0;
 
     let dailyLeads = [];
@@ -367,9 +368,11 @@ export default async function handler(req, res) {
       diffs: {
         spend: calcDiff(metrics.spend, prevMetrics.spend),
         reach: calcDiff(metrics.reach, prevMetrics.reach),
+        clicks: calcDiff(metrics.clicks, prevMetrics.clicks),
         leads: calcDiff(metrics.leads, prevMetrics.leads),
         ctr: calcDiff(ctr, prevCtr),
         costPerLead: calcDiff(costPerLead, prevCostPerLead),
+        costPerClick: calcDiff(costPerClick, prevCostPerClick),
         engagements: calcDiff(metrics.engagements, prevMetrics.engagements),
         costPerEngagement: calcDiff(costPerEngagement, prevCostPerEngagement),
         igProfileVisits: calcDiff(metrics.igProfileVisits, prevMetrics.igProfileVisits),

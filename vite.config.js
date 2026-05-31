@@ -1,19 +1,66 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import https from 'https'
+import http from 'http'
+
+// Plugin simples para simular as Serverless Functions da Vercel localmente no Vite
+const vercelApiMockPlugin = () => ({
+  name: 'vercel-api-mock',
+  configureServer(server) {
+    server.middlewares.use(async (req, res, next) => {
+      if (!req.url.startsWith('/api/')) return next()
+      
+      try {
+        const urlObj = new URL(req.url, `http://${req.headers.host}`)
+        const targetUrl = urlObj.searchParams.get('url')
+        if (!targetUrl) {
+          res.statusCode = 400
+          return res.end(JSON.stringify({ error: 'url obrigatoria' }))
+        }
+
+        const client = targetUrl.startsWith('https') ? https : http
+        client.get(targetUrl, {
+          headers: {
+            'Accept': 'image/*,*/*;q=0.8',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          }
+        }, (proxyRes) => {
+          if (proxyRes.statusCode !== 200) {
+            res.statusCode = proxyRes.statusCode
+            return res.end(JSON.stringify({ error: 'Falha no fetch local' }))
+          }
+
+          const contentType = proxyRes.headers['content-type'] || 'image/png'
+          const chunks = []
+          proxyRes.on('data', chunk => chunks.push(chunk))
+          proxyRes.on('end', () => {
+            const buffer = Buffer.concat(chunks)
+            if (req.url.startsWith('/api/logo-base64')) {
+              const base64 = buffer.toString('base64')
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ dataUrl: `data:${contentType};base64,${base64}` }))
+            } else {
+              res.setHeader('Content-Type', contentType)
+              res.end(buffer)
+            }
+          })
+        }).on('error', err => {
+          res.statusCode = 500
+          res.end(JSON.stringify({ error: err.message }))
+        })
+      } catch (err) {
+        res.statusCode = 500
+        res.end(JSON.stringify({ error: err.message }))
+      }
+    })
+  }
+})
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), vercelApiMockPlugin()],
   esbuild: {
     drop: ['console', 'debugger'],
-  },
-  server: {
-    proxy: {
-      '/api': {
-        target: 'http://localhost:3000', // Vercel Dev server or local express if needed
-        changeOrigin: true,
-      }
-    }
   },
   build: {
     target: 'es2020',

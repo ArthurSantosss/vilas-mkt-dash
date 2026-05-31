@@ -5,6 +5,7 @@ import { AuthProvider } from './contexts/AuthContext';
 import PrivateRoute from './components/PrivateRoute';
 import AppLayout from './layout/AppLayout';
 import { MetaAdsProvider } from './contexts/MetaAdsContext';
+import { GoogleAdsProvider } from './contexts/GoogleAdsContext';
 import { AgencyProvider } from './contexts/AgencyContext';
 import { AlertsProvider } from './contexts/AlertsContext';
 import { PreferencesProvider } from './contexts/PreferencesContext';
@@ -54,9 +55,11 @@ function ProtectedAppShell() {
       <PreferencesProvider>
         <AgencyProvider>
           <MetaAdsProvider>
-            <AlertsProvider>
-              <AppLayout />
-            </AlertsProvider>
+            <GoogleAdsProvider>
+              <AlertsProvider>
+                <AppLayout />
+              </AlertsProvider>
+            </GoogleAdsProvider>
           </MetaAdsProvider>
         </AgencyProvider>
       </PreferencesProvider>

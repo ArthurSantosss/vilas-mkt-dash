@@ -16,6 +16,8 @@ const CLOUD_KEYS = [
   'meta_ad_accounts',
   'disabled_ad_accounts',
   'meta_user_info',
+  'google_ads_accounts',
+  'google_ads_connection',
   'client_logos',
   AUTO_ALERTS_STORAGE_KEY,
 ];

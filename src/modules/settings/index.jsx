@@ -7,11 +7,31 @@ import { useAgency } from '../../contexts/AgencyContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { calculateMetaBalance } from '../../shared/utils/metaBalance';
 import { isCreditCardPaymentMethod, readSavedPaymentMethods, getAccountPaymentMethod } from '../../shared/utils/paymentMethod';
+import {
+  consumeGoogleAdsFlashError,
+  disconnectGoogleAds,
+  formatGoogleCustomerId,
+  isGoogleAdsConfigured,
+  loadStoredGoogleAdsAccounts,
+  loadStoredGoogleAdsConnection,
+  startGoogleAdsOAuth,
+  syncGoogleAdsAccounts,
+} from '../../services/googleAdsApi';
 
 function FacebookIcon({ className = 'w-5 h-5' }) {
   return (
     <svg viewBox="0 0 24 24" className={`${className} fill-[#1877F2]`}>
       <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
+    </svg>
+  );
+}
+
+function GoogleAdsIcon({ className = 'w-5 h-5' }) {
+  return (
+    <svg viewBox="0 0 64 64" className={className} aria-hidden="true">
+      <path fill="#4285F4" d="M19.8 12.6c4.2 0 7.7 2.8 8.9 6.6l15.3 27.6c1.8 3.2.6 7.3-2.6 9.1-3.2 1.8-7.3.6-9.1-2.6L17 25.8c-1.8-3.2-.6-7.3 2.6-9.1z" />
+      <path fill="#34A853" d="M44.7 53.9c-3.7 0-6.8-3-6.8-6.8s3-6.8 6.8-6.8 6.8 3 6.8 6.8-3.1 6.8-6.8 6.8z" />
+      <path fill="#FBBC04" d="M21.3 10.1c5.1 0 9.3 4.1 9.3 9.3s-4.1 9.3-9.3 9.3S12 24.6 12 19.4s4.2-9.3 9.3-9.3z" />
     </svg>
   );
 }
@@ -148,10 +168,18 @@ export default function Settings() {
   const [error, setError] = useState(null);
 
   const [paymentMethods, setPaymentMethods] = useState(() => readSavedPaymentMethods());
+  const [googleConnection, setGoogleConnection] = useState(() => loadStoredGoogleAdsConnection());
+  const [googleAccounts, setGoogleAccounts] = useState(() => loadStoredGoogleAdsAccounts());
+  const [loadingGoogle, setLoadingGoogle] = useState(false);
 
   const [disabledAccounts, setDisabledAccounts] = useState(() => {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.DISABLED_ACCOUNTS)) || []; } catch { return []; }
   });
+
+  const refreshGoogleState = useCallback(() => {
+    setGoogleConnection(loadStoredGoogleAdsConnection());
+    setGoogleAccounts(loadStoredGoogleAdsAccounts());
+  }, []);
 
   useEffect(() => {
     const appId = import.meta.env.VITE_META_APP_ID;
@@ -170,6 +198,13 @@ export default function Settings() {
       .catch((err) => console.warn('[Settings] Falha ao carregar Facebook SDK:', err));
 
     return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const flashError = consumeGoogleAdsFlashError();
+    if (flashError) {
+      setError(flashError);
+    }
   }, []);
 
   const fetchMetaAccounts = useCallback(async (token) => {
@@ -207,6 +242,26 @@ export default function Settings() {
     }
   }, [fetchMetaAccounts, metaAccounts.length, metaToken]);
 
+  const fetchGoogleAccounts = useCallback(async () => {
+    try {
+      setLoadingGoogle(true);
+      setError(null);
+      await syncGoogleAdsAccounts();
+      refreshGoogleState();
+    } catch (err) {
+      console.error('Erro ao buscar contas Google Ads:', err);
+      setError(err.message);
+    } finally {
+      setLoadingGoogle(false);
+    }
+  }, [refreshGoogleState]);
+
+  useEffect(() => {
+    if (googleConnection && googleAccounts.length === 0) {
+      fetchGoogleAccounts();
+    }
+  }, [fetchGoogleAccounts, googleAccounts.length, googleConnection]);
+
   useEffect(() => {
     const syncPaymentMethods = () => setPaymentMethods(readSavedPaymentMethods());
     const handleLocalStorageMapUpdated = (event) => {
@@ -214,15 +269,18 @@ export default function Settings() {
         setPaymentMethods(event.detail.value || {});
       }
     };
+    const handleGoogleAdsUpdated = () => refreshGoogleState();
     window.addEventListener('storage', syncPaymentMethods);
     window.addEventListener('focus', syncPaymentMethods);
     window.addEventListener('local-storage-map-updated', handleLocalStorageMapUpdated);
+    window.addEventListener('google-ads-updated', handleGoogleAdsUpdated);
     return () => {
       window.removeEventListener('storage', syncPaymentMethods);
       window.removeEventListener('focus', syncPaymentMethods);
       window.removeEventListener('local-storage-map-updated', handleLocalStorageMapUpdated);
+      window.removeEventListener('google-ads-updated', handleGoogleAdsUpdated);
     };
-  }, []);
+  }, [refreshGoogleState]);
 
   const handleConnectMeta = async () => {
     setError(null);
@@ -286,6 +344,31 @@ export default function Settings() {
     localStorage.removeItem(STORAGE_KEYS.META_USER);
     localStorage.removeItem(STORAGE_KEYS.META_ACCOUNTS);
     window.dispatchEvent(new CustomEvent('local-storage-map-updated'));
+  };
+
+  const handleConnectGoogleAds = () => {
+    setError(null);
+
+    if (!isGoogleAdsConfigured()) {
+      setError('Defina VITE_GOOGLE_ADS_CLIENT_ID no frontend e GOOGLE_ADS_* no servidor para conectar o Google Ads.');
+      return;
+    }
+
+    startGoogleAdsOAuth();
+  };
+
+  const handleDisconnectGoogleAds = async () => {
+    try {
+      setLoadingGoogle(true);
+      setError(null);
+      await disconnectGoogleAds();
+      refreshGoogleState();
+    } catch (err) {
+      console.error('Erro ao desconectar Google Ads:', err);
+      setError(err.message);
+    } finally {
+      setLoadingGoogle(false);
+    }
   };
 
   const toggleAccount = (accountId) => {
@@ -356,7 +439,7 @@ export default function Settings() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 gap-6">
         <div className="bg-surface rounded-xl border border-border overflow-hidden">
           <div className="bg-gradient-to-r from-[#1877F2]/5 to-transparent px-4 py-4 sm:px-6 border-b border-border/50 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">
@@ -416,6 +499,8 @@ export default function Settings() {
             )}
           </div>
         </div>
+
+
       </div>
 
       {metaAccounts.length > 0 && (
@@ -515,6 +600,8 @@ export default function Settings() {
           )}
         </div>
       )}
+
+
 
       <div className="bg-surface rounded-xl border border-border overflow-hidden">
         <div className="px-6 py-4 border-b border-border/50 flex items-center gap-3">

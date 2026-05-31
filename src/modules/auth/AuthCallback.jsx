@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../services/supabase';
+import {
+    completeGoogleAdsOAuthCallback,
+    isGoogleAdsOAuthCallback,
+    setGoogleAdsFlashError,
+} from '../../services/googleAdsApi';
 
 export default function AuthCallback() {
     const navigate = useNavigate();
@@ -26,6 +31,28 @@ export default function AuthCallback() {
 
         const handleCallback = async () => {
             try {
+                const searchParams = new URLSearchParams(window.location.search);
+                const googleAdsState = String(searchParams.get('state') || '');
+
+                if (googleAdsState.startsWith('google_ads:')) {
+                    const oauthError = searchParams.get('error');
+                    if (oauthError) {
+                        setGoogleAdsFlashError(searchParams.get('error_description') || oauthError);
+                        navigate('/configuracoes', { replace: true });
+                        return;
+                    }
+
+                    if (isGoogleAdsOAuthCallback(searchParams)) {
+                        try {
+                            await completeGoogleAdsOAuthCallback(searchParams);
+                        } catch (err) {
+                            setGoogleAdsFlashError(err.message || 'Falha ao conectar Google Ads.');
+                        }
+                        navigate('/configuracoes', { replace: true });
+                        return;
+                    }
+                }
+
                 const { data: { session }, error } = await supabase.auth.getSession();
 
                 if (error) {

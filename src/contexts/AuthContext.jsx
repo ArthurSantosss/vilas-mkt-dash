@@ -17,6 +17,8 @@ const BACKUP_KEYS = [
   'meta_ad_accounts',
   'disabled_ad_accounts',
   'meta_user_info',
+  'google_ads_accounts',
+  'google_ads_connection',
   'client_logos',
   'auto_alerts_thresholds'
 ];

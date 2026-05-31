@@ -114,6 +114,7 @@ export function MetaAdsProvider({ children }) {
           const campInsights = camp.insights?.data?.[0];
           formattedCampaigns.push({
             id: camp.id,
+            platform: 'meta',
             accountId: actId,
             name: camp.name,
             status: camp.status.toLowerCase(),
@@ -141,6 +142,7 @@ export function MetaAdsProvider({ children }) {
 
       const formattedAccount = {
         id: actId,
+        platform: 'meta',
         clientId: `client_${actId}`,
         clientName: account.name,
         accountId: account.account_id,
@@ -182,6 +184,7 @@ export function MetaAdsProvider({ children }) {
         ? Math.max(0, currentBalance / avgDailySpend7d) : 0;
 
       const formattedBalance = {
+        platform: 'meta',
         accountId: actId,
         clientName: account.name,
         currentBalance,

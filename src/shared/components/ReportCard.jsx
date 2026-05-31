@@ -4,6 +4,8 @@ import {
 } from 'recharts';
 import { formatCurrency, formatNumber, formatPercent } from '../utils/format';
 
+const REPORT_FONT_FAMILY = 'Inter, system-ui, -apple-system, sans-serif';
+
 function getImageSources(src) {
   if (Array.isArray(src)) return src.filter(Boolean);
   return src ? [src] : [];
@@ -63,6 +65,7 @@ function ClientLogo({ src }) {
     <img
       src={currentSrc}
       alt="Client Logo"
+      data-export-role="client-logo"
       onError={() => setIndex((prev) => (prev + 1 < sources.length ? prev + 1 : sources.length))}
       style={{ height: 42, width: 'auto', maxWidth: 180, objectFit: 'contain', display: 'block' }}
     />
@@ -156,8 +159,8 @@ const OBJECTIVES = {
     dailyTitle: 'Cliques por dia',
     buildKpis: (d) => [
       { label: 'Investimento',   value: formatCurrency(d.spend),        color: '#22D3EE', icon: 'wallet',  diffKey: 'spend', intent: 'neutral' },
-      { label: 'Cliques',        value: formatNumber(d.clicks),         color: '#38BDF8', icon: 'click' },
-      { label: 'Custo / Clique', value: formatCurrency(d.costPerClick), color: '#F59E0B', icon: 'coins' },
+      { label: 'Cliques',        value: formatNumber(d.clicks),         color: '#38BDF8', icon: 'click',   diffKey: 'clicks',       intent: 'higher_is_better' },
+      { label: 'Custo / Clique', value: formatCurrency(d.costPerClick), color: '#F59E0B', icon: 'coins',   diffKey: 'costPerClick', intent: 'lower_is_better' },
       { label: 'CTR',            value: formatPercent(d.ctr),           color: '#34D399', icon: 'percent', diffKey: 'ctr',   intent: 'higher_is_better' },
       { label: 'Alcance',        value: formatNumber(d.reach),          color: '#A78BFA', icon: 'users',   diffKey: 'reach', intent: 'higher_is_better' },
     ],
@@ -239,12 +242,14 @@ function ReportKPI({ label, value, color = '#38BDF8', icon, delta }) {
         fontSize: 10, color: '#94A3B8', marginBottom: 6, fontWeight: 700,
         letterSpacing: '0.12em', textTransform: 'uppercase',
         position: 'relative',
+        whiteSpace: 'nowrap',
+        lineHeight: 1.1,
       }}>{label}</div>
 
       {/* Value */}
       <div style={{
         fontSize: 24, fontWeight: 800, color: '#fff',
-        fontFamily: 'Outfit, Inter, system-ui, sans-serif',
+        fontFamily: REPORT_FONT_FAMILY,
         lineHeight: 1.15,
         fontVariantNumeric: 'tabular-nums',
         textShadow: `0 0 22px ${color}40`,
@@ -258,7 +263,7 @@ function ReportKPI({ label, value, color = '#38BDF8', icon, delta }) {
           display: 'inline-flex', alignItems: 'center', gap: 4,
           padding: '3px 9px', borderRadius: 999,
           fontSize: 10, fontWeight: 800, letterSpacing: '0.02em',
-          fontFamily: 'Outfit, Inter, system-ui, sans-serif',
+          fontFamily: REPORT_FONT_FAMILY,
           fontVariantNumeric: 'tabular-nums',
           color: delta.color,
           background: delta.bg,
@@ -344,7 +349,7 @@ function SVGFunnel({ stages }) {
             <text x={cx} y={midY - 9} textAnchor="middle" fill="#F1F5F9" fontSize={11} fontWeight={800} letterSpacing="0.14em" filter="url(#text-shadow)">
               {s.label.toUpperCase()}
             </text>
-            <text x={cx} y={midY + 20} textAnchor="middle" fill="#ffffff" fontSize={24} fontWeight={800} fontFamily="Outfit, Inter, system-ui, sans-serif" filter="url(#text-shadow)" style={{ fontVariantNumeric: 'tabular-nums' }}>
+            <text x={cx} y={midY + 20} textAnchor="middle" fill="#ffffff" fontSize={24} fontWeight={800} fontFamily={REPORT_FONT_FAMILY} filter="url(#text-shadow)" style={{ fontVariantNumeric: 'tabular-nums' }}>
               {formatCompact(s.value)}
             </text>
           </g>
@@ -413,7 +418,7 @@ const ReportCard = function ReportCard({
         `,
         borderRadius: 20,
         padding: 32,
-        fontFamily: 'Outfit, Inter, system-ui, -apple-system, sans-serif',
+        fontFamily: REPORT_FONT_FAMILY,
         color: '#fff',
         border: '1px solid rgba(255, 255, 255, 0.04)',
         boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255,255,255,0.03)',
@@ -549,7 +554,7 @@ const ReportCard = function ReportCard({
                   border: '1px solid rgba(167,139,250,0.28)',
                   fontSize: 10, fontWeight: 800, color: '#C4B5FD',
                   letterSpacing: '0.04em',
-                  fontFamily: 'Outfit, Inter, system-ui, sans-serif',
+                  fontFamily: REPORT_FONT_FAMILY,
                   fontVariantNumeric: 'tabular-nums',
                 }}>
                   <span style={{ width: 10, height: 1.5, background: '#A78BFA', display: 'inline-block' }} />
@@ -620,7 +625,7 @@ const ReportCard = function ReportCard({
                       fontSize: 10,
                       fontWeight: 800,
                       offset: 7,
-                      fontFamily: 'Outfit, Inter, system-ui, sans-serif',
+                      fontFamily: REPORT_FONT_FAMILY,
                     }}
                     isAnimationActive={false}
                   />

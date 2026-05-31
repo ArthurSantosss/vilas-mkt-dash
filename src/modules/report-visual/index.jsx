@@ -3,7 +3,7 @@ import { supabase } from '../../services/supabase';
 import { useMetaAds } from '../../contexts/MetaAdsContext';
 import { useAgency } from '../../contexts/AgencyContext';
 import { formatCurrency } from '../../shared/utils/format';
-import { Image, Download, Loader2, Sparkles, Copy, Check, Send, CheckCircle2, Target, Link2, X, Trash2 } from 'lucide-react';
+import { Image, Download, Loader2, Sparkles, Copy, Check, Send, CheckCircle2, Target, Link2, X, Trash2, Pencil } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import PeriodSelector from '../../shared/components/PeriodSelector';
 import ReportCard from '../../shared/components/ReportCard';
@@ -152,25 +152,265 @@ function resolveAssetUrl(url) {
   return new URL(url, window.location.origin).toString();
 }
 
+function buildImageProxyUrl(url) {
+  if (!url) return null;
+  return `/api/image-proxy?url=${encodeURIComponent(url)}`;
+}
+
+function readClientLogos() {
+  try {
+    return JSON.parse(localStorage.getItem('client_logos')) || {};
+  } catch {
+    return {};
+  }
+}
+
 function getAgencyLogoSources(agencyType) {
   return agencyType === 'tag' ? ['/logotag.png'] : ['/favicon.png'];
 }
 
+async function fetchImageBlob(url) {
+  if (!url) return null;
+  if (url.startsWith('data:')) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      return blob.type.startsWith('image/') ? blob : null;
+    } catch {
+      return null;
+    }
+  }
+
+  const fullUrl = resolveAssetUrl(url);
+  const candidates = [fullUrl];
+
+  if (typeof window !== 'undefined') {
+    try {
+      const targetUrl = new URL(fullUrl, window.location.origin);
+      if (targetUrl.origin !== window.location.origin) {
+        candidates.push(buildImageProxyUrl(fullUrl));
+      }
+    } catch {
+      candidates.push(buildImageProxyUrl(fullUrl));
+    }
+  }
+
+  for (const candidate of candidates.filter(Boolean)) {
+    try {
+      const res = await fetch(candidate);
+      if (!res.ok) continue;
+
+      const blob = await res.blob();
+      if (!blob.type.startsWith('image/')) continue;
+      return blob;
+    } catch {
+      // Try the next candidate source.
+    }
+  }
+
+  console.warn('[fetchImageBlob] não foi possível baixar a imagem:', url);
+  return null;
+}
+
+async function blobToDataUrl(blob) {
+  if (!blob) return null;
+
+  return await new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(typeof reader.result === 'string' ? reader.result : null);
+    reader.readAsDataURL(blob);
+  });
+}
+
 async function toBase64(url) {
+  if (!url) return null;
+  if (url.startsWith('data:')) return url;
+
+  const blob = await fetchImageBlob(url);
+  if (!blob) {
+    console.warn('[toBase64] não foi possível converter a imagem:', url);
+    return null;
+  }
+
+  return blobToDataUrl(blob);
+}
+
+async function loadImageElement(src, { crossOrigin } = {}) {
+  if (!src || typeof window === 'undefined') return null;
+
+  return await new Promise((resolve, reject) => {
+    const img = new window.Image();
+    img.decoding = 'async';
+    if (crossOrigin) img.crossOrigin = crossOrigin;
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+function rasterizeImageToPngDataUrl(img) {
+  const rawWidth = img.naturalWidth || img.width || 256;
+  const rawHeight = img.naturalHeight || img.height || 256;
+  const maxEdge = 512;
+  const scale = Math.min(1, maxEdge / Math.max(rawWidth, rawHeight));
+  const width = Math.max(1, Math.round(rawWidth * scale));
+  const height = Math.max(1, Math.round(rawHeight * scale));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  ctx.drawImage(img, 0, 0, width, height);
+  return canvas.toDataURL('image/png');
+}
+
+async function fetchDataUrlFromServer(url) {
+  if (!url || typeof window === 'undefined') return null;
   try {
-    const fullUrl = resolveAssetUrl(url);
-    const res = await fetch(fullUrl);
-    if (!res.ok) { console.warn('[toBase64] fetch failed for', url, res.status); return null; }
-    const blob = await res.blob();
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        console.log('[toBase64]', url, '→', reader.result?.substring(0, 40), '...', blob.size, 'bytes');
-        resolve(reader.result);
-      };
-      reader.readAsDataURL(blob);
-    });
-  } catch (e) { console.warn('[toBase64] error for', url, e); return null; }
+    const res = await fetch(`/api/logo-base64?url=${encodeURIComponent(url)}`);
+    if (!res.ok) {
+      console.warn(`[client-logo] /api/logo-base64 retornou HTTP ${res.status}`);
+      return null;
+    }
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      console.warn('[client-logo] /api/logo-base64 não retornou JSON (provavelmente rota não deployada)');
+      return null;
+    }
+    const json = await res.json();
+    return typeof json.dataUrl === 'string' ? json.dataUrl : null;
+  } catch (err) {
+    console.warn('[client-logo] erro chamando /api/logo-base64:', err?.message || err);
+    return null;
+  }
+}
+
+async function toRasterizedPngDataUrl(url) {
+  if (!url) return null;
+  if (typeof window === 'undefined') return null;
+
+  // Se já for data URL, rasterizamos diretamente no cliente para evitar enviar mega-strings pro servidor (414 URI Too Long)
+  if (url.startsWith('data:')) {
+    try {
+      const img = await loadImageElement(url);
+      if (img) {
+        const rasterized = rasterizeImageToPngDataUrl(img);
+        if (rasterized) return rasterized;
+      }
+    } catch (e) {
+      console.warn('[client-logo] falha ao rasterizar data URL original', e);
+    }
+    // Se a rasterização falhar, retorna a original (se for PNG/JPEG) ou arrisca
+    return url;
+  }
+
+  // Estratégia 0: pedir pro servidor converter e devolver data URL pronta.
+  // Funciona em produção (Vercel) e dispensa CORS no browser. Em dev sem
+  // `vercel dev`, retorna null e a gente cai pras outras estratégias.
+  const serverDataUrl = await fetchDataUrlFromServer(url);
+  if (serverDataUrl) {
+    try {
+      const img = await loadImageElement(serverDataUrl);
+      if (img) {
+        const rasterized = rasterizeImageToPngDataUrl(img);
+        if (rasterized) {
+          console.info('[client-logo] convertida via /api/logo-base64 e rasterizada (formato seguro garantido)');
+          return rasterized;
+        }
+      }
+    } catch (err) {
+      console.warn('[client-logo] Falha ao rasterizar imagem recebida do servidor', err);
+    }
+    // Fallback: retorna o dataUrl bruto (pode falhar no html-to-image se for SVG não tratado ou formato incompatível).
+    console.info('[client-logo] convertida via /api/logo-base64 (sem rasterização)');
+    return serverDataUrl;
+  }
+
+  const resolved = url.startsWith('data:') ? url : resolveAssetUrl(url);
+  const isCrossOrigin = (() => {
+    if (resolved.startsWith('data:')) return false;
+    try {
+      return new URL(resolved, window.location.origin).origin !== window.location.origin;
+    } catch {
+      return true;
+    }
+  })();
+
+  // Estratégia 1: carregar a imagem direto com crossOrigin="anonymous". Funciona
+  // quando o servidor (ex: Supabase Storage) já manda CORS. Bem mais rápido que
+  // ir buscar blob via fetch e mexer com object URL.
+  const attempts = [];
+  if (resolved.startsWith('data:')) {
+    attempts.push({ src: resolved });
+  } else if (isCrossOrigin) {
+    attempts.push({ src: resolved, crossOrigin: 'anonymous' });
+    const proxied = buildImageProxyUrl(resolved);
+    if (proxied) attempts.push({ src: proxied });
+  } else {
+    attempts.push({ src: resolved });
+  }
+
+  for (const attempt of attempts) {
+    const label = attempt.crossOrigin
+      ? `direct+CORS (${attempt.src.slice(0, 60)})`
+      : attempt.src.startsWith('/api/image-proxy')
+        ? `proxy (${attempt.src.slice(0, 60)})`
+        : `direct (${attempt.src.slice(0, 60)})`;
+    try {
+      const img = await loadImageElement(attempt.src, { crossOrigin: attempt.crossOrigin });
+      if (!img) {
+        console.warn(`[client-logo] estratégia ${label} → img nula`);
+        continue;
+      }
+      try {
+        const dataUrl = rasterizeImageToPngDataUrl(img);
+        if (dataUrl) {
+          console.info(`[client-logo] rasterizada via ${label}`);
+          return dataUrl;
+        }
+        console.warn(`[client-logo] estratégia ${label} → toDataURL retornou null`);
+      } catch (rasterError) {
+        console.warn(`[client-logo] estratégia ${label} → canvas tainted ou erro:`, rasterError?.message);
+      }
+    } catch (loadError) {
+      console.warn(`[client-logo] estratégia ${label} → img não carregou:`, loadError?.message || loadError);
+    }
+  }
+
+  // Último recurso: o caminho antigo via fetchImageBlob (proxy + blob URL).
+  // Mantém compatibilidade para casos onde nem CORS direto nem img-via-proxy
+  // funcionaram, mas o blob pode ser baixado e desenhado.
+  const blob = await fetchImageBlob(url);
+  if (!blob) return null;
+
+  if (blob.type === 'image/png') {
+    return blobToDataUrl(blob);
+  }
+
+  const isSafeRasterBlob = ['image/jpeg', 'image/jpg', 'image/webp'].includes(blob.type);
+  const objectUrl = URL.createObjectURL(blob);
+
+  try {
+    const img = await loadImageElement(objectUrl);
+    if (!img) return isSafeRasterBlob ? blobToDataUrl(blob) : null;
+    const dataUrl = rasterizeImageToPngDataUrl(img);
+    return dataUrl || (isSafeRasterBlob ? blobToDataUrl(blob) : null);
+  } catch {
+    return isSafeRasterBlob ? blobToDataUrl(blob) : null;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function getSafeExportLogoSrc(_url, rasterizedDataUrl) {
+  // Para o export precisamos de uma data URL inline. Se a rasterização falhou,
+  // omitimos a logo do PNG — é melhor que travar o html-to-image com uma img
+  // remota / via proxy que pode quebrar dentro do clone.
+  return rasterizedDataUrl || null;
 }
 
 async function toBase64FromSources(sources) {
@@ -181,36 +421,132 @@ async function toBase64FromSources(sources) {
   return null;
 }
 
+async function fetchImageAsDataUrl(src) {
+  if (!src) return null;
+  if (src.startsWith('data:')) return src;
+
+  try {
+    const res = await fetch(resolveAssetUrl(src));
+    if (!res.ok) return null;
+
+    const blob = await res.blob();
+    if (!blob.type.startsWith('image/')) return null;
+
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(typeof reader.result === 'string' ? reader.result : null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
 async function waitForImages(container) {
   if (!container) return;
   const images = Array.from(container.querySelectorAll('img'));
 
-  await Promise.all(images.map((img) => {
-    if (img.complete && img.naturalWidth > 0) return Promise.resolve();
-    return new Promise((resolve) => {
-      const done = () => resolve();
-      img.addEventListener('load', done, { once: true });
-      img.addEventListener('error', done, { once: true });
-    });
-  }));
+  await Promise.all(images.map((img) => new Promise((resolve) => {
+    if (!img.currentSrc && !img.src) {
+      resolve();
+      return;
+    }
 
-  await Promise.all(images.map((img) => (
-    typeof img.decode === 'function'
-      ? img.decode().catch(() => {})
-      : Promise.resolve()
-  )));
+    // complete=true cobre tanto imagem carregada quanto imagem que já falhou antes.
+    if (img.complete) {
+      resolve();
+      return;
+    }
+
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      resolve();
+    };
+
+    const timeoutId = setTimeout(finish, 4000);
+    img.addEventListener('load', finish, { once: true });
+    img.addEventListener('error', finish, { once: true });
+  })));
+
+  await Promise.all(images.map((img) => {
+    if (!img.complete || img.naturalWidth <= 0 || typeof img.decode !== 'function') {
+      return Promise.resolve();
+    }
+
+    return Promise.race([
+      img.decode().catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 1500)),
+    ]);
+  }));
 }
 
-function dataUrlToBlob(dataUrl) {
-  const [header, base64] = dataUrl.split(',');
-  const mimeMatch = header.match(/data:(.*?);base64/);
-  const mime = mimeMatch ? mimeMatch[1] : 'image/png';
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
+function preloadImage(src) {
+  if (!src || typeof window === 'undefined') return Promise.resolve();
+
+  return new Promise((resolve) => {
+    const img = new window.Image();
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      resolve();
+    };
+
+    img.onload = done;
+    img.onerror = done;
+    img.decoding = 'async';
+    img.src = src;
+
+    const timeoutId = setTimeout(done, 4000);
+
+    if (img.complete) done();
+  });
+}
+
+async function prepareExportImages(container) {
+  if (!container) return;
+
+  const images = Array.from(container.querySelectorAll('img'));
+
+  await Promise.all(images.map(async (img) => {
+    const src = img.currentSrc || img.getAttribute('src') || '';
+    if (!src || src.startsWith('data:')) return;
+
+    const dataUrl = await Promise.race([
+      fetchImageAsDataUrl(src),
+      new Promise((resolve) => setTimeout(() => resolve(null), 5000)),
+    ]);
+
+    if (dataUrl) {
+      img.src = dataUrl;
+      return;
+    }
+
+    // Evita que uma imagem externa quebrada faça o html-to-image abortar o PNG inteiro.
+    img.removeAttribute('src');
+    img.style.visibility = 'hidden';
+  }));
+}
+
+function scrubBrokenImages(container) {
+  if (!container) return;
+  const images = Array.from(container.querySelectorAll('img'));
+  for (const img of images) {
+    const src = img.currentSrc || img.getAttribute('src') || '';
+    // Nunca remove data URLs: mesmo que naturalWidth ainda esteja 0 (race
+    // condition logo após setar src), o html-to-image consegue inlinar bem.
+    if (src.startsWith('data:')) continue;
+    const broken = !src || (img.complete && img.naturalWidth === 0);
+    if (broken) {
+      img.removeAttribute('src');
+      img.removeAttribute('srcset');
+      img.style.display = 'none';
+    }
   }
-  return new Blob([bytes], { type: mime });
 }
 
 function withTimeout(promise, timeoutMs, message) {
@@ -218,6 +554,80 @@ function withTimeout(promise, timeoutMs, message) {
     promise,
     new Promise((_, reject) => setTimeout(() => reject(new Error(message)), timeoutMs)),
   ]);
+}
+
+async function renderPngWithFallbacks(node) {
+  // IMPORTANT: cacheBust deve ser sempre false. Quando true o html-to-image
+  // anexa "?<random>" no fim de TODA src — inclusive data URLs — corrompendo
+  // as logos pré-convertidas em base64 e gerando um PNG sem nenhuma imagem.
+  const attempts = [
+    {
+      quality: 1,
+      pixelRatio: 1,
+      backgroundColor: '#0d1520',
+      cacheBust: false,
+      skipFonts: false,
+    },
+    {
+      quality: 1,
+      pixelRatio: 1,
+      backgroundColor: '#0d1520',
+      cacheBust: false,
+      skipFonts: true,
+    },
+    {
+      quality: 0.95,
+      pixelRatio: 1,
+      backgroundColor: '#0d1520',
+      cacheBust: false,
+      skipFonts: true,
+    },
+  ];
+
+  let lastError = null;
+
+  for (let i = 0; i < attempts.length; i++) {
+    const options = attempts[i];
+    try {
+      const result = await withTimeout(
+        toPng(node, options),
+        20000,
+        'A exportação do PNG demorou demais.'
+      );
+      if (i > 0) {
+        console.info(`[report-visual] PNG exportado na tentativa ${i + 1}/${attempts.length} (skipFonts=${options.skipFonts})`);
+      }
+      return result;
+    } catch (error) {
+      lastError = error;
+      console.warn(`[report-visual] tentativa ${i + 1} falhou:`, options, error);
+    }
+  }
+
+  const clientLogo = node.querySelector('img[data-export-role="client-logo"]');
+  if (clientLogo) {
+    const previousDisplay = clientLogo.style.display;
+    clientLogo.style.display = 'none';
+
+    try {
+      for (const options of attempts) {
+        try {
+          return await withTimeout(
+            toPng(node, options),
+            20000,
+            'A exportação do PNG demorou demais.'
+          );
+        } catch (error) {
+          lastError = error;
+          console.warn('[report-visual] fallback sem logo do cliente falhou:', options, error);
+        }
+      }
+    } finally {
+      clientLogo.style.display = previousDisplay;
+    }
+  }
+
+  throw lastError || new Error('Falha ao exportar PNG.');
 }
 
 function getExportCacheKey(reportData) {
@@ -235,6 +645,7 @@ function getExportCacheKey(reportData) {
     igProfileVisits: reportData.igProfileVisits,
     agencyLogoB64: reportData.agencyLogoB64?.slice(0, 64),
     metaLogoB64: reportData.metaLogoB64?.slice(0, 64),
+    clientLogoExportSrc: reportData.clientLogoExportSrc,
   });
 }
 
@@ -243,24 +654,17 @@ export default function ReportVisual() {
   const { agencies, accountAgencies } = useAgency();
   const [selectedAccount, setSelectedAccount] = useState('');
 
-  const clientLogos = useMemo(() => {
-    try {
-      return JSON.parse(localStorage.getItem('client_logos')) || {};
-    } catch {
-      return {};
-    }
-  }, []);
+  const [clientLogos, setClientLogos] = useState(() => readClientLogos());
   const [selectedAgency, setSelectedAgency] = useState('');
   const [selectedObjective, setSelectedObjective] = useState('messages');
   const [selectedCampaignIds, setSelectedCampaignIds] = useState([]);
   const [reportData, setReportData] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [downloading, setDownloading] = useState(false);
-  const [copying, setCopying] = useState(false);
-  const [copied, setCopied] = useState(false);
   const reportRef = useRef(null);
   const previewFrameRef = useRef(null);
-  const exportCacheRef = useRef({ key: '', canvas: null, blob: null });
+  const exportCacheRef = useRef({ key: '', dataUrl: null });
+  const exportImagesReadyRef = useRef(Promise.resolve());
   const [previewScale, setPreviewScale] = useState(1);
 
   // Filter agencies to only vilasmkt and tag
@@ -279,6 +683,18 @@ export default function ReportVisual() {
       }
     }
   }, [allowedAgencyList, selectedAgency, hasAgencies]);
+
+  useEffect(() => {
+    const syncClientLogos = () => setClientLogos(readClientLogos());
+
+    window.addEventListener('storage', syncClientLogos);
+    window.addEventListener('local-storage-map-updated', syncClientLogos);
+
+    return () => {
+      window.removeEventListener('storage', syncClientLogos);
+      window.removeEventListener('local-storage-map-updated', syncClientLogos);
+    };
+  }, []);
 
   const agencyType = useMemo(() => {
     // When __all__ mode, detect agency from account assignment OR account name
@@ -356,6 +772,26 @@ export default function ReportVisual() {
   }, [reportData]);
 
   useEffect(() => {
+    if (!reportData) {
+      exportImagesReadyRef.current = Promise.resolve();
+      return;
+    }
+
+    const imageSources = [
+      reportData.agencyLogoB64,
+      reportData.metaLogoB64,
+      reportData.clientLogoExportSrc,
+    ].filter(Boolean);
+
+    exportImagesReadyRef.current = Promise.all(imageSources.map(preloadImage));
+  }, [
+    reportData,
+    reportData?.agencyLogoB64,
+    reportData?.metaLogoB64,
+    reportData?.clientLogoExportSrc,
+  ]);
+
+  useEffect(() => {
     if (filteredAccounts.length > 0 && !filteredAccounts.find(a => a.id === selectedAccount)) {
       setSelectedAccount(filteredAccounts[0].id);
     }
@@ -397,6 +833,7 @@ export default function ReportVisual() {
       let prevEngagements = 0;
       let prevCostPerLead = 0;
       let prevCostPerEngagement = 0;
+      let prevCostPerClick = 0;
       let campData = [];
       let selectedCampaignNames = [];
 
@@ -436,6 +873,7 @@ export default function ReportVisual() {
         prevIgProfileVisits = previousSummary.igProfileVisits;
         prevCostPerLead = previousSummary.costPerLead;
         prevCostPerEngagement = previousSummary.costPerEngagement;
+        prevCostPerClick = previousSummary.clicks > 0 ? previousSummary.spend / previousSummary.clicks : 0;
         selectedCampaignNames = selectedCampaigns.map(campaign => campaign.name);
       } else {
         const [insights, prevInsights, currentCampaigns] = await Promise.all([
@@ -470,6 +908,7 @@ export default function ReportVisual() {
         prevCostPerLead = prevLeads > 0 ? prevSpend / prevLeads : 0;
         costPerEngagement = engagements > 0 ? spend / engagements : 0;
         prevCostPerEngagement = prevEngagements > 0 ? prevSpend / prevEngagements : 0;
+        prevCostPerClick = prevClicks > 0 ? prevSpend / prevClicks : 0;
         campData = currentCampaigns;
       }
 
@@ -480,9 +919,11 @@ export default function ReportVisual() {
       const diffs = {
         spend: calcDiff(spend, prevSpend),
         reach: calcDiff(reach, prevReach),
+        clicks: calcDiff(clicks, prevClicks),
         leads: calcDiff(leads, prevLeads),
         ctr: calcDiff(ctr, prevCtr),
         costPerLead: calcDiff(costPerLead, prevCostPerLead),
+        costPerClick: calcDiff(costPerClick, prevCostPerClick),
         engagements: calcDiff(engagements, prevEngagements),
         costPerEngagement: calcDiff(costPerEngagement, prevCostPerEngagement),
         igProfileVisits: calcDiff(igProfileVisits, prevIgProfileVisits),
@@ -524,11 +965,26 @@ export default function ReportVisual() {
         (account && clientLogos[account.id]) ||
         null;
 
-      // Convert logos to base64 once, before export
-      const [agencyLogoB64, metaLogoB64] = await Promise.all([
+      // Convert export assets ahead of time so html-to-image doesn't depend on external logo URLs.
+      const [agencyLogoB64, metaLogoB64, clientLogoRasterizedB64] = await Promise.all([
         toBase64FromSources(logoSources),
         toBase64FromSources(META_LOGO_SOURCES),
+        clientLogoUrl
+          ? Promise.race([
+            toRasterizedPngDataUrl(clientLogoUrl),
+            new Promise((resolve) => setTimeout(() => resolve(null), 15000)),
+          ])
+          : Promise.resolve(null),
       ]);
+      const clientLogoExportSrc = getSafeExportLogoSrc(clientLogoUrl, clientLogoRasterizedB64);
+      if (clientLogoUrl) {
+        console.info('[client-logo] URL configurada:', clientLogoUrl);
+        if (!clientLogoRasterizedB64) {
+          console.warn('[client-logo] não pôde ser rasterizada e foi omitida do PNG (preview continua mostrando):', clientLogoUrl);
+        } else {
+          console.info('[client-logo] rasterizada com sucesso, vai entrar no PNG.');
+        }
+      }
 
       setReportData({
         accountName: account?.clientName || 'Conta',
@@ -542,6 +998,7 @@ export default function ReportVisual() {
         diffs,
         dailyLeads, dailyClicks, dailyEngagements,
         agencyLogoB64, metaLogoB64,
+        clientLogoExportSrc,
         clientLogoUrl,
       });
     } catch (err) {
@@ -567,33 +1024,30 @@ export default function ReportVisual() {
     if (!reportRef.current || !reportData) return null;
 
     const cacheKey = getExportCacheKey(reportData);
-    if (exportCacheRef.current.key === cacheKey && exportCacheRef.current.dataUrl && exportCacheRef.current.blob) {
+    if (exportCacheRef.current.key === cacheKey && exportCacheRef.current.dataUrl) {
       return exportCacheRef.current;
     }
 
-    await withTimeout(waitForImages(reportRef.current), 2000, 'As imagens do relatório demoraram demais para carregar.');
-    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await exportImagesReadyRef.current;
+    await waitForImages(reportRef.current);
+    await prepareExportImages(reportRef.current);
+    await waitForImages(reportRef.current);
+    scrubBrokenImages(reportRef.current);
 
-    const opts = {
-      quality: 1,
-      pixelRatio: 1.15,
-      backgroundColor: '#0d1520',
-      cacheBust: false,
-      skipFonts: true,
-    };
+    // Diagnóstico: estado de cada <img> imediatamente antes do toPng.
+    const debugImages = Array.from(reportRef.current.querySelectorAll('img')).map((img) => ({
+      alt: img.alt,
+      srcPrefix: (img.currentSrc || img.src || '').slice(0, 60),
+      complete: img.complete,
+      naturalWidth: img.naturalWidth,
+      naturalHeight: img.naturalHeight,
+      display: img.style.display || getComputedStyle(img).display,
+    }));
+    console.info('[report-visual] imgs no container de export:', debugImages);
 
-    // First call warms up browser image cache inside html-to-image clone
-    await toPng(reportRef.current, opts).catch(() => {});
-    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const dataUrl = await renderPngWithFallbacks(reportRef.current);
 
-    const dataUrl = await withTimeout(
-      toPng(reportRef.current, opts),
-      15000,
-      'A exportação do PNG demorou demais.'
-    );
-    const blob = dataUrlToBlob(dataUrl);
-
-    const asset = { key: cacheKey, dataUrl, blob };
+    const asset = { key: cacheKey, dataUrl };
     exportCacheRef.current = asset;
     return asset;
   }, [reportData]);
@@ -611,34 +1065,11 @@ export default function ReportVisual() {
       link.click();
     } catch (err) {
       console.error('Erro ao exportar PNG:', err);
-      alert(err.message || 'Erro ao gerar PNG. Tente novamente.');
+      console.error('Detalhes:', { name: err?.name, message: err?.message, stack: err?.stack });
+      const detail = err?.message || err?.name || (typeof err === 'string' ? err : '');
+      alert(`Erro ao gerar PNG${detail ? `: ${detail}` : '. Tente novamente.'}`);
     } finally {
       setDownloading(false);
-    }
-  }, [reportData, buildExportAsset]);
-
-  const handleCopy = useCallback(async () => {
-    if (!reportRef.current || !reportData) return;
-    setCopying(true);
-    setCopied(false);
-    try {
-      const asset = await buildExportAsset();
-      if (!asset?.blob) return;
-      if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
-        throw new Error('Seu navegador não suporta copiar imagem diretamente.');
-      }
-
-      await navigator.clipboard.write([
-        new ClipboardItem({ [asset.blob.type]: asset.blob }),
-      ]);
-
-      setCopied(true);
-      setTimeout(() => setCopied(false), 3000);
-    } catch (err) {
-      console.error('Erro ao copiar:', err);
-      alert(err.message || 'Não foi possível copiar. Tente baixar o PNG.');
-    } finally {
-      setCopying(false);
     }
   }, [reportData, buildExportAsset]);
 
@@ -652,6 +1083,15 @@ export default function ReportVisual() {
   const [shareCreating, setShareCreating] = useState(false);
   const [shareError, setShareError] = useState(null);
   const [copiedShareId, setCopiedShareId] = useState(null);
+  const [customSlugInput, setCustomSlugInput] = useState('');
+  const [editingShareId, setEditingShareId] = useState(null);
+  const [editingSlugInput, setEditingSlugInput] = useState('');
+  const [slugSaving, setSlugSaving] = useState(false);
+
+  useEffect(() => {
+    const account = accounts.find(a => a.id === selectedAccount);
+    setCustomSlugInput(slugifyShareLabel(account?.clientName || ''));
+  }, [selectedAccount, accounts]);
 
   const buildShareUrl = useCallback((share) => {
     if (!share) return '';
@@ -696,7 +1136,8 @@ export default function ReportVisual() {
         .join('')
         .slice(0, 14);
 
-      const baseSlug = makePublicSlug(account?.clientName, id);
+      const customSlug = slugifyShareLabel(customSlugInput);
+      const baseSlug = customSlug || makePublicSlug(account?.clientName, id);
       let { error } = await supabase
         .from('shared_reports')
         .insert({
@@ -731,7 +1172,46 @@ export default function ReportVisual() {
     } finally {
       setShareCreating(false);
     }
-  }, [selectedAccount, accounts, user, agencyType, selectedObjective, hasCampaignFilter, selectedCampaignIds, loadShares]);
+  }, [selectedAccount, accounts, user, agencyType, selectedObjective, hasCampaignFilter, selectedCampaignIds, customSlugInput, loadShares]);
+
+  const startEditSlug = useCallback((share) => {
+    setEditingShareId(share.id);
+    setEditingSlugInput(share.public_slug || '');
+    setShareError(null);
+  }, []);
+
+  const cancelEditSlug = useCallback(() => {
+    setEditingShareId(null);
+    setEditingSlugInput('');
+  }, []);
+
+  const handleSaveSlug = useCallback(async (id) => {
+    const newSlug = slugifyShareLabel(editingSlugInput);
+    if (!newSlug) {
+      setShareError('Digite um nome válido (letras, números ou hífens).');
+      return;
+    }
+    setSlugSaving(true);
+    setShareError(null);
+    try {
+      const { error } = await supabase
+        .from('shared_reports')
+        .update({ public_slug: newSlug })
+        .eq('id', id);
+      if (error?.code === '23505') {
+        setShareError('Esse nome já está em uso por outro link. Escolha outro.');
+        return;
+      }
+      if (error) throw error;
+      setShareList(prev => prev.map(s => s.id === id ? { ...s, public_slug: newSlug } : s));
+      setEditingShareId(null);
+      setEditingSlugInput('');
+    } catch (err) {
+      setShareError(`Erro ao renomear: ${err.message}`);
+    } finally {
+      setSlugSaving(false);
+    }
+  }, [editingSlugInput]);
 
   const handleDeleteShare = useCallback(async (id) => {
     if (!confirm('Remover este link? O cliente perderá acesso imediatamente.')) return;
@@ -954,22 +1434,6 @@ export default function ReportVisual() {
             </button>
           )}
 
-          {d && !d.error && (
-            <button
-              onClick={handleCopy}
-              disabled={copying}
-              className={`inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl font-semibold text-sm
-                shadow-sm transition-all duration-300 ease-out
-                ${copied
-                  ? 'bg-emerald-500/20 border border-emerald-400/50 text-emerald-400'
-                  : 'bg-surface border border-primary/40 text-primary-light hover:bg-primary/10 hover:scale-[1.02] active:scale-[0.98]'}
-                disabled:opacity-40`}
-            >
-              {copying ? <Loader2 size={16} className="animate-spin" /> : copied ? <Check size={16} /> : <Copy size={16} />}
-              {copying ? 'Copiando...' : copied ? 'Copiado!' : 'Copiar Relatório'}
-            </button>
-          )}
-
           {selectedAccount && (
             <button
               onClick={() => setShareModalOpen(true)}
@@ -1032,7 +1496,6 @@ export default function ReportVisual() {
                     showAccountName={false}
                     objective={d.objective || selectedObjective}
                     withBarChart
-                    innerRef={reportRef}
                   />
                 </div>
               </div>
@@ -1051,6 +1514,31 @@ export default function ReportVisual() {
         <div className="bg-surface rounded-2xl border border-border p-12 text-center">
           <Image size={48} className="text-text-secondary/20 mx-auto mb-4" />
           <p className="text-text-secondary text-sm">Selecione uma agência, conta, período e clique em "Gerar Relatório"</p>
+        </div>
+      )}
+
+      {d && !d.error && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: 'fixed',
+            left: '-200vw',
+            top: 0,
+            opacity: 0,
+            pointerEvents: 'none',
+          }}
+        >
+          <ReportCard
+            data={d}
+            agencyLogoSrc={d.agencyLogoB64 ? [d.agencyLogoB64] : logoSources}
+            metaLogoSrc={d.metaLogoB64 ? [d.metaLogoB64] : META_LOGO_SOURCES}
+            clientLogoSrc={d.clientLogoExportSrc}
+            agencyLabel={agencyLabel}
+            showAccountName={false}
+            objective={d.objective || selectedObjective}
+            withBarChart
+            innerRef={reportRef}
+          />
         </div>
       )}
 
@@ -1097,6 +1585,27 @@ export default function ReportVisual() {
                 </p>
               </div>
 
+              <div className="mb-3">
+                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-text-secondary">
+                  Nome do link (URL)
+                </label>
+                <div className="flex items-stretch overflow-hidden rounded-xl border border-border bg-bg/40 focus-within:border-emerald-500/40">
+                  <span className="flex items-center px-3 text-xs text-text-secondary border-r border-border bg-bg/50 whitespace-nowrap">
+                    /
+                  </span>
+                  <input
+                    type="text"
+                    value={customSlugInput}
+                    onChange={(e) => setCustomSlugInput(slugifyShareLabel(e.target.value))}
+                    placeholder="nome-do-cliente"
+                    className="flex-1 bg-transparent px-3 py-2 text-sm text-text-primary placeholder:text-text-secondary/60 focus:outline-none"
+                  />
+                </div>
+                <p className="mt-1 text-[11px] text-text-secondary/70">
+                  Apenas letras, números e hífens. Caracteres inválidos são removidos automaticamente.
+                </p>
+              </div>
+
               <button
                 type="button"
                 onClick={handleCreateShare}
@@ -1133,6 +1642,7 @@ export default function ReportVisual() {
                 {!shareLoading && shareList.map((share) => {
                   const url = buildShareUrl(share);
                   const isCopied = copiedShareId === share.id;
+                  const isEditing = editingShareId === share.id;
                   const filterCount = Array.isArray(share.campaign_ids) ? share.campaign_ids.length : 0;
                   const created = new Date(share.created_at).toLocaleString('pt-BR', {
                     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -1143,9 +1653,29 @@ export default function ReportVisual() {
                       className="group flex items-center gap-3 rounded-xl border border-border bg-bg/40 p-3 transition hover:border-primary/30"
                     >
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <code className="truncate text-xs font-medium text-text-primary">{url}</code>
-                        </div>
+                        {isEditing ? (
+                          <div className="flex items-stretch overflow-hidden rounded-lg border border-emerald-500/40 bg-bg/60">
+                            <span className="flex items-center px-2 text-[11px] text-text-secondary border-r border-border bg-bg/60 whitespace-nowrap">
+                              /
+                            </span>
+                            <input
+                              autoFocus
+                              type="text"
+                              value={editingSlugInput}
+                              onChange={(e) => setEditingSlugInput(slugifyShareLabel(e.target.value))}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveSlug(share.id);
+                                if (e.key === 'Escape') cancelEditSlug();
+                              }}
+                              placeholder="nome-do-cliente"
+                              className="flex-1 bg-transparent px-2 py-1 text-xs text-text-primary placeholder:text-text-secondary/60 focus:outline-none"
+                            />
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <code className="truncate text-xs font-medium text-text-primary">{url}</code>
+                          </div>
+                        )}
                         <p className="mt-1 text-[11px] text-text-secondary">
                           {OBJECTIVE_OPTIONS.find(o => o.id === share.objective)?.label || share.objective}
                           {filterCount > 0 ? ` · ${filterCount} campanha(s)` : ' · conta inteira'}
@@ -1153,26 +1683,59 @@ export default function ReportVisual() {
                           criado em {created}
                         </p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => handleCopyShareLink(share.id)}
-                        className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
-                          isCopied
-                            ? 'border-emerald-400/50 bg-emerald-500/15 text-emerald-400'
-                            : 'border-primary/30 bg-primary/10 text-primary-light hover:bg-primary/15'
-                        }`}
-                      >
-                        {isCopied ? <Check size={12} /> : <Copy size={12} />}
-                        {isCopied ? 'Copiado!' : 'Copiar'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteShare(share.id)}
-                        className="rounded-lg p-1.5 text-text-secondary transition hover:bg-danger/15 hover:text-danger"
-                        title="Remover link"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      {isEditing ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveSlug(share.id)}
+                            disabled={slugSaving}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/50 bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-400 transition hover:bg-emerald-500/25 disabled:opacity-40"
+                          >
+                            {slugSaving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                            Salvar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelEditSlug}
+                            disabled={slugSaving}
+                            className="rounded-lg p-1.5 text-text-secondary transition hover:bg-bg/60 hover:text-text-primary disabled:opacity-40"
+                            title="Cancelar"
+                          >
+                            <X size={14} />
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyShareLink(share.id)}
+                            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                              isCopied
+                                ? 'border-emerald-400/50 bg-emerald-500/15 text-emerald-400'
+                                : 'border-primary/30 bg-primary/10 text-primary-light hover:bg-primary/15'
+                            }`}
+                          >
+                            {isCopied ? <Check size={12} /> : <Copy size={12} />}
+                            {isCopied ? 'Copiado!' : 'Copiar'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => startEditSlug(share)}
+                            className="rounded-lg p-1.5 text-text-secondary transition hover:bg-primary/15 hover:text-primary-light"
+                            title="Renomear link"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteShare(share.id)}
+                            className="rounded-lg p-1.5 text-text-secondary transition hover:bg-danger/15 hover:text-danger"
+                            title="Remover link"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </>
+                      )}
                     </div>
                   );
                 })}

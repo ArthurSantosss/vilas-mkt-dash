@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMetaAds } from '../../contexts/MetaAdsContext';
+import { useGoogleAds } from '../../contexts/GoogleAdsContext';
 import { useAlerts } from '../../contexts/AlertsContext';
 import { formatCurrency, formatNumber } from '../../shared/utils/format';
 import { isCreditCardPaymentMethod, readSavedPaymentMethods, getAccountPaymentMethod } from '../../shared/utils/paymentMethod';
@@ -16,18 +17,34 @@ export default function Dashboard() {
     balances: metaBalances,
     campaigns: metaCampaigns,
     loading: metaLoading,
-    selectedPeriod,
-    setSelectedPeriod,
-    refreshData,
+    selectedPeriod: metaSelectedPeriod,
+    setSelectedPeriod: setMetaSelectedPeriod,
+    refreshData: refreshMetaData,
   } = useMetaAds();
+  const {
+    accounts: googleAccounts,
+    campaigns: googleCampaigns,
+    loading: googleLoading,
+    setSelectedPeriod: setGoogleSelectedPeriod,
+    refreshData: refreshGoogleData,
+  } = useGoogleAds();
   const { alerts, markAsRead, markAllAsRead } = useAlerts();
   const [paymentMethods, setPaymentMethods] = useState(() => readSavedPaymentMethods());
   const [refreshing, setRefreshing] = useState(false);
+  const selectedPeriod = metaSelectedPeriod;
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await refreshData();
+    await Promise.all([
+      refreshMetaData(),
+      refreshGoogleData(),
+    ]);
     setRefreshing(false);
+  };
+
+  const handlePeriodChange = (period) => {
+    setMetaSelectedPeriod(period);
+    setGoogleSelectedPeriod(period);
   };
 
   useEffect(() => {
@@ -47,9 +64,24 @@ export default function Dashboard() {
     };
   }, []);
 
-  const activeAccountsData = useMemo(
+  const activeMetaAccounts = useMemo(
     () => metaAccounts.filter(account => account.status === 'active'),
     [metaAccounts]
+  );
+
+  const activeGoogleAccounts = useMemo(
+    () => googleAccounts.filter(account => account.status === 'active'),
+    [googleAccounts]
+  );
+
+  const activeAccountsData = useMemo(
+    () => [...activeMetaAccounts, ...activeGoogleAccounts],
+    [activeMetaAccounts, activeGoogleAccounts]
+  );
+
+  const allCampaigns = useMemo(
+    () => [...metaCampaigns, ...googleCampaigns],
+    [metaCampaigns, googleCampaigns]
   );
 
   const balanceByAccountId = useMemo(
@@ -76,12 +108,12 @@ export default function Dashboard() {
     [activeAccountsData]
   );
 
-  const periodLeads = useMemo(
+  const periodResults = useMemo(
     () => activeAccountsData.reduce((sum, account) => sum + (account.metrics?.messagingConversationsStarted || 0), 0),
     [activeAccountsData]
   );
 
-  const averageCpl = periodLeads > 0 ? periodSpend / periodLeads : 0;
+  const averageResultCost = periodResults > 0 ? periodSpend / periodResults : 0;
 
   const totalBalanceAvailable = useMemo(
     () => readableBalances.reduce((sum, balance) => sum + (balance.currentBalance || 0), 0),
@@ -96,18 +128,18 @@ export default function Dashboard() {
   const estimatedCoverageDays = totalAvgDailySpend > 0 ? totalBalanceAvailable / totalAvgDailySpend : 0;
 
   const activeCampaignCount = useMemo(
-    () => metaCampaigns.filter(campaign => campaign.status === 'active').length,
-    [metaCampaigns]
+    () => allCampaigns.filter(campaign => campaign.status === 'active').length,
+    [allCampaigns]
   );
 
   const campaignsWithSpend = useMemo(
-    () => metaCampaigns.filter(campaign => (campaign.metrics?.spend || 0) > 0).length,
-    [metaCampaigns]
+    () => allCampaigns.filter(campaign => (campaign.metrics?.spend || 0) > 0).length,
+    [allCampaigns]
   );
 
   const campaignsWithoutSpend = useMemo(
-    () => metaCampaigns.filter(campaign => campaign.status === 'active' && (campaign.metrics?.spend || 0) === 0).length,
-    [metaCampaigns]
+    () => allCampaigns.filter(campaign => campaign.status === 'active' && (campaign.metrics?.spend || 0) === 0).length,
+    [allCampaigns]
   );
 
   const highFrequencyCount = useMemo(
@@ -125,13 +157,13 @@ export default function Dashboard() {
       label: 'Campanhas ativas',
       value: formatNumber(activeCampaignCount),
       tone: 'text-text-primary',
-      helper: 'Estrutura atualmente ligada',
+      helper: 'Meta Ads',
     },
     {
       label: 'Campanhas com gasto',
       value: formatNumber(campaignsWithSpend),
       tone: 'text-primary-light',
-      helper: 'Contas realmente entregando',
+      helper: 'Estruturas com entrega no período',
     },
     {
       label: 'Campanhas sem gasto',
@@ -140,16 +172,19 @@ export default function Dashboard() {
       helper: 'Pedem revisão de saldo, aprovação ou orçamento',
     },
     {
-      label: 'Frequência alta',
+      label: 'Frequência alta (Meta)',
       value: formatNumber(highFrequencyCount),
       tone: highFrequencyCount > 0 ? 'text-warning' : 'text-success',
-      helper: 'Possível saturação de público',
+      helper: 'Saturação observada nas campanhas da Meta',
     },
-    {
+    metaBalances.length > 0 ? {
       label: 'Contas com saldo baixo',
       value: formatNumber(lowBalanceCount),
       tone: lowBalanceCount > 0 ? 'text-danger' : 'text-success',
       helper: 'Meta abaixo de R$ 150',
+    } : {
+      label: 'Contas Meta ativas',
+      helper: 'Contas com campanhas ativas',
     },
     {
       label: 'Cobertura estimada de saldo',
@@ -157,7 +192,7 @@ export default function Dashboard() {
       tone: estimatedCoverageDays > 0 && estimatedCoverageDays < 4 ? 'text-warning' : 'text-text-primary',
       helper: 'Baseado na média diária das contas',
     },
-  ]), [activeCampaignCount, campaignsWithSpend, campaignsWithoutSpend, highFrequencyCount, lowBalanceCount, estimatedCoverageDays]);
+  ]), [activeCampaignCount, campaignsWithSpend, campaignsWithoutSpend, highFrequencyCount, lowBalanceCount, estimatedCoverageDays, metaBalances.length, activeGoogleAccounts.length]);
 
   const lowestBalances = useMemo(
     () => readableBalances
@@ -196,7 +231,7 @@ export default function Dashboard() {
           statusTone = 'warning';
         } else if (spend > 0 && leads === 0) {
           priority = 3;
-          statusLabel = 'Sem leads';
+          statusLabel = account.platform === 'google_ads' ? 'Sem conversões' : 'Sem leads';
           statusTone = 'warning';
         } else if (frequency > 3) {
           priority = 2;
@@ -211,6 +246,7 @@ export default function Dashboard() {
         return {
           id: account.id,
           clientName: account.clientName,
+          platform: account.platform,
           spend,
           leads,
           cpl,
@@ -244,15 +280,15 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3 z-50 shrink-0">
-            <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} />
+            <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={handlePeriodChange} />
             <button
               onClick={handleRefresh}
-              disabled={refreshing || metaLoading}
+              disabled={refreshing || metaLoading || googleLoading}
               className="flex items-center justify-center px-4 py-2.5 rounded-xl bg-surface border border-border text-text-secondary hover:text-primary hover:border-primary/30 transition-all disabled:opacity-50"
               title="Atualizar dados"
             >
-              <RefreshCw size={16} className={`mr-2 ${refreshing || metaLoading ? 'animate-spin' : ''}`} />
-              {refreshing || metaLoading ? 'Atualizando...' : 'Atualizar'}
+              <RefreshCw size={16} className={`mr-2 ${refreshing || metaLoading || googleLoading ? 'animate-spin' : ''}`} />
+              {refreshing || metaLoading || googleLoading ? 'Atualizando...' : 'Atualizar'}
             </button>
           </div>
         </div>
@@ -260,16 +296,16 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4">
         <ScrollReveal direction="up" delay={0}>
-          <DashCard icon={Users} label="Contas Ativas" value={formatNumber(activeAccountsData.length)} helper="Contas Meta com entrega habilitada" color="text-info" />
+          <DashCard icon={Users} label="Contas Ativas" value={formatNumber(activeAccountsData.length)} helper={`${activeMetaAccounts.length} Meta`} color="text-info" />
         </ScrollReveal>
         <ScrollReveal direction="up" delay={60}>
-          <DashCard icon={DollarSign} label="Investimento no Período" value={formatCurrency(periodSpend)} helper="Soma real do período selecionado" color="text-primary-light" />
+          <DashCard icon={DollarSign} label="Investimento no Período" value={formatCurrency(periodSpend)} helper="Meta Ads no período selecionado" color="text-primary-light" />
         </ScrollReveal>
         <ScrollReveal direction="up" delay={120}>
-          <DashCard icon={MessageCircle} label="Leads no Período" value={formatNumber(periodLeads)} helper="Conversas iniciadas no Meta Ads" color="text-success" />
+          <DashCard icon={MessageCircle} label="Resultados no Período" value={formatNumber(periodResults)} helper="Conversas do Meta" color="text-success" />
         </ScrollReveal>
         <ScrollReveal direction="up" delay={180}>
-          <DashCard icon={Target} label="CPL Médio" value={averageCpl > 0 ? formatCurrency(averageCpl) : '—'} helper="Custo médio por lead" color={averageCpl > 10 ? 'text-warning' : 'text-primary-light'} />
+          <DashCard icon={Target} label="Custo Médio por Resultado" value={averageResultCost > 0 ? formatCurrency(averageResultCost) : '—'} helper="Custo médio por conversa" color={averageResultCost > 10 ? 'text-warning' : 'text-primary-light'} />
         </ScrollReveal>
         <ScrollReveal direction="up" delay={240}>
           <DashCard
@@ -280,7 +316,7 @@ export default function Dashboard() {
               ? (estimatedCoverageDays > 0
                 ? `${estimatedCoverageDays.toFixed(1)} dias de cobertura em ${readableBalances.length} conta(s)`
                 : `${readableBalances.length} conta(s) com saldo mensurável`)
-              : 'Meta não expõe saldo disponível para as contas atuais'}
+              : 'Disponível apenas para contas Meta com saldo mensurável'}
             color={readableBalances.length === 0 ? 'text-text-primary' : totalBalanceAvailable < 300 ? 'text-warning' : 'text-success'}
           />
         </ScrollReveal>
@@ -311,7 +347,7 @@ export default function Dashboard() {
             </div>
 
             <div className="space-y-3 max-h-[420px] overflow-y-auto">
-              {metaLoading ? (
+              {metaLoading || googleLoading ? (
                 <p className="text-text-secondary text-sm py-6 text-center">Carregando dados...</p>
               ) : activeAlerts.length === 0 ? (
                 <div className="rounded-xl border border-success/20 bg-success/5 p-5 text-center">
@@ -430,8 +466,8 @@ export default function Dashboard() {
                   <tr className="border-b border-border">
                     <th className="text-left px-3 py-2 text-text-secondary font-medium">Conta</th>
                     <th className="text-right px-3 py-2 text-text-secondary font-medium">Gasto</th>
-                    <th className="text-right px-3 py-2 text-text-secondary font-medium">Leads</th>
-                    <th className="text-right px-3 py-2 text-text-secondary font-medium">CPL</th>
+                    <th className="text-right px-3 py-2 text-text-secondary font-medium">Resultados</th>
+                    <th className="text-right px-3 py-2 text-text-secondary font-medium">Custo</th>
                     <th className="text-right px-3 py-2 text-text-secondary font-medium">Saldo</th>
                     <th className="text-right px-3 py-2 text-text-secondary font-medium">Dias</th>
                     <th className="text-center px-3 py-2 text-text-secondary font-medium">Situação</th>
@@ -440,7 +476,14 @@ export default function Dashboard() {
                 <tbody>
                   {focusAccounts.map(account => (
                     <tr key={account.id} className="border-b border-border/50 hover:bg-surface-hover transition-colors">
-                      <td className="px-3 py-3 font-medium text-text-primary">{account.clientName}</td>
+                      <td className="px-3 py-3 font-medium text-text-primary">
+                        <div className="flex items-center gap-2">
+                          <span>{account.clientName}</span>
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full border ${account.platform === 'google_ads' ? 'bg-google/10 text-google border-google/20' : 'bg-meta/10 text-meta border-meta/20'}`}>
+                            {account.platform === 'google_ads' ? 'Google' : 'Meta'}
+                          </span>
+                        </div>
+                      </td>
                       <td className="px-3 py-3 text-right text-text-primary">{formatCurrency(account.spend)}</td>
                       <td className="px-3 py-3 text-right text-text-secondary">{formatNumber(account.leads)}</td>
                       <td className={`px-3 py-3 text-right font-medium ${account.cpl > 10 ? 'text-warning' : 'text-primary-light'}`}>
@@ -466,13 +509,18 @@ export default function Dashboard() {
               {focusAccounts.map(account => (
                 <div key={account.id} className="rounded-xl border border-border/50 bg-bg/20 p-4">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium text-text-primary truncate mr-2">{account.clientName}</span>
+                    <div className="flex items-center gap-2 min-w-0 mr-2">
+                      <span className="text-sm font-medium text-text-primary truncate">{account.clientName}</span>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full border shrink-0 ${account.platform === 'google_ads' ? 'bg-google/10 text-google border-google/20' : 'bg-meta/10 text-meta border-meta/20'}`}>
+                        {account.platform === 'google_ads' ? 'Google' : 'Meta'}
+                      </span>
+                    </div>
                     <StatusBadge tone={account.statusTone} label={account.statusLabel} />
                   </div>
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div><span className="text-text-secondary">Gasto:</span> <span className="text-text-primary font-medium">{formatCurrency(account.spend)}</span></div>
-                    <div><span className="text-text-secondary">Leads:</span> <span className="text-text-primary font-medium">{formatNumber(account.leads)}</span></div>
-                    <div><span className="text-text-secondary">CPL:</span> <span className={`font-medium ${account.cpl > 10 ? 'text-warning' : 'text-primary-light'}`}>{account.cpl > 0 ? formatCurrency(account.cpl) : '—'}</span></div>
+                    <div><span className="text-text-secondary">Resultados:</span> <span className="text-text-primary font-medium">{formatNumber(account.leads)}</span></div>
+                    <div><span className="text-text-secondary">Custo:</span> <span className={`font-medium ${account.cpl > 10 ? 'text-warning' : 'text-primary-light'}`}>{account.cpl > 0 ? formatCurrency(account.cpl) : '—'}</span></div>
                     <div><span className="text-text-secondary">Saldo:</span> <span className={`font-medium ${account.currentBalance === null ? 'text-text-secondary' : account.currentBalance > 0 && account.currentBalance < 50 ? 'text-danger' : account.currentBalance < 150 ? 'text-warning' : 'text-success'}`}>{account.currentBalance === null ? '—' : formatCurrency(account.currentBalance)}</span></div>
                   </div>
                 </div>
