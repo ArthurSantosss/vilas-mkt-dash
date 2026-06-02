@@ -258,9 +258,8 @@ function buildTextGDM(d, options = {}) {
     prev = null,
   } = options;
 
-  const entityLabel = showCampaignName ? 'Campanha' : 'Conta';
   const entitySubject = showCampaignName ? 'A campanha' : 'A conta';
-  const entityLine = d.campaignName ? `📌 ${entityLabel}: ${d.campaignName}\n` : '';
+  const entityLine = (showCampaignName && d.campaignName) ? `📌 Campanha: ${d.campaignName}\n` : '';
   const insightPack = buildGdmInsightPack(d, prev);
   const analysisBlock = insightPack.analysisLines.length > 0
     ? `\n${insightPack.analysisLines.map((line) => `- ${line}`).join('\n')}`
