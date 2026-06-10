@@ -1165,6 +1165,11 @@ export default function MetaAdsOverview() {
         {/* Filters */}
         <div className="relative mt-7 flex flex-col sm:flex-row flex-wrap items-stretch sm:items-end justify-between gap-4 sm:gap-5">
           <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-end gap-3 sm:gap-5 w-full sm:w-auto">
+            <div className="flex flex-col gap-1.5 w-full sm:w-[210px] z-50">
+              <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Período</label>
+              <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} className="w-full" />
+            </div>
+
             {agencies.length > 0 && (
               <div className="flex flex-col gap-1.5 w-full sm:w-[210px]">
                 <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Agência</label>
@@ -1195,10 +1200,6 @@ export default function MetaAdsOverview() {
               </select>
             </div>
 
-            <div className="flex flex-col gap-1.5 w-full sm:w-[210px] z-50">
-              <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Período</label>
-              <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} className="w-full" />
-            </div>
           </div>
 
           <div className="flex items-center gap-3 w-full sm:w-auto">

@@ -98,3 +98,19 @@ export const getPresetLabelById = (id, defaultLabel = 'Personalizado') => {
   const preset = PRESETS.find(p => p.id === id);
   return preset ? preset.label : defaultLabel;
 };
+
+// Resolve um período (preset id ou { type:'custom', startDate, endDate }) para um range concreto.
+export const resolvePeriodRange = (period) => {
+  if (typeof period === 'object' && period?.type === 'custom' && period.startDate && period.endDate) {
+    return { startDate: period.startDate, endDate: period.endDate };
+  }
+  const preset = PRESETS.find(p => p.id === period) || PRESETS.find(p => p.id === '7d');
+  return preset.getRange();
+};
+
+// "dd/mm/aaaa a dd/mm/aaaa" para um período.
+export const formatPeriodLabel = (period) => {
+  const { startDate, endDate } = resolvePeriodRange(period);
+  const fmt = (ymd) => { const [y, m, d] = ymd.split('-'); return `${d}/${m}/${y}`; };
+  return `${fmt(startDate)} a ${fmt(endDate)}`;
+};

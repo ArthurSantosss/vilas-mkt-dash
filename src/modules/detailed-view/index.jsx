@@ -722,7 +722,10 @@ export default function DetailedView() {
 
         {/* Selectors */}
         <div className="relative mt-5 grid grid-cols-1 min-[560px]:grid-cols-2 sm:flex sm:flex-wrap items-end justify-center gap-3 sm:gap-5">
-
+          <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px] z-50">
+            <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Período</label>
+            <PeriodSelector selectedPeriod={currentPeriod} onPeriodChange={handlePeriodChange} className="w-full" />
+          </div>
 
           {agencies.length > 0 && (
             <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px]">
@@ -773,10 +776,6 @@ export default function DetailedView() {
             </div>
           </div>
 
-          <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px] z-50">
-            <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Período</label>
-            <PeriodSelector selectedPeriod={currentPeriod} onPeriodChange={handlePeriodChange} className="w-full" />
-          </div>
         </div>
 
         {/* Action Row */}
