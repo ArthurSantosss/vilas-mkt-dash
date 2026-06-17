@@ -3,7 +3,7 @@ import { supabase } from '../../services/supabase';
 import { useMetaAds } from '../../contexts/MetaAdsContext';
 import { useAgency } from '../../contexts/AgencyContext';
 import { formatCurrency } from '../../shared/utils/format';
-import { Image, Download, Loader2, Sparkles, Copy, Check, Send, CheckCircle2, Target, Link2, X, Trash2, Pencil } from 'lucide-react';
+import { Image, Download, Loader2, Sparkles, Copy, Check, CheckCircle2, Target, Link2, X, Trash2, Pencil } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import PeriodSelector from '../../shared/components/PeriodSelector';
 import ReportCard from '../../shared/components/ReportCard';
@@ -667,11 +667,8 @@ export default function ReportVisual() {
   const exportImagesReadyRef = useRef(Promise.resolve());
   const [previewScale, setPreviewScale] = useState(1);
 
-  // Filter agencies to only vilasmkt and tag
-  const allowedAgencyList = useMemo(() => {
-    return agencies.filter(ag => matchAgencyVisual(ag) !== null);
-  }, [agencies]);
-
+  // Todas as agências cadastradas ficam disponíveis para seleção.
+  const allowedAgencyList = agencies;
   const hasAgencies = allowedAgencyList.length > 0;
 
   useEffect(() => {
@@ -717,7 +714,19 @@ export default function ReportVisual() {
   }, [selectedAgency, selectedAccount, accountAgencies, accounts]);
 
   const logoSources = useMemo(() => getAgencyLogoSources(agencyType), [agencyType]);
-  const agencyLabel = agencyType === 'tag' ? 'Grupo Tag' : 'Vilas Growth Marketing';
+
+  // Nome da agência usado no card. Agências conhecidas têm nome de exibição
+  // fixo; qualquer outra agência cadastrada usa o próprio nome.
+  const resolvedAgencyName = useMemo(() => {
+    if (selectedAgency && selectedAgency !== '__all__') return selectedAgency;
+    return accountAgencies[selectedAccount] || '';
+  }, [selectedAgency, selectedAccount, accountAgencies]);
+
+  const agencyLabel = useMemo(() => {
+    if (agencyType === 'tag') return 'Grupo Tag';
+    if (resolvedAgencyName && matchAgencyVisual(resolvedAgencyName) === null) return resolvedAgencyName;
+    return 'Vilas Growth Marketing';
+  }, [agencyType, resolvedAgencyName]);
 
   const filteredAccounts = useMemo(() => {
     if (selectedAgency === '__all__') return accounts;
@@ -791,8 +800,11 @@ export default function ReportVisual() {
     reportData?.clientLogoExportSrc,
   ]);
 
+  // Auto-seleciona a primeira conta apenas quando nenhuma está selecionada.
+  // Evita roubar a seleção durante o recarregamento progressivo das contas
+  // ao trocar o período (a troca de agência já reseta a conta explicitamente).
   useEffect(() => {
-    if (filteredAccounts.length > 0 && !filteredAccounts.find(a => a.id === selectedAccount)) {
+    if (!selectedAccount && filteredAccounts.length > 0) {
       setSelectedAccount(filteredAccounts[0].id);
     }
   }, [filteredAccounts, selectedAccount]);
@@ -1261,7 +1273,7 @@ export default function ReportVisual() {
         <div className="relative mt-5 grid grid-cols-1 min-[560px]:grid-cols-2 sm:flex sm:flex-wrap items-end justify-center gap-3 sm:gap-5">
           <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px] z-50">
             <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Período</label>
-            <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} className="w-full" />
+            <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} className="w-full" align="left" />
           </div>
 
           {hasAgencies ? (

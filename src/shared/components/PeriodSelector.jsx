@@ -15,7 +15,7 @@ import {
 const WEEKDAYS = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
 const MONTHS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 
-export default function PeriodSelector({ selectedPeriod, onPeriodChange, className = '' }) {
+export default function PeriodSelector({ selectedPeriod, onPeriodChange, className = '', align = 'right' }) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef(null);
 
@@ -231,7 +231,9 @@ export default function PeriodSelector({ selectedPeriod, onPeriodChange, classNa
       {/* Popover */}
       {isOpen && (
         <div
-          className="fixed inset-0 z-[100] flex items-end sm:items-start sm:justify-end sm:absolute sm:inset-auto sm:right-0 sm:top-full sm:mt-2"
+          className={`fixed inset-0 z-[100] flex items-end sm:items-start sm:absolute sm:inset-auto sm:top-full sm:mt-2 ${
+            align === 'left' ? 'sm:justify-start sm:left-0' : 'sm:justify-end sm:right-0'
+          }`}
           style={{ animation: 'fadeIn 200ms ease-out' }}
         >
           {/* Mobile backdrop */}

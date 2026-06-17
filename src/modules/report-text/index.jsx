@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { useMetaAds } from '../../contexts/MetaAdsContext';
 import { useAgency } from '../../contexts/AgencyContext';
 import { formatCurrency, formatNumber } from '../../shared/utils/format';
-import { FileText, Copy, Check, Loader2, Sparkles, MessageSquare } from 'lucide-react';
+import { FileText, Copy, Check, Loader2, Sparkles } from 'lucide-react';
 import PeriodSelector from '../../shared/components/PeriodSelector';
 import { fetchAccountInsights, fetchCampaignsWithInsights, getPreviousPeriodRange } from '../../services/metaApi';
 import { buildInsightPack, formatPercentValue, formatFrequency } from '../../shared/utils/reportInsights';
@@ -10,10 +10,10 @@ import { buildInsightPack, formatPercentValue, formatFrequency } from '../../sha
 import { PRESETS } from '../../shared/utils/dateUtils';
 import { simplifyCampaignName } from '../../shared/utils/campaignName';
 
-function matchAgency(name) {
-  const n = (name || '').toLowerCase();
-  if (n.includes('gdm')) return 'gdm';
-  return null;
+// ── Build a hashtag signature from the agency name ──
+function buildAgencySignature(name) {
+  const cleaned = String(name || '').trim().replace(/[^\p{L}\p{N}]+/gu, '');
+  return cleaned ? ` #${cleaned.toUpperCase()}` : '';
 }
 
 // ── Helper: extract action value by type ──
@@ -88,12 +88,15 @@ function buildReportFromInsights(data, campaignName, periodDates) {
   };
 }
 
-// ── GDM text template ──
-function buildTextGDM(d, options = {}) {
+// ── Report text template ──
+function buildReportText(d, options = {}) {
   const {
     showCampaignName = true,
     prev = null,
+    agencyName = '',
   } = options;
+
+  const signature = buildAgencySignature(agencyName);
 
   const entitySubject = showCampaignName ? 'A campanha' : 'A conta';
   const entityLine = (showCampaignName && d.campaignName) ? `📌 Campanha: ${d.campaignName}\n` : '';
@@ -110,9 +113,6 @@ Segue relatório semanal 👇
 
 📅 Período Analisado: ${d.periodStart} a ${d.periodEnd}
 ${entityLine}
-📊 Resumo executivo:
-- ${insightPack.executiveSummary}
-
 ➡️ Valor Investido: ${formatCurrency(d.spend)}
 ➡️ Total de Conversas Iniciadas: ${formatNumber(d.conversations)}
 ➡️ Engajamentos com a publicação: ${formatNumber(d.engagements)}
@@ -131,7 +131,7 @@ ${entityLine}
 - ${insightPack.nextStep}
 
 Fico a disposição para qualquer dúvida!
-Obrigado e tenha uma excelente semana! #GDM 🚀`;
+Obrigado e tenha uma excelente semana!${signature} 🚀`;
 }
 
 
@@ -146,14 +146,11 @@ export default function ReportText() {
   const [generating, setGenerating] = useState(false);
   const [copiedKey, setCopiedKey] = useState('');
 
-  // Filter agencies to only GDM
-  const allowedAgencyList = useMemo(() => {
-    return agencies.filter(ag => matchAgency(ag) !== null);
-  }, [agencies]);
-
+  // All registered agencies are available
+  const allowedAgencyList = agencies;
   const hasAgencies = allowedAgencyList.length > 0;
 
-  // Auto-select first allowed agency (or 'gdm' fallback)
+  // Auto-select first agency (or 'all' fallback when none registered)
   useEffect(() => {
     if (!selectedAgency) {
       if (hasAgencies) {
@@ -164,11 +161,11 @@ export default function ReportText() {
     }
   }, [allowedAgencyList, selectedAgency, hasAgencies]);
 
-  // Detect which agency template to use
-  const agencyType = useMemo(() => {
-    if (selectedAgency === '__all__') return 'gdm';
-    return matchAgency(selectedAgency) || 'gdm';
-  }, [selectedAgency]);
+  // Resolve the agency name used for the report signature
+  const signatureAgency = useMemo(() => {
+    if (selectedAgency && selectedAgency !== '__all__') return selectedAgency;
+    return accountAgencies[selectedAccount] || '';
+  }, [selectedAgency, selectedAccount, accountAgencies]);
 
   // Filter accounts by selected agency
   const filteredAccounts = useMemo(() => {
@@ -181,8 +178,11 @@ export default function ReportText() {
     return simplifyCampaignName(name);
   }, []);
 
+  // Auto-seleciona a primeira conta apenas quando nenhuma está selecionada.
+  // Evita roubar a seleção durante o recarregamento progressivo das contas
+  // ao trocar o período (a troca de agência já reseta a conta explicitamente).
   useEffect(() => {
-    if (filteredAccounts.length > 0 && !filteredAccounts.find(a => a.id === selectedAccount)) {
+    if (!selectedAccount && filteredAccounts.length > 0) {
       setSelectedAccount(filteredAccounts[0].id);
     }
   }, [filteredAccounts, selectedAccount]);
@@ -195,6 +195,7 @@ export default function ReportText() {
 
     try {
       const periodDates = formatPeriodLabel(selectedPeriod);
+      const agencyName = signatureAgency;
 
       if (reportMode === 'per_campaign') {
         // GDM per-campaign
@@ -233,7 +234,7 @@ export default function ReportText() {
           setReportData({ error: 'Nenhuma campanha com dados de investimento no período.' });
           return;
         }
-        setReportData({ mode: 'per_campaign', reports });
+        setReportData({ mode: 'per_campaign', reports, agencyName });
       } else {
         // GDM all campaigns (account-level)
         const previousPeriod = getPreviousPeriodRange(selectedPeriod);
@@ -248,7 +249,7 @@ export default function ReportText() {
         const account = accounts.find(a => a.id === selectedAccount);
         const report = buildReportFromInsights(insights, account?.clientName || 'Conta', periodDates);
         const prevReport = prevInsights ? buildReportFromInsights(prevInsights, '', periodDates) : null;
-        setReportData({ mode: 'all', report, prevReport });
+        setReportData({ mode: 'all', report, prevReport, agencyName });
       }
     } catch (err) {
       console.error('Erro ao gerar relatório:', err);
@@ -256,7 +257,7 @@ export default function ReportText() {
     } finally {
       setGenerating(false);
     }
-  }, [selectedAccount, selectedPeriod, reportMode, accounts, normalizeCampaignName]);
+  }, [selectedAccount, selectedPeriod, reportMode, accounts, normalizeCampaignName, signatureAgency]);
 
   // Build report text(s)
   const reportTexts = useMemo(() => {
@@ -264,9 +265,10 @@ export default function ReportText() {
 
     if (reportData.mode === 'all') {
       return [{
-        text: buildTextGDM(reportData.report, {
+        text: buildReportText(reportData.report, {
           showCampaignName: false,
           prev: reportData.prevReport,
+          agencyName: reportData.agencyName,
         }),
         label: 'Relatório geral da conta',
       }];
@@ -274,9 +276,10 @@ export default function ReportText() {
 
     if (reportData.mode === 'per_campaign') {
       return reportData.reports.map(r => ({
-        text: buildTextGDM(r, {
+        text: buildReportText(r, {
           showCampaignName: true,
           prev: r._prev,
+          agencyName: reportData.agencyName,
         }),
         label: r.campaignName,
       }));
@@ -299,13 +302,6 @@ export default function ReportText() {
     const all = reportTexts.map(r => r.text).join('\n\n' + '─'.repeat(40) + '\n\n');
     handleCopy(all, 'all');
   }, [reportTexts, handleCopy]);
-
-  const handleOpenWhatsApp = useCallback((text) => {
-    const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
-    window.open(url, '_blank', 'noopener,noreferrer');
-  }, []);
-
-
 
   return (
     <div className="space-y-6">
@@ -331,7 +327,7 @@ export default function ReportText() {
         <div className="relative mt-5 grid grid-cols-1 min-[560px]:grid-cols-2 sm:flex sm:flex-wrap items-end justify-center gap-3 sm:gap-5">
           <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px] z-50">
             <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Período</label>
-            <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} className="w-full" />
+            <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} className="w-full" align="left" />
           </div>
 
           {hasAgencies ? (
@@ -360,19 +356,17 @@ export default function ReportText() {
           </div>
 
           {/* Modo */}
-          {agencyType === 'gdm' && (
-            <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px]">
-              <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Modo</label>
-              <select
-                value={reportMode}
-                onChange={e => setReportMode(e.target.value)}
-                className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
-              >
-                <option value="all">Todas as campanhas</option>
-                <option value="per_campaign">Por campanha</option>
-              </select>
-            </div>
-          )}
+          <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px]">
+            <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Modo</label>
+            <select
+              value={reportMode}
+              onChange={e => setReportMode(e.target.value)}
+              className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
+            >
+              <option value="all">Todas as campanhas</option>
+              <option value="per_campaign">Por campanha</option>
+            </select>
+          </div>
 
         </div>
 
@@ -420,13 +414,6 @@ export default function ReportText() {
                   {reportTexts.length > 1 ? `${i + 1}/${reportTexts.length} — ${r.label}` : 'Relatório gerado'}
                 </span>
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handleOpenWhatsApp(r.text)}
-                    className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-medium border transition-all bg-surface border-border hover:border-primary/40 hover:text-primary text-text-secondary"
-                  >
-                    <MessageSquare size={13} />
-                    WhatsApp
-                  </button>
                   <button
                     onClick={() => handleCopy(r.text, `report-${i}`)}
                     className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-medium border transition-all ${copiedKey === `report-${i}` ? 'bg-success/10 text-success border-success/30' : 'bg-surface border-border hover:border-primary/40 hover:text-primary text-text-secondary'
