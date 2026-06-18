@@ -16,15 +16,11 @@ const ALL_COLUMNS = [
   { key: 'balance', label: 'Saldo', align: 'right' },
   { key: 'nextPayment', label: 'Próx. Pagamento', align: 'right' },
   { key: 'dailyUntilPayment', label: 'Disp./dia até Pgto', align: 'right' },
-  { key: 'cpm', label: 'CPM', align: 'right' },
   { key: 'clicks', label: 'Cliques', align: 'right' },
   { key: 'cpc', label: 'CPC', align: 'right' },
   { key: 'messages', label: 'Mensagens', align: 'right' },
   { key: 'costPerMsg', label: 'Custo/Msg', align: 'right' },
-  { key: 'ctr', label: 'CTR', align: 'right' },
-  { key: 'frequency', label: 'Frequência', align: 'right' },
   { key: 'reach', label: 'Alcance', align: 'right' },
-  { key: 'notes', label: 'Observação', align: 'left' },
 ];
 const DEFAULT_COLUMN_ORDER = ALL_COLUMNS.map(c => c.key);
 
@@ -1167,7 +1163,7 @@ export default function MetaAdsOverview() {
           <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-end gap-3 sm:gap-5 w-full sm:w-auto">
             <div className="flex flex-col gap-1.5 w-full sm:w-[210px] z-50">
               <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Período</label>
-              <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} className="w-full" />
+              <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} className="w-full" align="left" />
             </div>
 
             {agencies.length > 0 && (
