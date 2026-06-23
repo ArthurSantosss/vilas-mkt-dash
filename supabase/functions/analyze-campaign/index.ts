@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import {
     buildCampaignAnalysisContextNotes,
     buildCampaignAnalysisFallback,
+    sanitizeClientFacingReport,
 } from "../../../src/shared/utils/aiReport.js";
 
 const corsHeaders = {
@@ -32,7 +33,7 @@ REGRAS DE ESCRITA:
 - Utilizar TODAS as métricas disponíveis antes de gerar o relatório.
 
 REGRA DE TOM (MUITO IMPORTANTE):
-Seja cauteloso com afirmações positivas. Nem sempre a campanha está boa para o cliente. Evite frases como "a campanha está excelente", "os resultados estão ótimos", "performance incrível". Prefira tom realista e ponderado. Use termos como "aparentemente", "até o momento", "dentro do esperado para o período", "tende a melhorar com ajustes". Quando os resultados estiverem de fato ruins, reconheça com honestidade mas sem alarmar, explicando o que está sendo feito. A mensagem final pode ser positiva mas sobre o trabalho que está sendo feito, não sobre os números.
+Mantenha o texto sempre construtivo, seguro e profissional. Nunca cite pontos negativos de forma explícita e nunca diga que o resultado caiu, piorou ou ficou ruim. Evite frases como "os leads caíram", "houve queda", "a performance piorou", "o custo subiu demais", "não gerou resultados". Quando houver sinais menos favoráveis, reformule de modo neutro e propositivo, focando em aprendizado, otimização, próximos testes e ajustes em andamento. A mensagem final deve ser positiva sobre o trabalho e sobre os próximos movimentos.
 
 REGRA DE MÚLTIPLAS CAMPANHAS:
 - Se tiver mais de uma campanha: separar métricas por campanha e incluir o nome de cada uma.
@@ -236,7 +237,7 @@ serve(async (req) => {
 
         const userPrompt = buildUserPrompt(body);
         const fallbackResponse = {
-            relatorio: buildCampaignAnalysisFallback(body),
+            relatorio: sanitizeClientFacingReport(buildCampaignAnalysisFallback(body)),
             source: "fallback",
         };
 
@@ -319,6 +320,7 @@ serve(async (req) => {
 
         return new Response(JSON.stringify({
             ...resultJson,
+            relatorio: sanitizeClientFacingReport(resultJson.relatorio),
             source: "anthropic",
         }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -330,7 +332,7 @@ serve(async (req) => {
         if (fallbackReport) {
             return new Response(
                 JSON.stringify({
-                    relatorio: fallbackReport,
+                    relatorio: sanitizeClientFacingReport(fallbackReport),
                     source: "fallback",
                     fallbackReason: "Internal server error",
                 }),

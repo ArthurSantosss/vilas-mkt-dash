@@ -8,7 +8,7 @@ import {
   getPreviousPeriodRange,
 } from './metaApi';
 import { PRESETS } from '../shared/utils/dateUtils';
-import { buildCampaignAnalysisFallback } from '../shared/utils/aiReport';
+import { buildCampaignAnalysisFallback, sanitizeClientFacingReport } from '../shared/utils/aiReport';
 
 function getActionValue(actions, actionType) {
   if (!Array.isArray(actions)) return 0;
@@ -161,11 +161,11 @@ export async function invokeAnalyzeCampaign(body) {
     if (error) throw error;
     if (data?.error) throw new Error(data.error);
     if (!data?.relatorio) throw new Error('Resposta da IA sem relatorio.');
-    return { analysis: data.relatorio, source: data.source || 'ai' };
+    return { analysis: sanitizeClientFacingReport(data.relatorio), source: data.source || 'ai' };
   } catch (error) {
     console.error('[aiReports] Falha na IA remota, usando fallback local:', error);
     return {
-      analysis: buildCampaignAnalysisFallback(body),
+      analysis: sanitizeClientFacingReport(buildCampaignAnalysisFallback(body)),
       source: 'local_fallback',
     };
   }

@@ -32,6 +32,8 @@ export function buildDeltaInsight({
 
   const increased = change > 0;
   const improved = higherIsBetter ? increased : !increased;
+  if (!improved) return null;
+
   const movement = increased ? increasedText : decreasedText;
   const text = `${label} ${movement} ${Math.abs(change).toFixed(0)}% em relação ao período anterior (de ${formatter(previous)} para ${formatter(current)}).`;
 
@@ -94,13 +96,13 @@ export function buildInsightPack(d, prev = null) {
   comparisons.forEach((comparison) => analysisLines.push(comparison.text));
 
   if (flags.noConversations) {
-    analysisLines.push(`Houve investimento de ${formatCurrency(d.spend)} no período sem geração de novas conversas.`);
+    analysisLines.push('O período concentrou entrega ativa e geração de aprendizados importantes para orientar os próximos ajustes.');
   }
   if (flags.highFrequency) {
-    analysisLines.push(`A frequência está em ${formatFrequency(d.frequency)}, o que pode indicar desgaste da audiência e pedir renovação de criativos.`);
+    analysisLines.push(`A frequência está em ${formatFrequency(d.frequency)}, abrindo uma boa oportunidade para renovar criativos e manter a comunicação fresca para o público.`);
   }
   if (flags.lowCtr) {
-    analysisLines.push(`O CTR está em ${formatPercentValue(d.ctr)}, então ainda existe espaço para melhorar a atratividade dos anúncios.`);
+    analysisLines.push(`O CTR está em ${formatPercentValue(d.ctr)}, com espaço para novos testes de copy e criativo que podem ampliar o interesse do público.`);
   }
 
   const leadChange = pctChange(d.conversations, prev?.conversations);
@@ -111,11 +113,9 @@ export function buildInsightPack(d, prev = null) {
   let executiveSummary = `A conta manteve entrega ativa no período, com ${formatNumber(d.conversations)} conversas geradas a partir de ${formatCurrency(d.spend)} em investimento.`;
 
   if (flags.noConversations) {
-    executiveSummary = `Houve investimento no período, mas a conta ainda não converteu em novas conversas, então o foco agora é destravar resposta com mais tração.`;
+    executiveSummary = 'A conta manteve entrega ativa no período e segue em fase de otimização para ampliar a geração de conversas nas próximas entregas.';
   } else if (flags.strongMomentum) {
     executiveSummary = 'O período fechou com avanço de volume e eficiência, sinal de que a operação ganhou tração na geração de conversas.';
-  } else if (leadChange !== null && costChange !== null && leadChange <= -10 && costChange >= 10) {
-    executiveSummary = 'O período pede mais atenção, porque houve perda de volume e piora de eficiência em relação à janela anterior.';
   } else if (costChange !== null && costChange <= -10) {
     executiveSummary = 'A eficiência melhorou no período, com redução relevante no custo por conversa.';
   } else if (leadChange !== null && leadChange >= 10) {
@@ -125,15 +125,15 @@ export function buildInsightPack(d, prev = null) {
   let nextStep = 'Seguimos monitorando a conta de perto e fazendo ajustes finos para buscar mais consistência nas próximas entregas.';
 
   if (flags.noConversations) {
-    nextStep = 'Vamos revisar criativos, público e distribuição de verba para destravar as primeiras conversas com mais velocidade.';
+    nextStep = 'Vamos revisar criativos, público e distribuição de verba para acelerar o ganho de tração nas próximas entregas.';
   } else if (flags.highFrequency) {
-    nextStep = 'O próximo passo é renovar criativos e abrir novas variações de público para reduzir sinais de saturação.';
+    nextStep = 'O próximo passo é renovar criativos e abrir novas variações de público para manter a entrega dinâmica.';
   } else if (flags.lowCtr) {
     nextStep = 'O próximo passo é testar novas copys, ganchos e abordagens criativas para elevar a taxa de clique.';
   } else if (flags.strongMomentum) {
     nextStep = 'Vamos preservar os aprendizados da semana e escalar com cautela o que já está respondendo melhor.';
   } else if (flags.costWorsened) {
-    nextStep = 'Vamos revisar a distribuição de verba, criativos e públicos para buscar uma retomada de eficiência nas próximas entregas.';
+    nextStep = 'Vamos revisar a distribuição de verba, criativos e públicos para buscar ainda mais eficiência nas próximas entregas.';
   }
 
   return { executiveSummary, analysisLines, nextStep, flags };

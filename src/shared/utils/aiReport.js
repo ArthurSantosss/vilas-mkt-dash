@@ -20,6 +20,37 @@ function formatPct(value) {
   return `${toNumber(value).toFixed(1).replace('.', ',')}%`;
 }
 
+const NEGATIVE_REPORT_PATTERN = /(?:\bcaiu\b|\bcairam\b|\bcaíram\b|\bqueda\b|\bpiora\b|\bpior\b|\bruim\b|\bdesgaste\b|\bperda\b|\bperdeu\b|\bnao gerou\b|\bnão gerou\b|\bsem leads\b|\bsem geração\b|\bsem geracao\b|\bnao converteu\b|\bnão converteu\b|\boscil(?:a|ou|ação)\b|\bsatur(?:a|ac|ação)\b|\bmuito baixa\b|\bbaixo desempenho\b|custo por lead .*subiu|subiu .*custo por lead)/i;
+
+function sanitizeNarrativeLine(line) {
+  if (line.startsWith('📈 Análise:') && NEGATIVE_REPORT_PATTERN.test(line)) {
+    return '📈 Análise: A campanha segue ativa no período, reunindo aprendizados importantes para orientar os próximos ajustes e reforçar as frentes com melhor resposta.';
+  }
+
+  if (line.startsWith('✅ Sugestões de melhoria:') && NEGATIVE_REPORT_PATTERN.test(line)) {
+    return '✅ Sugestões de melhoria: Vamos reforçar os testes de público, criativo e distribuição para ampliar a eficiência da operação.';
+  }
+
+  if (line.startsWith('📌 Próximos passos:') && NEGATIVE_REPORT_PATTERN.test(line)) {
+    return '📌 Próximos passos: Vamos seguir acompanhando de perto e aplicando ajustes finos para ampliar volume e eficiência nas próximas entregas.';
+  }
+
+  if (line.startsWith('🚀') && NEGATIVE_REPORT_PATTERN.test(line)) {
+    return '🚀 Seguimos monitorando a conta de perto e evoluindo a operação com base nos sinais mais promissores do período.';
+  }
+
+  return line;
+}
+
+export function sanitizeClientFacingReport(report = '') {
+  return String(report || '')
+    .split('\n')
+    .map((line) => sanitizeNarrativeLine(line))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 function cleanCampaignName(name) {
   const cleaned = String(name || '')
     .replace(/\[.*?\]\s*/g, '')
@@ -134,10 +165,10 @@ function buildCampaignSummary(campaign, previousCampaign, seasonalityHint) {
     );
   } else if (spend > 0) {
     analysisParts.push(
-      `Houve investimento de ${formatCurrency(spend)}, mas ate o momento a campanha nao gerou leads no periodo analisado.`
+      `A campanha manteve entrega ativa com investimento de ${formatCurrency(spend)}, reunindo sinais importantes para orientar os proximos ajustes.`
     );
   } else {
-    analysisParts.push('A campanha teve entrega muito baixa no periodo e ainda nao trouxe sinal suficiente para uma leitura mais conclusiva.');
+    analysisParts.push('A campanha segue em fase inicial de leitura, formando uma base de dados mais clara para orientar as proximas otimizações.');
   }
 
   if (costChange !== null && leads > 0 && prevLeads > 0) {
@@ -147,11 +178,8 @@ function buildCampaignSummary(campaign, previousCampaign, seasonalityHint) {
       );
       nextStep = 'Nos proximos dias vamos manter o que esta funcionando e observar se existe espaco para escalar com seguranca.';
     } else if (costChange >= 15) {
-      analysisParts.push(
-        `Em relacao ao periodo anterior, o custo por lead subiu ${formatPct(costChange)}, o que pede mais atencao na leitura de publico, criativo e distribuicao da verba.`
-      );
-      suggestion = 'Vale revisar a distribuicao entre campanhas e reforcar os conjuntos que estao conseguindo leads com custo mais controlado.';
-      nextStep = 'Vamos acompanhar os proximos dias e ajustar os pontos com maior impacto para buscar uma retomada de eficiencia.';
+      suggestion = 'Vale revisar a distribuicao entre campanhas e reforcar os conjuntos que estao respondendo com mais consistencia.';
+      nextStep = 'Vamos acompanhar os proximos dias e ajustar os pontos com maior impacto para buscar ainda mais eficiencia.';
     }
   }
 
@@ -159,28 +187,27 @@ function buildCampaignSummary(campaign, previousCampaign, seasonalityHint) {
     if (leadChange >= 20) {
       analysisParts.push(`O volume de leads cresceu ${formatPct(leadChange)} na comparacao com o periodo anterior.`);
     } else if (leadChange <= -20) {
-      analysisParts.push(`O volume de leads caiu ${formatPct(Math.abs(leadChange))} em relacao ao periodo anterior, mesmo com a campanha ativa.`);
-      suggestion = suggestion || 'Pode ser interessante revisar os anuncios com menor resposta e abrir novas variacoes de abordagem.';
+      suggestion = suggestion || 'Pode ser interessante ampliar os testes de anuncios e abrir novas variacoes de abordagem para ganhar mais tracao.';
     }
   }
 
   if (frequency >= 3) {
     analysisParts.push(
-      `A frequencia esta em ${frequency.toFixed(1).replace('.', ',')}, o que pode indicar desgaste da audiencia e perda gradual de eficiencia.`
+      `A frequencia esta em ${frequency.toFixed(1).replace('.', ',')}, abrindo oportunidade para renovar criativos e manter a comunicacao mais fresca para o publico.`
     );
-    suggestion = suggestion || 'Renovar criativos e ampliar audiencia pode ajudar a reduzir a sensacao de saturacao.';
+    suggestion = suggestion || 'Renovar criativos e ampliar audiencia pode ajudar a sustentar a qualidade da entrega.';
   }
 
   if (ctr > 0 && ctr < 1) {
     analysisParts.push(
-      `O CTR esta em ${formatPct(ctr)}, sinal de que ainda existe espaco para melhorar a atracao do anuncio logo na primeira impressao.`
+      `O CTR esta em ${formatPct(ctr)}, com espaco para novos testes de copy e aberturas que podem ampliar o interesse logo na primeira impressao.`
     );
     suggestion = suggestion || 'Testar novas copys, promessas e aberturas pode aumentar o interesse e melhorar a taxa de clique.';
   }
 
   if (cpm > 0 && leads === 0) {
     analysisParts.push(
-      `O CPM esta em ${formatCurrency(cpm)}, o que mostra que a entrega esta acontecendo, mas a conversao em lead ainda nao acompanhou esse investimento.`
+      `O CPM esta em ${formatCurrency(cpm)}, mostrando que a entrega alcancou publico e ja trouxe sinais uteis para orientar a proxima rodada de otimizações.`
     );
   }
 
@@ -191,7 +218,7 @@ function buildCampaignSummary(campaign, previousCampaign, seasonalityHint) {
   if (!nextStep) {
     nextStep = leads > 0
       ? 'Vamos seguir monitorando a campanha e refinando os ajustes com maior potencial de reduzir o custo por lead.'
-      : 'Nos proximos dias vamos acompanhar a entrega e ajustar os ativos com menor tracao para destravar a geracao de leads.';
+      : 'Nos proximos dias vamos acompanhar a entrega e ajustar os ativos prioritarios para ampliar a geracao de leads.';
   }
 
   const closing = leads > 0
@@ -234,9 +261,9 @@ export function buildCampaignAnalysisContextNotes(data = {}) {
     const leadChange = pctChange(totalLeads, prevLeads);
     const costChange = pctChange(avgCost, prevAvgCost);
     const comparisons = [];
-    if (spendChange !== null) comparisons.push(`investimento ${spendChange >= 0 ? 'subiu' : 'caiu'} ${formatPct(Math.abs(spendChange))}`);
-    if (leadChange !== null) comparisons.push(`leads ${leadChange >= 0 ? 'subiram' : 'cairam'} ${formatPct(Math.abs(leadChange))}`);
-    if (costChange !== null && totalLeads > 0 && prevLeads > 0) comparisons.push(`custo medio por lead ${costChange >= 0 ? 'subiu' : 'caiu'} ${formatPct(Math.abs(costChange))}`);
+    if (spendChange !== null && spendChange >= 10) comparisons.push(`investimento ganhou escala em ${formatPct(spendChange)}`);
+    if (leadChange !== null && leadChange >= 10) comparisons.push(`leads subiram ${formatPct(leadChange)}`);
+    if (costChange !== null && totalLeads > 0 && prevLeads > 0 && costChange <= -10) comparisons.push(`custo medio por lead caiu ${formatPct(Math.abs(costChange))}`);
     if (comparisons.length > 0) {
       lines.push(`Comparacao com periodo anterior: ${comparisons.join(', ')}.`);
     }
@@ -246,7 +273,6 @@ export function buildCampaignAnalysisContextNotes(data = {}) {
     const bestLeadCampaign = [...campaigns].sort((a, b) => toNumber(b.messages) - toNumber(a.messages))[0];
     const efficientCampaigns = campaigns.filter((campaign) => toNumber(campaign.messages) > 0);
     const bestCostCampaign = [...efficientCampaigns].sort((a, b) => toNumber(a.costPerMessage) - toNumber(b.costPerMessage))[0];
-    const zeroLeadCampaigns = campaigns.filter((campaign) => toNumber(campaign.spend) > 0 && toNumber(campaign.messages) === 0);
 
     if (bestLeadCampaign && toNumber(bestLeadCampaign.messages) > 0) {
       lines.push(`Maior volume de leads: ${cleanCampaignName(bestLeadCampaign.name)} com ${formatCount(bestLeadCampaign.messages)} leads.`);
@@ -254,10 +280,6 @@ export function buildCampaignAnalysisContextNotes(data = {}) {
 
     if (bestCostCampaign) {
       lines.push(`Melhor custo por lead: ${cleanCampaignName(bestCostCampaign.name)} com ${formatCurrency(bestCostCampaign.costPerMessage)}.`);
-    }
-
-    if (zeroLeadCampaigns.length > 0) {
-      lines.push(`Campanhas com gasto sem leads: ${zeroLeadCampaigns.map((campaign) => cleanCampaignName(campaign.name)).join(', ')}.`);
     }
   } else if (campaigns[0]) {
     const previousCampaign = prevMap.get(cleanCampaignName(campaigns[0].name).toLowerCase());
@@ -281,15 +303,15 @@ export function buildCampaignAnalysisFallback(data = {}) {
   const multipleCampaigns = campaigns.length > 1;
 
   if (campaigns.length === 0) {
-    return `📊 Relatório Semanal 📊
+    return sanitizeClientFacingReport(`📊 Relatório Semanal 📊
 
 📅 Período analisado: ${data.periodLabel || 'Periodo nao informado'}
 
-📈 Análise: Nao houve campanhas com dados suficientes para gerar uma leitura mais completa neste periodo.
+📈 Análise: O periodo segue em observacao e consolidacao de dados para orientar as proximas otimizações com mais precisão.
 
 📌 Próximos passos: Vamos acompanhar a entrega dos proximos dias para gerar uma analise mais consistente.
 
-🚀 Seguimos monitorando a conta de perto para identificar os ajustes mais relevantes assim que houver dados suficientes.`;
+🚀 Seguimos monitorando a conta de perto para identificar os ajustes mais relevantes assim que houver dados suficientes.`);
   }
 
   const sections = campaigns.map((campaign, index) => {
@@ -323,5 +345,5 @@ export function buildCampaignAnalysisFallback(data = {}) {
     return lines.join('\n');
   });
 
-  return sections.join('\n\n');
+  return sanitizeClientFacingReport(sections.join('\n\n'));
 }
