@@ -1,3 +1,5 @@
+import process from 'node:process';
+
 const token = process.env.META_ACCESS_TOKEN || process.env.VITE_META_ACCESS_TOKEN;
 
 if (!token) {

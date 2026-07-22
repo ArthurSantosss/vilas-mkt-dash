@@ -1,28 +1,10 @@
 import { createContext, useContext, useState, useMemo, useCallback } from 'react';
 import { supabase } from '../services/supabase';
+import { loadCloudSnapshot, saveCloudSnapshot } from '../shared/utils/cloudBackup';
 
 const AuthContext = createContext();
 
 const AUTH_KEY = 'vilasmkt_auth';
-
-const BACKUP_KEYS = [
-  'account_monthly_goals',
-  'account_payment_methods',
-  'account_last_payments',
-  'account_last_payment_sources',
-  'account_billing_frequencies',
-  'meta_balance_snapshots',
-  'custom_account_names',
-  'meta_ads_column_order',
-  'meta_ad_accounts',
-  'disabled_ad_accounts',
-  'meta_user_info',
-  'google_ads_accounts',
-  'google_ads_connection',
-  'client_logos',
-  'auto_alerts_thresholds'
-];
-const LEGACY_SENSITIVE_KEYS = ['meta_provider_token'];
 
 function readStoredUser() {
     try {
@@ -42,30 +24,7 @@ export function AuthProvider({ children }) {
 
     const syncToCloud = useCallback(async (email) => {
         try {
-            if (LEGACY_SENSITIVE_KEYS.length > 0) {
-                await supabase.from('app_preferences').delete().in(
-                    'key',
-                    LEGACY_SENSITIVE_KEYS.map((key) => `${email}_${key}`)
-                );
-            }
-
-            const upserts = [];
-            for (const key of BACKUP_KEYS) {
-                const localStr = localStorage.getItem(key);
-                if (localStr !== null && localStr !== 'undefined' && localStr !== '') {
-                    try {
-                        const localParsed = key === 'meta_provider_token' ? localStr : JSON.parse(localStr);
-                        upserts.push({ key: `${email}_${key}`, value: localParsed, updated_at: new Date().toISOString() });
-                    } catch {
-                        // Ignore invalid local payloads during backup sync.
-                    }
-                }
-            }
-            if (upserts.length > 0) {
-                await supabase.from('app_preferences').upsert(upserts, { onConflict: 'key' });
-                return true;
-            }
-            return false;
+            return await saveCloudSnapshot(supabase, email);
         } catch (e) {
             console.error('Erro ao sincronizar com nuvem:', e);
             return false;
@@ -74,24 +33,8 @@ export function AuthProvider({ children }) {
 
     const loadFromCloud = useCallback(async (email) => {
         try {
-            if (LEGACY_SENSITIVE_KEYS.length > 0) {
-                await supabase.from('app_preferences').delete().in(
-                    'key',
-                    LEGACY_SENSITIVE_KEYS.map((key) => `${email}_${key}`)
-                );
-            }
-
-            const { data } = await supabase.from('app_preferences').select('key, value').like('key', `${email}_%`);
-            if (data && data.length > 0) {
-                data.forEach(row => {
-                    const originalKey = row.key.replace(`${email}_`, '');
-                    if (!BACKUP_KEYS.includes(originalKey)) return;
-                    const strToSave = originalKey === 'meta_provider_token' ? row.value : JSON.stringify(row.value);
-                    localStorage.setItem(originalKey, strToSave);
-                });
-                return true;
-            }
-            return false;
+            const { hasBackup } = await loadCloudSnapshot(supabase, email);
+            return hasBackup;
         } catch (e) {
             console.error('Erro ao buscar backup na nuvem:', e);
             return false;

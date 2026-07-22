@@ -9,12 +9,8 @@ import { calculateMetaBalance } from '../../shared/utils/metaBalance';
 import { isCreditCardPaymentMethod, readSavedPaymentMethods, getAccountPaymentMethod } from '../../shared/utils/paymentMethod';
 import {
   consumeGoogleAdsFlashError,
-  disconnectGoogleAds,
-  formatGoogleCustomerId,
-  isGoogleAdsConfigured,
   loadStoredGoogleAdsAccounts,
   loadStoredGoogleAdsConnection,
-  startGoogleAdsOAuth,
   syncGoogleAdsAccounts,
 } from '../../services/googleAdsApi';
 
@@ -170,7 +166,6 @@ export default function Settings() {
   const [paymentMethods, setPaymentMethods] = useState(() => readSavedPaymentMethods());
   const [googleConnection, setGoogleConnection] = useState(() => loadStoredGoogleAdsConnection());
   const [googleAccounts, setGoogleAccounts] = useState(() => loadStoredGoogleAdsAccounts());
-  const [loadingGoogle, setLoadingGoogle] = useState(false);
 
   const [disabledAccounts, setDisabledAccounts] = useState(() => {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.DISABLED_ACCOUNTS)) || []; } catch { return []; }
@@ -244,15 +239,12 @@ export default function Settings() {
 
   const fetchGoogleAccounts = useCallback(async () => {
     try {
-      setLoadingGoogle(true);
       setError(null);
       await syncGoogleAdsAccounts();
       refreshGoogleState();
     } catch (err) {
       console.error('Erro ao buscar contas Google Ads:', err);
       setError(err.message);
-    } finally {
-      setLoadingGoogle(false);
     }
   }, [refreshGoogleState]);
 
@@ -344,31 +336,6 @@ export default function Settings() {
     localStorage.removeItem(STORAGE_KEYS.META_USER);
     localStorage.removeItem(STORAGE_KEYS.META_ACCOUNTS);
     window.dispatchEvent(new CustomEvent('local-storage-map-updated'));
-  };
-
-  const handleConnectGoogleAds = () => {
-    setError(null);
-
-    if (!isGoogleAdsConfigured()) {
-      setError('Defina VITE_GOOGLE_ADS_CLIENT_ID no frontend e GOOGLE_ADS_* no servidor para conectar o Google Ads.');
-      return;
-    }
-
-    startGoogleAdsOAuth();
-  };
-
-  const handleDisconnectGoogleAds = async () => {
-    try {
-      setLoadingGoogle(true);
-      setError(null);
-      await disconnectGoogleAds();
-      refreshGoogleState();
-    } catch (err) {
-      console.error('Erro ao desconectar Google Ads:', err);
-      setError(err.message);
-    } finally {
-      setLoadingGoogle(false);
-    }
   };
 
   const toggleAccount = (accountId) => {

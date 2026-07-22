@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { Buffer } from 'node:buffer'
 import https from 'https'
 import http from 'http'
 

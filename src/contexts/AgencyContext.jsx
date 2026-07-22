@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { supabase } from '../services/supabase';
+import { dispatchLocalStorageMapUpdated } from '../shared/utils/cloudBackup';
 
 const STORAGE_KEYS = {
   AGENCIES: 'agencies_list',
@@ -17,11 +18,21 @@ function readLocalAccountAgencies() {
 }
 
 function persistLocalAgencies(list) {
-  try { localStorage.setItem(STORAGE_KEYS.AGENCIES, JSON.stringify(list)); } catch { /* ignore */ }
+  try {
+    localStorage.setItem(STORAGE_KEYS.AGENCIES, JSON.stringify(list));
+    dispatchLocalStorageMapUpdated(STORAGE_KEYS.AGENCIES, list);
+  } catch {
+    /* ignore */
+  }
 }
 
 function persistLocalAccountAgencies(map) {
-  try { localStorage.setItem(STORAGE_KEYS.ACCOUNT_AGENCIES, JSON.stringify(map)); } catch { /* ignore */ }
+  try {
+    localStorage.setItem(STORAGE_KEYS.ACCOUNT_AGENCIES, JSON.stringify(map));
+    dispatchLocalStorageMapUpdated(STORAGE_KEYS.ACCOUNT_AGENCIES, map);
+  } catch {
+    /* ignore */
+  }
 }
 
 export function AgencyProvider({ children }) {
@@ -33,6 +44,15 @@ export function AgencyProvider({ children }) {
     let cancelled = false;
 
     async function hydrate() {
+      const hasLocalSnapshot =
+        localStorage.getItem(STORAGE_KEYS.AGENCIES) !== null ||
+        localStorage.getItem(STORAGE_KEYS.ACCOUNT_AGENCIES) !== null;
+
+      if (hasLocalSnapshot) {
+        useSupabaseRef.current = true;
+        return;
+      }
+
       try {
         const [{ data: agencyRows, error: agencyErr }, { data: mapRows, error: mapErr }] = await Promise.all([
           supabase.from('agencies').select('name').order('name', { ascending: true }),
@@ -43,40 +63,20 @@ export function AgencyProvider({ children }) {
         if (mapErr) throw mapErr;
         if (cancelled) return;
 
-        const localAgencies = readLocalAgencies();
-        const localMap = readLocalAccountAgencies();
-
         const remoteAgencyNames = (agencyRows || []).map(r => r.name);
         const remoteMap = {};
         (mapRows || []).forEach(row => { remoteMap[row.account_id] = row.agency_name; });
 
-        // One-time migration: push legacy local data into Supabase.
-        const agenciesToPush = localAgencies.filter(name => name && !remoteAgencyNames.includes(name));
-        if (agenciesToPush.length) {
-          await supabase.from('agencies').upsert(
-            agenciesToPush.map(name => ({ name })),
-            { onConflict: 'name', ignoreDuplicates: true }
-          );
+        setAgencies(remoteAgencyNames);
+        setAccountAgencies(remoteMap);
+
+        if (remoteAgencyNames.length > 0) {
+          persistLocalAgencies(remoteAgencyNames);
+        }
+        if (mapRows?.length > 0) {
+          persistLocalAccountAgencies(remoteMap);
         }
 
-        const mapEntriesToPush = Object.entries(localMap).filter(
-          ([id, name]) => id && name && remoteMap[id] !== name
-        );
-        if (mapEntriesToPush.length) {
-          await supabase.from('account_agencies').upsert(
-            mapEntriesToPush.map(([account_id, agency_name]) => ({ account_id, agency_name })),
-            { onConflict: 'account_id' }
-          );
-        }
-
-        const mergedAgencies = Array.from(new Set([...remoteAgencyNames, ...agenciesToPush]));
-        const mergedMap = { ...remoteMap };
-        mapEntriesToPush.forEach(([id, name]) => { mergedMap[id] = name; });
-
-        setAgencies(mergedAgencies);
-        setAccountAgencies(mergedMap);
-        persistLocalAgencies(mergedAgencies);
-        persistLocalAccountAgencies(mergedMap);
         useSupabaseRef.current = true;
       } catch (err) {
         console.warn('[Agency] Supabase indisponível, usando localStorage:', err?.message);

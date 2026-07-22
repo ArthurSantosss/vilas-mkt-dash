@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useMetaAds } from '../../contexts/MetaAdsContext';
 import { useAgency } from '../../contexts/AgencyContext';
+import { dispatchLocalStorageMapUpdated } from '../../shared/utils/cloudBackup';
 import { formatCurrency, formatNumber, formatPercent, getCostColor } from '../../shared/utils/format';
 import { readSavedPaymentMethods, isCreditCardPaymentMethod, getAccountPaymentMethod } from '../../shared/utils/paymentMethod';
 import { getNextPaymentDate, getDaysUntil, formatDateBR, readSavedLastPayments, readSavedBillingFrequencies, readSavedNextPaymentOverrides, parseDateInput, formatDateInput } from '../../shared/utils/nextPayment';
@@ -687,6 +688,7 @@ export default function MetaAdsOverview() {
     const normalized = normalizeColumnOrder(nextOrder);
     setColumnOrder(normalized);
     localStorage.setItem('meta_ads_column_order', JSON.stringify(normalized));
+    dispatchLocalStorageMapUpdated('meta_ads_column_order', normalized);
   }, []);
 
   const moveColumn = useCallback((key, direction) => {

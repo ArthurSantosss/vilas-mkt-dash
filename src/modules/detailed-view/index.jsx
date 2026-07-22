@@ -274,7 +274,7 @@ export default function DetailedView() {
   } = useGoogleAds();
   const { agencies, accountAgencies } = useAgency();
 
-  const [platform, setPlatform] = useState('meta');
+  const [platform] = useState('meta');
   const [selectedAgency, setSelectedAgency] = useState('all');
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [selectedCampaignId, setSelectedCampaignId] = useState('');
@@ -679,14 +679,6 @@ export default function DetailedView() {
     } catch { /* refresh errors are silently ignored */ } finally {
       setIsRefreshing(false);
     }
-  };
-
-  const handlePlatformChange = (nextPlatform) => {
-    setPlatform(nextPlatform);
-    setSelectedAgency('all');
-    setSelectedAccountId('');
-    setSelectedCampaignId('');
-    setPreviousPeriodMetrics(null);
   };
 
   const handleSelectAccount = (accountId) => {
