@@ -5,7 +5,14 @@ const USE_PROXY = !IS_DEV;
 const PROXY_PATH = '/api/meta-proxy';
 const META_DIRECT_BASE = 'https://graph.facebook.com/v22.0';
 
-const getAccessToken = () => localStorage.getItem('meta_provider_token');
+const getAccessToken = () => {
+    if (IS_DEV) {
+        const envToken = import.meta.env.VITE_META_ACCESS_TOKEN;
+        if (envToken) return envToken;
+    }
+
+    return localStorage.getItem('meta_provider_token');
+};
 
 // Constrói URL + headers de acordo com modo (proxy ou direto). Token OAuth do user
 // vai via header `x-meta-token` em modo proxy, para não vazar em logs do servidor.
@@ -55,9 +62,20 @@ async function runRequest(path, params, method, body) {
     try {
         const response = await fetch(url, fetchOptions);
         const text = await response.text();
-        const data = text ? JSON.parse(text) : {};
+        let data = {};
+        try {
+            data = text ? JSON.parse(text) : {};
+        } catch {
+            data = { raw: text };
+        }
         if (!response.ok) {
-            throw new Error(data.error?.message || `Erro da Meta API (${response.status})`);
+            const metaError = data.error || {};
+            const details = [
+                metaError.message || response.statusText || `Erro da Meta API (${response.status})`,
+                metaError.code ? `code=${metaError.code}` : null,
+                metaError.error_subcode ? `subcode=${metaError.error_subcode}` : null,
+            ].filter(Boolean).join(' | ');
+            throw new Error(details);
         }
         return data;
     } catch (err) {
