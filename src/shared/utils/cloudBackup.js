@@ -1,9 +1,14 @@
 import { AUTO_ALERTS_STORAGE_KEY } from '../constants/autoAlerts';
 
 export const CLOUD_SYNC_MANIFEST_KEY = '__cloud_backup_manifest__';
-export const LEGACY_SENSITIVE_KEYS = ['meta_provider_token'];
+export const LEGACY_SENSITIVE_KEYS = [];
+
+// Alguns valores são persistidos como string simples no localStorage, sem JSON.
+// O token da Meta entra aqui para poder ser restaurado em outro dispositivo.
+const RAW_VALUE_KEYS = new Set(['meta_provider_token']);
 
 export const CLOUD_SYNC_KEYS = [
+  'meta_provider_token',
   'account_monthly_goals',
   'account_payment_methods',
   'account_last_payments',
@@ -43,11 +48,19 @@ export function readLocalCloudSnapshot(keys = CLOUD_SYNC_KEYS) {
     const rawValue = localStorage.getItem(key);
     if (!hasStoredValue(rawValue)) continue;
 
+    if (RAW_VALUE_KEYS.has(key)) {
+      snapshot[key] = rawValue;
+      presentKeys.push(key);
+      continue;
+    }
+
     try {
       snapshot[key] = JSON.parse(rawValue);
       presentKeys.push(key);
     } catch {
-      // Ignore invalid payloads instead of corrupting the remote backup.
+      // Preserve plain strings instead of dropping them from the backup.
+      snapshot[key] = rawValue;
+      presentKeys.push(key);
     }
   }
 
@@ -156,7 +169,9 @@ export function applyCloudSnapshotToLocal(snapshot, presentKeys, keys = CLOUD_SY
 
   for (const key of keys) {
     if (presentKeySet.has(key)) {
-      const nextValue = JSON.stringify(snapshot[key]);
+      const nextValue = RAW_VALUE_KEYS.has(key)
+        ? String(snapshot[key] ?? '')
+        : JSON.stringify(snapshot[key]);
       if (localStorage.getItem(key) !== nextValue) {
         localStorage.setItem(key, nextValue);
         changedLocal = true;
