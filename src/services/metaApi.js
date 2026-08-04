@@ -1,3 +1,10 @@
+import {
+    META_TOKEN_EXPIRED_MESSAGE,
+    clearInvalidMetaToken,
+    getStoredMetaToken,
+    isInvalidMetaTokenError,
+} from './metaTokenGuard';
+
 const IS_DEV = import.meta.env.DEV;
 // Em produção, todas as requisições passam pelo proxy backend (token Meta fica server-side).
 // Em desenvolvimento, vai direto à Graph API (sem precisar de servidor Vercel local).
@@ -11,13 +18,15 @@ const getAccessToken = () => {
         if (envToken) return envToken;
     }
 
-    return localStorage.getItem('meta_provider_token');
+    return getStoredMetaToken();
 };
 
 // Constrói URL + headers de acordo com modo (proxy ou direto). Token OAuth do user
 // vai via header `x-meta-token` em modo proxy, para não vazar em logs do servidor.
-function buildRequest(path, params = {}, method = 'GET', body = null) {
-    const token = getAccessToken();
+// Com `skipClientToken`, nenhum token do aparelho é enviado e o proxy usa o token
+// do servidor (usado no retry após um token local ser invalidado pela Meta).
+function buildRequest(path, params = {}, method = 'GET', body = null, { skipClientToken = false } = {}) {
+    const token = skipClientToken ? null : getAccessToken();
     const headers = { Accept: 'application/json' };
     let url;
 
@@ -57,30 +66,70 @@ function buildRequest(path, params = {}, method = 'GET', body = null) {
     return { url: url.toString(), fetchOptions };
 }
 
-async function runRequest(path, params, method, body) {
-    const { url, fetchOptions } = buildRequest(path, params, method, body);
+async function executeRequest(path, params, method, body, options) {
+    const { url, fetchOptions } = buildRequest(path, params, method, body, options);
+    const response = await fetch(url, fetchOptions);
+    const text = await response.text();
+    let data = {};
     try {
-        const response = await fetch(url, fetchOptions);
-        const text = await response.text();
-        let data = {};
-        try {
-            data = text ? JSON.parse(text) : {};
-        } catch {
-            data = { raw: text };
-        }
-        if (!response.ok) {
-            const metaError = data.error || {};
-            const details = [
-                metaError.message || response.statusText || `Erro da Meta API (${response.status})`,
-                metaError.code ? `code=${metaError.code}` : null,
-                metaError.error_subcode ? `subcode=${metaError.error_subcode}` : null,
-            ].filter(Boolean).join(' | ');
-            throw new Error(details);
-        }
-        return data;
+        data = text ? JSON.parse(text) : {};
+    } catch {
+        data = { raw: text };
+    }
+    return { response, data };
+}
+
+async function runRequest(path, params, method, body) {
+    let attempt;
+    try {
+        attempt = await executeRequest(path, params, method, body, {});
     } catch (err) {
+        // Falha de rede/CORS — nem chegou a haver resposta da Meta.
         throw new Error(`Falha na requisição Meta API: ${err.message}`);
     }
+
+    // Token do aparelho morto (senha alterada, sessão revogada pelo Facebook):
+    // descarta e refaz a chamada usando o token do servidor, para o usuário não
+    // ficar sem dados só porque este aparelho está com uma credencial velha.
+    // O proxy marca esse header quando o token deste aparelho foi recusado pela
+    // Meta — inclusive quando ele conseguiu salvar a chamada usando o token do
+    // servidor. Descartar aqui evita repetir a ida e volta a cada requisição.
+    if (attempt.response.headers.get('x-meta-token-invalid') === '1') {
+        clearInvalidMetaToken();
+    }
+
+    let tokenWasInvalidated = false;
+    if (!attempt.response.ok && isInvalidMetaTokenError(attempt.data)) {
+        tokenWasInvalidated = clearInvalidMetaToken();
+        if (tokenWasInvalidated && USE_PROXY) {
+            try {
+                attempt = await executeRequest(path, params, method, body, { skipClientToken: true });
+            } catch {
+                // Mantém o erro original da primeira tentativa.
+            }
+        }
+    }
+
+    if (!attempt.response.ok) {
+        const { response, data } = attempt;
+        // Se o retry com o token do servidor voltou 401, a sessão do app também
+        // caiu neste aparelho (o cookie de login dura 7 dias) — pedir novo login.
+        if (tokenWasInvalidated && response.status === 401 && !data.error?.code) {
+            throw new Error(`${META_TOKEN_EXPIRED_MESSAGE} Se o erro continuar, saia e entre novamente no painel.`);
+        }
+        if (tokenWasInvalidated || isInvalidMetaTokenError(data)) {
+            throw new Error(META_TOKEN_EXPIRED_MESSAGE);
+        }
+        const metaError = data.error || {};
+        const details = [
+            metaError.message || response.statusText || `Erro da Meta API (${response.status})`,
+            metaError.code ? `code=${metaError.code}` : null,
+            metaError.error_subcode ? `subcode=${metaError.error_subcode}` : null,
+        ].filter(Boolean).join(' | ');
+        throw new Error(`Falha na requisição Meta API: ${details}`);
+    }
+
+    return attempt.data;
 }
 
 const fetchMeta = (path, params = {}) => runRequest(path, params, 'GET', null);

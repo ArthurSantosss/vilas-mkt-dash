@@ -7,6 +7,7 @@ import {
   fetchCampaignsWithInsights,
 } from '../services/metaApi';
 import { calculateMetaBalance } from '../shared/utils/metaBalance';
+import { META_TOKEN_INVALIDATED_EVENT } from '../services/metaTokenGuard';
 
 const MetaAdsContext = createContext();
 
@@ -32,13 +33,20 @@ export function MetaAdsProvider({ children }) {
     const handleAccountToggle = () => {
       queryClient.invalidateQueries({ queryKey: ['meta', 'adAccounts'] });
     };
+    // Token do aparelho foi invalidado pela Meta e removido: refaz as queries,
+    // que agora passam a usar o token do servidor via proxy.
+    const handleTokenInvalidated = () => {
+      queryClient.invalidateQueries({ queryKey: ['meta'] });
+    };
     window.addEventListener('storage', handleStorageChange);
     window.addEventListener('meta-token-updated', handleTokenUpdate);
     window.addEventListener('meta-accounts-toggled', handleAccountToggle);
+    window.addEventListener(META_TOKEN_INVALIDATED_EVENT, handleTokenInvalidated);
     return () => {
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('meta-token-updated', handleTokenUpdate);
       window.removeEventListener('meta-accounts-toggled', handleAccountToggle);
+      window.removeEventListener(META_TOKEN_INVALIDATED_EVENT, handleTokenInvalidated);
     };
   }, [queryClient]);
 

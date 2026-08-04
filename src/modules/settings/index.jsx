@@ -13,6 +13,12 @@ import {
   loadStoredGoogleAdsConnection,
   syncGoogleAdsAccounts,
 } from '../../services/googleAdsApi';
+import {
+  META_TOKEN_EXPIRED_MESSAGE,
+  META_TOKEN_INVALIDATED_EVENT,
+  clearInvalidMetaToken,
+  isInvalidMetaTokenError,
+} from '../../services/metaTokenGuard';
 
 function FacebookIcon({ className = 'w-5 h-5' }) {
   return (
@@ -99,6 +105,7 @@ async function fetchMetaProxy(path, token, params = {}) {
     const payload = await response.json();
 
     if (!response.ok) {
+      if (isInvalidMetaTokenError(payload)) throw new Error(META_TOKEN_EXPIRED_MESSAGE);
       throw new Error(payload?.error?.message || payload?.error || `Erro da Meta API (${response.status})`);
     }
 
@@ -121,6 +128,15 @@ async function fetchMetaProxy(path, token, params = {}) {
   const payload = await response.json();
 
   if (!response.ok) {
+    // Token deste aparelho foi invalidado pela Meta: descarta e tenta de novo
+    // sem ele, deixando o proxy usar o token do servidor.
+    if (isInvalidMetaTokenError(payload)) {
+      const removed = clearInvalidMetaToken();
+      if (removed && token) {
+        return fetchMetaProxy(path, null, params);
+      }
+      throw new Error(META_TOKEN_EXPIRED_MESSAGE);
+    }
     throw new Error(payload?.error?.message || payload?.error || `Erro da Meta API (${response.status})`);
   }
 
@@ -262,15 +278,23 @@ export default function Settings() {
       }
     };
     const handleGoogleAdsUpdated = () => refreshGoogleState();
+    // A Meta invalidou o token deste aparelho: mostra como desconectado para o
+    // usuário poder reconectar, sem apagar as contas já carregadas.
+    const handleMetaTokenInvalidated = () => {
+      setMetaToken(null);
+      setError(META_TOKEN_EXPIRED_MESSAGE);
+    };
     window.addEventListener('storage', syncPaymentMethods);
     window.addEventListener('focus', syncPaymentMethods);
     window.addEventListener('local-storage-map-updated', handleLocalStorageMapUpdated);
     window.addEventListener('google-ads-updated', handleGoogleAdsUpdated);
+    window.addEventListener(META_TOKEN_INVALIDATED_EVENT, handleMetaTokenInvalidated);
     return () => {
       window.removeEventListener('storage', syncPaymentMethods);
       window.removeEventListener('focus', syncPaymentMethods);
       window.removeEventListener('local-storage-map-updated', handleLocalStorageMapUpdated);
       window.removeEventListener('google-ads-updated', handleGoogleAdsUpdated);
+      window.removeEventListener(META_TOKEN_INVALIDATED_EVENT, handleMetaTokenInvalidated);
     };
   }, [refreshGoogleState]);
 

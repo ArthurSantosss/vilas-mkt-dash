@@ -168,9 +168,15 @@ export function applyCloudSnapshotToLocal(snapshot, presentKeys, keys = CLOUD_SY
   let changedLocal = false;
 
   for (const key of keys) {
-    if (presentKeySet.has(key)) {
+    // A chave pode estar no manifesto mas ter sido apagada da nuvem depois
+    // (ex.: token Meta invalidado). Nesse caso ela conta como ausente, senão
+    // restauraríamos um valor vazio por cima do que existe no aparelho.
+    const listed = presentKeySet.has(key);
+    const hasValue = listed && snapshot[key] !== undefined && snapshot[key] !== null;
+
+    if (hasValue) {
       const nextValue = RAW_VALUE_KEYS.has(key)
-        ? String(snapshot[key] ?? '')
+        ? String(snapshot[key])
         : JSON.stringify(snapshot[key]);
       if (localStorage.getItem(key) !== nextValue) {
         localStorage.setItem(key, nextValue);
@@ -179,13 +185,30 @@ export function applyCloudSnapshotToLocal(snapshot, presentKeys, keys = CLOUD_SY
       continue;
     }
 
-    if (pruneMissing && localStorage.getItem(key) !== null) {
+    if ((pruneMissing || listed) && localStorage.getItem(key) !== null) {
       localStorage.removeItem(key);
       changedLocal = true;
     }
   }
 
   return changedLocal;
+}
+
+/**
+ * Apaga chaves específicas do backup na nuvem sem reenviar o snapshot inteiro.
+ * Usado para descartar credenciais que a Meta invalidou, evitando que o próximo
+ * login as restaure em outro aparelho.
+ */
+export async function purgeCloudKeys(supabase, email, keys) {
+  if (!email || !Array.isArray(keys) || keys.length === 0) return false;
+
+  const { error } = await supabase
+    .from('app_preferences')
+    .delete()
+    .in('key', keys.map((key) => getPrefixedKey(email, key)));
+
+  if (error) throw error;
+  return true;
 }
 
 export async function loadCloudSnapshot(supabase, email, keys = CLOUD_SYNC_KEYS) {
