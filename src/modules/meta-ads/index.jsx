@@ -1318,8 +1318,214 @@ export default function MetaAdsOverview() {
         </div>
       )}
 
+      {/* Mobile cards */}
+      <div className="sm:hidden space-y-3">
+        {filteredAccounts.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-border bg-surface/60 px-4 py-8 text-center text-sm text-text-secondary">
+            Nenhuma conta encontrada com os filtros atuais.
+          </div>
+        ) : (
+          filteredAccounts.map((account) => {
+            const isExpanded = expandedAccount === account.id;
+            const accountCampaigns = getCampaignsForAccount(account.id);
+            const hasCampaigns = accountCampaigns.length > 0;
+            const accountBalance = balances.find((b) => b.accountId === account.id || b.accountId === account.accountId);
+            const accountGoal = monthlyGoals[account.id] || monthlyGoals[account.accountId] || 0;
+            const topCampaigns = accountCampaigns.slice(0, 3);
+
+            return (
+              <div key={account.id} className="rounded-2xl border border-border/60 bg-surface shadow-[0_2px_12px_-4px_rgba(0,0,0,0.3)] overflow-hidden">
+                <div className="p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <AccountNameEditor
+                          accountId={account.id}
+                          defaultName={account.clientName}
+                          customNames={customNames}
+                          setCustomNames={setCustomNames}
+                        />
+                        <span className={`shrink-0 text-[10px] px-2 py-0.5 rounded-full border ${account.status === 'active' ? 'bg-success/10 text-success border-success/20' : 'bg-text-secondary/10 text-text-secondary border-border/40'}`}>
+                          {account.status === 'active' ? 'Ativa' : 'Pausada'}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[11px] text-text-secondary">
+                        {hasCampaigns ? `${accountCampaigns.length} campanha${accountCampaigns.length !== 1 ? 's' : ''} em análise` : 'Sem campanhas no período'}
+                      </p>
+                    </div>
+
+                    {hasCampaigns && (
+                      <button
+                        type="button"
+                        onClick={() => setExpandedAccount(isExpanded ? null : account.id)}
+                        className="shrink-0 inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border/60 bg-bg/70 text-text-secondary transition hover:border-primary/30 hover:text-text-primary"
+                        aria-label={isExpanded ? 'Recolher conta' : 'Expandir conta'}
+                      >
+                        {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-2 gap-2.5">
+                    <div className="rounded-xl border border-border/50 bg-bg/40 p-3">
+                      <span className="block text-[10px] uppercase tracking-wider text-text-secondary">Gasto</span>
+                      <span className="mt-1 block text-base font-bold text-text-primary">{formatCurrency(account.metrics?.spend || 0)}</span>
+                    </div>
+                    <div className="rounded-xl border border-border/50 bg-bg/40 p-3">
+                      <span className="block text-[10px] uppercase tracking-wider text-text-secondary">Mensagens</span>
+                      <span className="mt-1 block text-base font-bold text-text-primary">{formatNumber(account.metrics?.messagingConversationsStarted || 0)}</span>
+                    </div>
+                    <div className="rounded-xl border border-border/50 bg-bg/40 p-3">
+                      <span className="block text-[10px] uppercase tracking-wider text-text-secondary">Custo / Msg</span>
+                      <span className={`mt-1 block text-base font-bold ${getCostColor(account.metrics?.costPerMessage || 0)}`}>
+                        {account.metrics?.costPerMessage > 0 ? formatCurrency(account.metrics.costPerMessage) : '—'}
+                      </span>
+                    </div>
+                    <div className="rounded-xl border border-border/50 bg-bg/40 p-3">
+                      <span className="block text-[10px] uppercase tracking-wider text-text-secondary">Saldo</span>
+                      <span className={`mt-1 block text-base font-bold ${accountBalance?.currentBalance === null ? 'text-text-secondary' : accountBalance?.currentBalance > 0 && accountBalance.currentBalance < 50 ? 'text-danger' : accountBalance?.currentBalance < 150 ? 'text-warning' : 'text-success'}`}>
+                        {accountBalance?.currentBalance === null ? '—' : formatCurrency(accountBalance?.currentBalance || 0)}
+                      </span>
+                    </div>
+                    <div className="rounded-xl border border-border/50 bg-bg/40 p-3">
+                      <span className="block text-[10px] uppercase tracking-wider text-text-secondary">CTR</span>
+                      <span className="mt-1 block text-base font-bold text-text-primary">
+                        {account.metrics?.ctr > 0 ? formatPercent(account.metrics.ctr) : '—'}
+                      </span>
+                    </div>
+                    <div className="rounded-xl border border-border/50 bg-bg/40 p-3">
+                      <span className="block text-[10px] uppercase tracking-wider text-text-secondary">Meta mensal</span>
+                      <span className="mt-1 block text-base font-bold text-text-primary">
+                        {accountGoal > 0 ? formatCurrency(accountGoal) : '—'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {isExpanded && hasCampaigns && (
+                    <div className="mt-4 space-y-2">
+                      <div className="flex items-center justify-between px-1">
+                        <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary">Campanhas</span>
+                        <span className="text-[11px] text-text-secondary">{topCampaigns.length}/{accountCampaigns.length} exibidas</span>
+                      </div>
+
+                      {topCampaigns.map((campaign) => {
+                        const isCampaignExpanded = expandedCampaign === campaign.id;
+                        const campaignAdSets = adSets[campaign.id] || [];
+                        const isLoadingAdSets = adSetsLoading[campaign.id];
+                        const budgetSource = getCampaignBudgetSource(campaign);
+                        const campaignBudgetLabel = budgetSource === 'campaign'
+                          ? (campaign.dailyBudget > 0 ? formatCurrency(campaign.dailyBudget) : '—')
+                          : 'CBO';
+
+                        return (
+                          <div key={campaign.id} className="rounded-xl border border-border/50 bg-bg/35 p-3">
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); handleExpandCampaign(campaign.id); }}
+                              className="flex w-full items-start justify-between gap-3 text-left"
+                            >
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <MetaToggle
+                                    isActive={campaign.status === 'active'}
+                                    isToggling={!!togglingCampaigns[campaign.id]}
+                                    onToggle={(e) => { e.stopPropagation(); handleToggleCampaign(campaign); }}
+                                    size="sm"
+                                    title={campaign.status === 'active' ? 'Pausar campanha' : 'Ativar campanha'}
+                                  />
+                                  <span className="truncate text-sm font-medium text-text-primary">{campaign.name}</span>
+                                </div>
+                                <p className="mt-1 text-[11px] text-text-secondary">
+                                  {campaign.objective || 'Objetivo não informado'}
+                                </p>
+                              </div>
+
+                              <span className="shrink-0 rounded-full border border-primary/20 bg-primary/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary-light">
+                                {isCampaignExpanded ? 'Aberta' : 'Ver'}
+                              </span>
+                            </button>
+
+                            <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+                              <div className="rounded-lg border border-border/40 bg-surface/60 p-2">
+                                <span className="block text-text-secondary uppercase tracking-wider">Gasto</span>
+                                <span className="mt-1 block font-semibold text-text-primary">{formatCurrency(campaign.metrics?.spend || 0)}</span>
+                              </div>
+                              <div className="rounded-lg border border-border/40 bg-surface/60 p-2">
+                                <span className="block text-text-secondary uppercase tracking-wider">Mensagens</span>
+                                <span className="mt-1 block font-semibold text-text-primary">{formatNumber(campaign.metrics?.messages || 0)}</span>
+                              </div>
+                              <div className="rounded-lg border border-border/40 bg-surface/60 p-2">
+                                <span className="block text-text-secondary uppercase tracking-wider">Custo / Msg</span>
+                                <span className={`mt-1 block font-semibold ${getCostColor(campaign.metrics?.costPerMessage || 0)}`}>
+                                  {campaign.metrics?.costPerMessage > 0 ? formatCurrency(campaign.metrics.costPerMessage) : '—'}
+                                </span>
+                              </div>
+                              <div className="rounded-lg border border-border/40 bg-surface/60 p-2">
+                                <span className="block text-text-secondary uppercase tracking-wider">Orçamento</span>
+                                <span className="mt-1 block font-semibold text-text-primary">{campaignBudgetLabel}</span>
+                              </div>
+                            </div>
+
+                            {isCampaignExpanded && (
+                              <div className="mt-3 space-y-2">
+                                {isLoadingAdSets ? (
+                                  <div className="rounded-lg border border-border/40 bg-bg/40 px-3 py-2 text-xs text-text-secondary">
+                                    Carregando conjuntos de anúncio...
+                                  </div>
+                                ) : campaignAdSets.length === 0 ? (
+                                  <div className="rounded-lg border border-border/40 bg-bg/40 px-3 py-2 text-xs text-text-secondary">
+                                    Nenhum conjunto de anúncio encontrado.
+                                  </div>
+                                ) : (
+                                  campaignAdSets.slice(0, 3).map((adSet) => (
+                                    <div key={adSet.id} className="rounded-lg border border-border/40 bg-bg/40 px-3 py-2">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <div className="min-w-0">
+                                          <p className="truncate text-xs font-medium text-text-primary">{adSet.name}</p>
+                                          <p className="mt-0.5 text-[11px] text-text-secondary">
+                                            {adSet.status?.toLowerCase?.() === 'active' ? 'Ativo' : 'Pausado'}
+                                          </p>
+                                        </div>
+                                        <span className="text-[11px] font-semibold text-text-primary">
+                                          {adSet.daily_budget ? formatCurrency(parseFloat(adSet.daily_budget) / 100) : '—'}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  ))
+                                )}
+                                {campaignAdSets.length > 3 && (
+                                  <p className="px-1 text-[11px] text-text-secondary">
+                                    +{campaignAdSets.length - 3} conjuntos adicionais
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+
+                      {accountCampaigns.length > topCampaigns.length && (
+                        <p className="px-1 text-[11px] text-text-secondary">
+                          +{accountCampaigns.length - topCampaigns.length} campanhas adicionais
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {!hasCampaigns && (
+                    <div className="mt-4 rounded-xl border border-dashed border-border/60 bg-bg/30 px-3 py-3 text-xs text-text-secondary">
+                      Nenhuma campanha encontrada para esta conta no período atual.
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
       {/* Table */}
-      <div className="bg-surface rounded-2xl border border-border overflow-hidden shadow-[0_2px_12px_-4px_rgba(0,0,0,0.3)]">
+      <div className="hidden sm:block bg-surface rounded-2xl border border-border overflow-hidden shadow-[0_2px_12px_-4px_rgba(0,0,0,0.3)]">
         <div className="overflow-x-auto -webkit-overflow-scrolling-touch">
           <table className="w-full text-sm min-w-[900px]">
             <thead>

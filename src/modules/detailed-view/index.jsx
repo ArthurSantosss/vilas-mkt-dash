@@ -1070,48 +1070,6 @@ export default function DetailedView() {
                         </BarChart>
                       </ResponsiveContainer>
 
-                      {/* Bottom metrics — CPM, Frequência e CTR */}
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-border/30">
-                        <div className="relative rounded-xl p-3 bg-surface/60 border border-border/30 overflow-hidden">
-                          <div className="absolute bottom-0 left-0 h-1 bg-gradient-to-r from-primary-light to-emerald-400 rounded-b-xl transition-all duration-700"
-                            style={{ width: '100%' }} />
-                          <span className="text-[9px] text-text-secondary block font-medium uppercase tracking-wider mb-1">CPM</span>
-                          <div className="flex items-baseline gap-1.5">
-                            <span className="text-sm font-bold text-text-primary" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
-                              {formatCurrency(displayMetrics.cpm)}
-                            </span>
-                            <DiffIndicator diff={diffs.cpm} />
-                          </div>
-                        </div>
-                        <div className="relative rounded-xl p-3 bg-surface/60 border border-border/30 overflow-hidden">
-                          <div className={`absolute bottom-0 left-0 h-1 rounded-b-xl transition-all duration-700 ${displayMetrics.frequency > 3 ? 'bg-gradient-to-r from-danger to-danger/60' : displayMetrics.frequency > 2 ? 'bg-gradient-to-r from-warning to-warning/60' : 'bg-gradient-to-r from-emerald-400 to-emerald-300'}`}
-                            style={{ width: `${Math.min((displayMetrics.frequency / 5) * 100, 100)}%` }} />
-                          <span className="text-[9px] text-text-secondary block font-medium uppercase tracking-wider mb-1">Frequência</span>
-                          <div className="flex items-baseline gap-1.5">
-                            <span className={`text-sm font-bold ${displayMetrics.frequency > 3 ? 'text-danger' : displayMetrics.frequency > 2 ? 'text-warning' : 'text-text-primary'}`}
-                              style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
-                              {displayMetrics.frequency > 0 ? displayMetrics.frequency.toFixed(2) : '—'}
-                            </span>
-                            <DiffIndicator diff={diffs.frequency} />
-                          </div>
-                          {displayMetrics.frequency > 3 && (
-                            <div className="absolute top-1 right-1">
-                              <span className="text-[7px] bg-danger/10 text-danger border border-danger/20 px-1 rounded font-bold uppercase">Alto</span>
-                            </div>
-                          )}
-                        </div>
-                        <div className="relative rounded-xl p-3 bg-surface/60 border border-border/30 overflow-hidden">
-                          <div className="absolute bottom-0 left-0 h-1 bg-gradient-to-r from-primary to-primary-light rounded-b-xl transition-all duration-700"
-                            style={{ width: `${Math.min((displayMetrics.ctr || 0) * 10, 100)}%` }} />
-                          <span className="text-[9px] text-text-secondary block font-medium uppercase tracking-wider mb-1">CTR</span>
-                          <div className="flex items-baseline gap-1.5">
-                            <span className="text-sm font-bold text-text-primary" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
-                              {displayMetrics.ctr > 0 ? `${displayMetrics.ctr.toFixed(2)}%` : '—'}
-                            </span>
-                            <DiffIndicator diff={diffs.ctr} invertColors={true} />
-                          </div>
-                        </div>
-                      </div>
                     </div>
                   );
                 })()}
