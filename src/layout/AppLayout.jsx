@@ -1,6 +1,7 @@
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import ProgressiveBlur from '../shared/components/ProgressiveBlur';
+import AssistantWidget from '../modules/assistant/AssistantWidget';
 
 export default function AppLayout() {
   return (
@@ -10,6 +11,7 @@ export default function AppLayout() {
         <Outlet />
       </main>
       <ProgressiveBlur />
+      <AssistantWidget />
     </div>
   );
 }
