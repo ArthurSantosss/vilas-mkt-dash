@@ -107,6 +107,8 @@ export default defineConfig(({ mode }) => {
               return 'vendor-recharts';
             }
             if (id.includes('/html-to-image/')) return 'vendor-export';
+            // Só é baixado ao abrir a aba de relatório em PDF (rota lazy).
+            if (id.includes('/@react-pdf/') || id.includes('/yoga-layout')) return 'vendor-pdf';
             if (id.includes('/@supabase/')) return 'vendor-supabase';
             if (id.includes('/lucide-react/')) return 'vendor-icons';
             if (id.includes('/@react-oauth/')) return 'vendor-oauth';

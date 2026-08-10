@@ -108,28 +108,6 @@ function KpiIcon({ name, color = '#94A3B8', size = 16 }) {
   }
 }
 
-// ── Delta helpers (variação % vs período anterior) ──
-function getDeltaPalette(intent, value) {
-  if (value == null) return null;
-  const num = parseFloat(value);
-  if (Number.isNaN(num)) return null;
-  const arrow = num >= 0 ? '▲' : '▼';
-  if (intent === 'neutral') {
-    return { color: '#CBD5E1', bg: 'rgba(203,213,225,0.08)', border: 'rgba(203,213,225,0.18)', arrow };
-  }
-  const isGood = intent === 'higher_is_better' ? num >= 0 : num < 0;
-  return isGood
-    ? { color: '#34D399', bg: 'rgba(52,211,153,0.10)', border: 'rgba(52,211,153,0.28)', arrow }
-    : { color: '#F87171', bg: 'rgba(248,113,113,0.10)', border: 'rgba(248,113,113,0.28)', arrow };
-}
-
-function formatDelta(value) {
-  if (value == null) return '';
-  const num = parseFloat(value);
-  if (Number.isNaN(num)) return '';
-  return `${Math.abs(num).toFixed(1)}%`;
-}
-
 const OBJECTIVES = {
   messages: {
     label: 'Mensagens',
@@ -138,11 +116,11 @@ const OBJECTIVES = {
     dailyKey: 'leads',
     dailyTitle: 'Mensagens por dia',
     buildKpis: (d) => [
-      { label: 'Investimento',     value: formatCurrency(d.spend),       color: '#22D3EE', icon: 'wallet',  diffKey: 'spend',       intent: 'neutral' },
-      { label: 'Mensagens',        value: formatNumber(d.leads),         color: '#38BDF8', icon: 'message', diffKey: 'leads',       intent: 'higher_is_better' },
-      { label: 'Custo / Mensagem', value: formatCurrency(d.costPerLead), color: '#F59E0B', icon: 'coins',   diffKey: 'costPerLead', intent: 'lower_is_better' },
-      { label: 'Alcance',          value: formatNumber(d.reach),         color: '#A78BFA', icon: 'users',   diffKey: 'reach',       intent: 'higher_is_better' },
-      { label: 'CTR',              value: formatPercent(d.ctr),          color: '#34D399', icon: 'percent', diffKey: 'ctr',         intent: 'higher_is_better' },
+      { label: 'Investimento',     value: formatCurrency(d.spend),       color: '#22D3EE', icon: 'wallet' },
+      { label: 'Mensagens',        value: formatNumber(d.leads),         color: '#38BDF8', icon: 'message' },
+      { label: 'Custo / Mensagem', value: formatCurrency(d.costPerLead), color: '#F59E0B', icon: 'coins' },
+      { label: 'Alcance',          value: formatNumber(d.reach),         color: '#A78BFA', icon: 'users' },
+      { label: 'CTR',              value: formatPercent(d.ctr),          color: '#34D399', icon: 'percent' },
     ],
     buildFunnel: (d) => [
       { label: 'Impressões', value: d.impressions, widthPct: 100, color: '#0C4A6E' },
@@ -158,11 +136,11 @@ const OBJECTIVES = {
     dailyKey: 'clicks',
     dailyTitle: 'Cliques por dia',
     buildKpis: (d) => [
-      { label: 'Investimento',   value: formatCurrency(d.spend),        color: '#22D3EE', icon: 'wallet',  diffKey: 'spend', intent: 'neutral' },
-      { label: 'Cliques',        value: formatNumber(d.clicks),         color: '#38BDF8', icon: 'click',   diffKey: 'clicks',       intent: 'higher_is_better' },
-      { label: 'Custo / Clique', value: formatCurrency(d.costPerClick), color: '#F59E0B', icon: 'coins',   diffKey: 'costPerClick', intent: 'lower_is_better' },
-      { label: 'CTR',            value: formatPercent(d.ctr),           color: '#34D399', icon: 'percent', diffKey: 'ctr',   intent: 'higher_is_better' },
-      { label: 'Alcance',        value: formatNumber(d.reach),          color: '#A78BFA', icon: 'users',   diffKey: 'reach', intent: 'higher_is_better' },
+      { label: 'Investimento',   value: formatCurrency(d.spend),        color: '#22D3EE', icon: 'wallet' },
+      { label: 'Cliques',        value: formatNumber(d.clicks),         color: '#38BDF8', icon: 'click' },
+      { label: 'Custo / Clique', value: formatCurrency(d.costPerClick), color: '#F59E0B', icon: 'coins' },
+      { label: 'CTR',            value: formatPercent(d.ctr),           color: '#34D399', icon: 'percent' },
+      { label: 'Alcance',        value: formatNumber(d.reach),          color: '#A78BFA', icon: 'users' },
     ],
     buildFunnel: (d) => [
       { label: 'Impressões', value: d.impressions, widthPct: 100, color: '#0C4A6E' },
@@ -177,11 +155,11 @@ const OBJECTIVES = {
     dailyKey: 'engagements',
     dailyTitle: 'Engajamentos por dia',
     buildKpis: (d) => [
-      { label: 'Investimento',        value: formatCurrency(d.spend),             color: '#22D3EE', icon: 'wallet',  diffKey: 'spend',             intent: 'neutral' },
-      { label: 'Engajamentos',        value: formatNumber(d.engagements),         color: '#38BDF8', icon: 'heart',   diffKey: 'engagements',       intent: 'higher_is_better' },
-      { label: 'Custo / Engajamento', value: formatCurrency(d.costPerEngagement), color: '#F59E0B', icon: 'coins',   diffKey: 'costPerEngagement', intent: 'lower_is_better' },
-      { label: 'Alcance',             value: formatNumber(d.reach),               color: '#A78BFA', icon: 'users',   diffKey: 'reach',             intent: 'higher_is_better' },
-      { label: 'CTR',                 value: formatPercent(d.ctr),                color: '#34D399', icon: 'percent', diffKey: 'ctr',               intent: 'higher_is_better' },
+      { label: 'Investimento',        value: formatCurrency(d.spend),             color: '#22D3EE', icon: 'wallet' },
+      { label: 'Engajamentos',        value: formatNumber(d.engagements),         color: '#38BDF8', icon: 'heart' },
+      { label: 'Custo / Engajamento', value: formatCurrency(d.costPerEngagement), color: '#F59E0B', icon: 'coins' },
+      { label: 'Alcance',             value: formatNumber(d.reach),               color: '#A78BFA', icon: 'users' },
+      { label: 'CTR',                 value: formatPercent(d.ctr),                color: '#34D399', icon: 'percent' },
     ],
     buildFunnel: (d) => [
       { label: 'Impressões', value: d.impressions, widthPct: 100, color: '#0C4A6E' },
@@ -191,7 +169,7 @@ const OBJECTIVES = {
   },
 };
 
-function ReportKPI({ label, value, color = '#38BDF8', icon, delta }) {
+function ReportKPI({ label, value, color = '#38BDF8', icon }) {
   return (
     <div style={{
       background: 'linear-gradient(155deg, rgba(15,22,38,0.96) 0%, rgba(20,29,48,0.96) 100%)',
@@ -255,26 +233,6 @@ function ReportKPI({ label, value, color = '#38BDF8', icon, delta }) {
         textShadow: `0 0 22px ${color}40`,
         position: 'relative',
       }}>{value}</div>
-
-      {/* Delta pill */}
-      {delta && (
-        <div style={{
-          marginTop: 8,
-          display: 'inline-flex', alignItems: 'center', gap: 4,
-          padding: '3px 9px', borderRadius: 999,
-          fontSize: 10, fontWeight: 800, letterSpacing: '0.02em',
-          fontFamily: REPORT_FONT_FAMILY,
-          fontVariantNumeric: 'tabular-nums',
-          color: delta.color,
-          background: delta.bg,
-          border: `1px solid ${delta.border}`,
-          position: 'relative',
-          lineHeight: 1,
-        }}>
-          <span style={{ fontSize: 8, lineHeight: 1 }}>{delta.arrow}</span>
-          {formatDelta(delta.value)}
-        </div>
-      )}
     </div>
   );
 }
@@ -373,7 +331,7 @@ const ReportCard = function ReportCard({
 }) {
   const d = data;
   const config = OBJECTIVES[objective] || OBJECTIVES.messages;
-  const baseKpis = config.buildKpis(d);
+  const kpis = config.buildKpis(d);
   const funnelStages = config.buildFunnel(d);
   const dailyData = useMemo(() => {
     if (!withBarChart) return [];
@@ -381,16 +339,6 @@ const ReportCard = function ReportCard({
     return d[key] || [];
   }, [withBarChart, config.dailyKey, d]);
   const metricLabel = config.metricLabel.toLowerCase();
-
-  // Attach delta info per KPI based on diffs available in data
-  const kpis = useMemo(() => baseKpis.map((kpi) => {
-    if (!kpi.diffKey || !d.diffs) return kpi;
-    const raw = d.diffs[kpi.diffKey];
-    if (raw == null) return kpi;
-    const palette = getDeltaPalette(kpi.intent, raw);
-    if (!palette) return kpi;
-    return { ...kpi, delta: { ...palette, value: raw } };
-  }), [baseKpis, d.diffs]);
 
   // Average for the daily bar chart reference line
   const dailyAvg = useMemo(() => {
@@ -505,7 +453,6 @@ const ReportCard = function ReportCard({
             value={kpi.value}
             color={kpi.color}
             icon={kpi.icon}
-            delta={kpi.delta}
           />
         ))}
       </div>

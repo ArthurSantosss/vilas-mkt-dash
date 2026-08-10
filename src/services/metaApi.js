@@ -264,6 +264,30 @@ export const fetchAdsForAdSet = async (adSetId, period = '7d') => {
 };
 
 /**
+ * Busca todos os anúncios de uma conta com insights e miniatura do criativo,
+ * numa única requisição. Usado pelo relatório em PDF para ranquear criativos
+ * sem precisar percorrer campanha → conjunto → anúncio.
+ * `image_url` traz a imagem em resolução cheia; `thumbnail_url` é o fallback.
+ */
+export const fetchAdsWithInsights = async (accountId, period = '7d', limit = 60) => {
+    const preset = getPresetFromPeriod(period);
+
+    let insightsField = 'insights';
+    if (preset) {
+        insightsField = `insights.date_preset(${preset})`;
+    } else if (typeof period === 'object' && period.type === 'custom' && period.startDate && period.endDate) {
+        insightsField = `insights.time_range({'since':'${period.startDate}','until':'${period.endDate}'})`;
+    }
+
+    const data = await fetchMeta(`/${accountId}/ads`, {
+        fields: `id,name,status,campaign{name},creative{title,body,thumbnail_url,image_url},${insightsField}{spend,impressions,inline_link_clicks,ctr,cpc,actions,reach}`,
+        limit,
+    });
+
+    return data.data || [];
+};
+
+/**
  * Busca breakdown por região (estado) para uma conta ou campanha.
  * Usa level=campaign para garantir que o breakdown funcione corretamente.
  */

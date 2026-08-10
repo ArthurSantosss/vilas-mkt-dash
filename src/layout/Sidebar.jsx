@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Calendar, Megaphone, Wallet, Search,
-  SearchCheck, Settings, FileText, Image, Lightbulb,
+  SearchCheck, Settings, FileText, FileDown, Image, Lightbulb,
   Bell, Scale, Menu, X
 } from 'lucide-react';
 import { useAlerts } from '../contexts/AlertsContext';
@@ -14,6 +14,7 @@ const navItems = [
   { path: '/visao-detalhada', label: 'Visão Detalhada', icon: SearchCheck },
   { path: '/relatorio-texto', label: 'Relatório Texto', icon: FileText },
   { path: '/relatorio-visual', label: 'Relatório Visual', icon: Image },
+  { path: '/relatorio-pdf', label: 'Relatório PDF', icon: FileDown },
   { path: '/avisos', label: 'Avisos Automáticos', icon: Bell },
   { path: '/configuracoes', label: 'Configurações', icon: Settings },
 ];
