@@ -14,7 +14,7 @@ export function MetaAdsProvider({ children }) {
   const queryClient = useQueryClient();
   const [selectedPeriod, setSelectedPeriod] = useState('today');
   const [hasToken, setHasToken] = useState(
-    () => !!localStorage.getItem('meta_provider_token') || true // Assume true inicialmente, proxy resolve
+    () => !!localStorage.getItem('meta_provider_token')
   );
 
   // Escutar mudanças no token (login oauth)
@@ -26,7 +26,7 @@ export function MetaAdsProvider({ children }) {
       }
     };
     const handleTokenUpdate = () => {
-      setHasToken(true);
+      setHasToken(!!localStorage.getItem('meta_provider_token'));
       queryClient.invalidateQueries({ queryKey: ['meta'] });
     };
     const handleAccountToggle = () => {

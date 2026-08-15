@@ -284,8 +284,10 @@ export default function Settings() {
         const trimmed = token.trim();
         setMetaToken(trimmed);
         localStorage.setItem(STORAGE_KEYS.META_TOKEN, trimmed);
+        window.dispatchEvent(new Event('meta-token-updated'));
         window.dispatchEvent(new CustomEvent('local-storage-map-updated'));
         await fetchMetaAccounts(trimmed);
+        if (user?.email) await syncToCloud(user.email);
       }
       return;
     }
@@ -305,8 +307,10 @@ export default function Settings() {
         const trimmed = token.trim();
         setMetaToken(trimmed);
         localStorage.setItem(STORAGE_KEYS.META_TOKEN, trimmed);
+        window.dispatchEvent(new Event('meta-token-updated'));
         window.dispatchEvent(new CustomEvent('local-storage-map-updated'));
         await fetchMetaAccounts(trimmed);
+        if (user?.email) await syncToCloud(user.email);
       }
       return;
     }
@@ -318,8 +322,11 @@ export default function Settings() {
           const token = response.authResponse.accessToken;
           setMetaToken(token);
           localStorage.setItem(STORAGE_KEYS.META_TOKEN, token);
+          window.dispatchEvent(new Event('meta-token-updated'));
           window.dispatchEvent(new CustomEvent('local-storage-map-updated'));
-          fetchMetaAccounts(token);
+          fetchMetaAccounts(token).finally(() => {
+            if (user?.email) syncToCloud(user.email);
+          });
         } else {
           setLoadingMeta(false);
         }
@@ -328,14 +335,16 @@ export default function Settings() {
     );
   };
 
-  const handleDisconnectMeta = () => {
+  const handleDisconnectMeta = async () => {
     setMetaToken(null);
     setMetaUser(null);
     setMetaAccounts([]);
     localStorage.removeItem(STORAGE_KEYS.META_TOKEN);
     localStorage.removeItem(STORAGE_KEYS.META_USER);
     localStorage.removeItem(STORAGE_KEYS.META_ACCOUNTS);
+    window.dispatchEvent(new Event('meta-token-updated'));
     window.dispatchEvent(new CustomEvent('local-storage-map-updated'));
+    if (user?.email) await syncToCloud(user.email);
   };
 
   const toggleAccount = (accountId) => {

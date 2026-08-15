@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../services/supabase';
+import { saveCloudSnapshot } from '../../shared/utils/cloudBackup';
 import {
     completeGoogleAdsOAuthCallback,
     isGoogleAdsOAuthCallback,
@@ -12,13 +13,26 @@ export default function AuthCallback() {
     const [status] = useState('Conectando sua conta...');
 
     useEffect(() => {
+        const readStoredAuthEmail = () => {
+            try {
+                const raw = localStorage.getItem('vilasmkt_auth');
+                if (!raw) return null;
+                const parsed = JSON.parse(raw);
+                return parsed?.email ? String(parsed.email).trim().toLowerCase() : null;
+            } catch {
+                return null;
+            }
+        };
+
         const saveTokensAndSync = async (session) => {
             if (!session?.provider_token) return;
 
             const provider = session.user?.app_metadata?.provider || 'unknown';
+            const authEmail = readStoredAuthEmail() || session.user?.email?.trim().toLowerCase() || null;
 
             if (provider === 'facebook') {
                 localStorage.setItem('meta_provider_token', session.provider_token);
+                window.dispatchEvent(new Event('meta-token-updated'));
                 console.log('✅ Token Meta salvo com sucesso');
             } else if (provider === 'google') {
                 localStorage.setItem('google_provider_token', session.provider_token);
@@ -26,6 +40,14 @@ export default function AuthCallback() {
                 localStorage.removeItem('google_provider_refresh_token');
                 window.dispatchEvent(new Event('storage'));
                 console.log('✅ Token Google salvo com sucesso');
+            }
+
+            if (authEmail) {
+                try {
+                    await saveCloudSnapshot(supabase, authEmail);
+                } catch (err) {
+                    console.error('Erro ao sincronizar credenciais na nuvem:', err);
+                }
             }
         };
 
