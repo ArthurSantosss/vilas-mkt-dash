@@ -1283,18 +1283,7 @@ export default function DetailedView() {
 // ═══════════════════════════════════════════════════════
 
 function DiffIndicator({ diff, invertColors = false, className = '' }) {
-  if (diff === undefined || diff === null) return null;
-  const isPositive = diff > 0;
-  const isGood = invertColors ? isPositive : !isPositive;
-  const color = isGood ? 'text-success' : 'text-danger';
-  const Arrow = isPositive ? TrendingUp : TrendingDown;
-  
-  return (
-    <div className={`flex items-center gap-0.5 text-[9px] font-bold ${color} ${className}`}>
-      <Arrow size={10} />
-      {Math.abs(diff).toFixed(1)}%
-    </div>
-  );
+  return null;
 }
 
 function KPICard({ label, value, diff, invertColors = false }) {
@@ -1302,16 +1291,6 @@ function KPICard({ label, value, diff, invertColors = false }) {
     <div className="bg-surface/40 rounded-2xl border border-border/50 p-5 shadow-lg shadow-black/10 transition-all duration-300 hover:border-border relative overflow-hidden group">
       <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">{label}</span>
       <p className="text-2xl font-bold text-text-primary mt-1.5 tracking-tight">{value}</p>
-      {diff !== undefined && diff !== 0 && (() => {
-        const isPositive = diff > 0;
-        const isGood = invertColors ? isPositive : !isPositive;
-        return (
-          <div className={`flex items-center gap-1 text-[11px] font-semibold mt-2.5 px-2 py-0.5 rounded-md w-fit ${isGood ? 'bg-success/8 text-success' : 'bg-danger/8 text-danger'}`}>
-            {isPositive ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-            {Math.abs(diff).toFixed(1)}% vs. período anterior
-          </div>
-        );
-      })()}
     </div>
   );
 }
