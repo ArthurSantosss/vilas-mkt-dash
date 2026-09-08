@@ -43,14 +43,6 @@ function readSavedMonthlyGoals() {
   }
 }
 
-function readCustomAccountNames() {
-  try {
-    return JSON.parse(localStorage.getItem('custom_account_names') || '{}');
-  } catch {
-    return {};
-  }
-}
-
 function readSavedNotes() {
   try {
     return JSON.parse(localStorage.getItem('meta_ads_notes') || '{}');
@@ -58,77 +50,6 @@ function readSavedNotes() {
     return {};
   }
 }
-
-// ── Account Name Editor ──
-const AccountNameEditor = React.memo(function AccountNameEditor({ accountId, defaultName, customNames, setCustomNames }) {
-  const [editing, setEditing] = useState(false);
-  const currentName = customNames[accountId] || defaultName;
-  const [draft, setDraft] = useState('');
-  const inputRef = useRef(null);
-
-  useEffect(() => {
-    if (editing && inputRef.current) {
-      inputRef.current.focus();
-    }
-  }, [editing]);
-
-  const handleOpen = (e) => {
-    e.stopPropagation();
-    setDraft(currentName);
-    setEditing(true);
-  };
-
-  const handleSave = (e) => {
-    e?.stopPropagation();
-    const newNames = { ...customNames, [accountId]: draft.trim() };
-    if (!draft.trim()) {
-      delete newNames[accountId];
-    }
-    setCustomNames(newNames);
-    localStorage.setItem('custom_account_names', JSON.stringify(newNames));
-    window.dispatchEvent(new CustomEvent('local-storage-map-updated', { detail: { key: 'custom_account_names', value: newNames } }));
-    setEditing(false);
-  };
-
-  const handleCancel = (e) => {
-    e?.stopPropagation();
-    setEditing(false);
-  };
-
-  if (editing) {
-    return (
-      <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-        <input
-          ref={inputRef}
-          type="text"
-          value={draft}
-          onChange={e => setDraft(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') handleCancel(); }}
-          className="w-40 bg-bg border border-primary/40 rounded px-1.5 py-0.5 text-xs text-text-primary focus:outline-none focus:border-primary"
-        />
-        <button onClick={handleSave} className="p-0.5 rounded hover:bg-success/20 text-success transition-colors" title="Salvar">
-          <Check size={12} />
-        </button>
-        <button onClick={handleCancel} className="p-0.5 rounded hover:bg-danger/20 text-danger transition-colors" title="Cancelar">
-          <X size={12} />
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="group flex items-center gap-2">
-      <span className="font-medium text-text-primary">{currentName}</span>
-      <button
-        onClick={handleOpen}
-        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-surface-hover rounded text-text-secondary hover:text-primary transition-all"
-        title="Editar nome"
-      >
-        <Pencil size={12} />
-      </button>
-    </div>
-  );
-});
 
 // ── Meta-style Toggle Switch ──
 const MetaToggle = React.memo(function MetaToggle({ isActive, isToggling, onToggle, size = 'md', title }) {
@@ -599,7 +520,6 @@ export default function MetaAdsOverview() {
   const [lastPayments, setLastPayments] = useState(() => readSavedLastPayments());
   const [billingFrequencies, setBillingFrequencies] = useState(() => readSavedBillingFrequencies());
   const [nextPaymentOverrides, setNextPaymentOverrides] = useState(() => readSavedNextPaymentOverrides());
-  const [customNames, setCustomNames] = useState(() => readCustomAccountNames());
   const [notes, setNotes] = useState(() => readSavedNotes());
   const [columnOrder, setColumnOrder] = useState(() => {
     try {
@@ -619,7 +539,6 @@ export default function MetaAdsOverview() {
       setLastPayments(readSavedLastPayments());
       setBillingFrequencies(readSavedBillingFrequencies());
       setNextPaymentOverrides(readSavedNextPaymentOverrides());
-      setCustomNames(readCustomAccountNames());
       setNotes(readSavedNotes());
     };
     const handleLocalStorageMapUpdated = (event) => {
@@ -633,8 +552,6 @@ export default function MetaAdsOverview() {
         setBillingFrequencies(event.detail.value || {});
       } else if (event?.detail?.key === 'account_next_payment_overrides') {
         setNextPaymentOverrides(event.detail.value || {});
-      } else if (event?.detail?.key === 'custom_account_names') {
-        setCustomNames(event.detail.value || {});
       } else if (event?.detail?.key === 'meta_ads_notes') {
         setNotes(event.detail.value || {});
       }
@@ -1193,7 +1110,7 @@ export default function MetaAdsOverview() {
               >
                 <option value="all">Todas as contas</option>
                 {agencyFilteredAccounts.map(a => (
-                  <option key={a.id} value={a.id}>{customNames[a.id] || a.clientName}</option>
+                  <option key={a.id} value={a.id}>{a.clientName}</option>
                 ))}
               </select>
             </div>
@@ -1339,12 +1256,7 @@ export default function MetaAdsOverview() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 min-w-0">
-                        <AccountNameEditor
-                          accountId={account.id}
-                          defaultName={account.clientName}
-                          customNames={customNames}
-                          setCustomNames={setCustomNames}
-                        />
+                        <span className="font-medium text-text-primary truncate">{account.clientName}</span>
                         <span className={`shrink-0 text-[10px] px-2 py-0.5 rounded-full border ${account.status === 'active' ? 'bg-success/10 text-success border-success/20' : 'bg-text-secondary/10 text-text-secondary border-border/40'}`}>
                           {account.status === 'active' ? 'Ativa' : 'Pausada'}
                         </span>
@@ -1565,12 +1477,7 @@ export default function MetaAdsOverview() {
                         if (col.key === 'name') {
                           return (
                             <td key={col.key} className="px-4 py-3 font-medium text-text-primary">
-                              <AccountNameEditor
-                                accountId={account.id}
-                                defaultName={account.clientName}
-                                customNames={customNames}
-                                setCustomNames={setCustomNames}
-                              />
+                              {account.clientName}
                             </td>
                           );
                         }
