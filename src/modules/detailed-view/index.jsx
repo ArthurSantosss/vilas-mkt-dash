@@ -1282,11 +1282,11 @@ export default function DetailedView() {
 // SUB-COMPONENTS
 // ═══════════════════════════════════════════════════════
 
-function DiffIndicator({ diff, invertColors = false, className = '' }) {
+function DiffIndicator() {
   return null;
 }
 
-function KPICard({ label, value, diff, invertColors = false }) {
+function KPICard({ label, value }) {
   return (
     <div className="bg-surface/40 rounded-2xl border border-border/50 p-5 shadow-lg shadow-black/10 transition-all duration-300 hover:border-border relative overflow-hidden group">
       <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">{label}</span>

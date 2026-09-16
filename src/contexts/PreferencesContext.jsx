@@ -29,8 +29,10 @@ export function PreferencesProvider({ children }) {
         console.log('[PreferencesSync] Backup da nuvem aplicado com', presentKeys.length, 'chaves');
 
         if (changedLocal) {
-          console.log('[PreferencesSync] Recarregando página para aplicar preferências da nuvem...');
-          window.location.reload();
+          console.log('[PreferencesSync] Preferências da nuvem aplicadas localmente. Notificando componentes...');
+          window.dispatchEvent(new CustomEvent('meta-token-updated'));
+          window.dispatchEvent(new CustomEvent('local-storage-map-updated', { detail: { fromCloud: true } }));
+          window.dispatchEvent(new CustomEvent('meta-accounts-toggled'));
         }
 
         isHydrated.current = true;

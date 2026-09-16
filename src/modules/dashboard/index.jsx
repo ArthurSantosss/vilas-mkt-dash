@@ -192,7 +192,7 @@ export default function Dashboard() {
       tone: estimatedCoverageDays > 0 && estimatedCoverageDays < 4 ? 'text-warning' : 'text-text-primary',
       helper: 'Baseado na média diária das contas',
     },
-  ]), [activeCampaignCount, campaignsWithSpend, campaignsWithoutSpend, highFrequencyCount, lowBalanceCount, estimatedCoverageDays, metaBalances.length, activeGoogleAccounts.length]);
+  ]), [activeCampaignCount, campaignsWithSpend, campaignsWithoutSpend, highFrequencyCount, lowBalanceCount, estimatedCoverageDays, metaBalances.length]);
 
   const lowestBalances = useMemo(
     () => readableBalances

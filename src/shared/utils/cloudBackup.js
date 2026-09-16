@@ -3,8 +3,7 @@ import { AUTO_ALERTS_STORAGE_KEY } from '../constants/autoAlerts';
 export const CLOUD_SYNC_MANIFEST_KEY = '__cloud_backup_manifest__';
 export const LEGACY_SENSITIVE_KEYS = [];
 
-// Alguns valores são persistidos como string simples no localStorage, sem JSON.
-// O token da Meta entra aqui para poder ser restaurado em outro dispositivo.
+// Valores persistidos como string simples no localStorage, sem JSON.
 const RAW_VALUE_KEYS = new Set(['meta_provider_token']);
 
 export const CLOUD_SYNC_KEYS = [
@@ -16,6 +15,7 @@ export const CLOUD_SYNC_KEYS = [
   'account_billing_frequencies',
   'account_next_payment_overrides',
   'meta_balance_snapshots',
+  'meta_balances',
   'custom_account_names',
   'meta_ads_column_order',
   'meta_ads_notes',
@@ -27,6 +27,7 @@ export const CLOUD_SYNC_KEYS = [
   'client_logos',
   'agencies_list',
   'account_agencies',
+  'checklist_all_tasks',
   AUTO_ALERTS_STORAGE_KEY,
 ];
 
@@ -40,7 +41,46 @@ export function dispatchLocalStorageMapUpdated(key, value, extraDetail = {}) {
   }));
 }
 
+/**
+ * Garante que se o token Meta estiver no .env mas ainda não no localStorage,
+ * seja salvo localmente para poder ser incluído no backup.
+ */
+function ensureMetaTokenPopulated() {
+  try {
+    const current = localStorage.getItem('meta_provider_token');
+    if (!hasStoredValue(current) && typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
+      const devToken = import.meta.env.VITE_META_ACCESS_TOKEN;
+      if (devToken && devToken.trim()) {
+        localStorage.setItem('meta_provider_token', devToken.trim());
+        return devToken.trim();
+      }
+    }
+    return current;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Coleta todas as chaves dinâmicas do checklist armazenadas no localStorage.
+ */
+function collectChecklistData() {
+  const checklistData = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('checklist_')) {
+        checklistData[k] = localStorage.getItem(k);
+      }
+    }
+  } catch {
+    // Ignora se localStorage indisponível
+  }
+  return checklistData;
+}
+
 export function readLocalCloudSnapshot(keys = CLOUD_SYNC_KEYS) {
+  ensureMetaTokenPopulated();
   const snapshot = {};
   const presentKeys = [];
 
@@ -58,9 +98,18 @@ export function readLocalCloudSnapshot(keys = CLOUD_SYNC_KEYS) {
       snapshot[key] = JSON.parse(rawValue);
       presentKeys.push(key);
     } catch {
-      // Preserve plain strings instead of dropping them from the backup.
+      // Preserva strings puras
       snapshot[key] = rawValue;
       presentKeys.push(key);
+    }
+  }
+
+  // Backup em lote das tarefas de checklist
+  const checklistData = collectChecklistData();
+  if (Object.keys(checklistData).length > 0) {
+    snapshot['checklist_all_tasks'] = checklistData;
+    if (!presentKeys.includes('checklist_all_tasks')) {
+      presentKeys.push('checklist_all_tasks');
     }
   }
 
@@ -98,7 +147,7 @@ export async function saveCloudSnapshot(supabase, email, keys = CLOUD_SYNC_KEYS)
   const { snapshot, presentKeys } = readLocalCloudSnapshot(keys);
   const presentKeySet = new Set(presentKeys);
   const keysToDelete = keys
-    .filter((key) => !presentKeySet.has(key))
+    .filter((key) => !presentKeySet.has(key) && key !== 'meta_provider_token')
     .map((key) => getPrefixedKey(email, key));
 
   const rowsToUpsert = presentKeys.map((key) => ({
@@ -168,9 +217,23 @@ export function applyCloudSnapshotToLocal(snapshot, presentKeys, keys = CLOUD_SY
   let changedLocal = false;
 
   for (const key of keys) {
-    if (presentKeySet.has(key)) {
+    const listed = presentKeySet.has(key);
+    const hasValue = listed && snapshot[key] !== undefined && snapshot[key] !== null;
+
+    // Restaura o checklist agrupado
+    if (key === 'checklist_all_tasks' && hasValue && typeof snapshot[key] === 'object') {
+      for (const [subKey, subVal] of Object.entries(snapshot[key])) {
+        if (localStorage.getItem(subKey) !== subVal) {
+          localStorage.setItem(subKey, String(subVal));
+          changedLocal = true;
+        }
+      }
+      continue;
+    }
+
+    if (hasValue) {
       const nextValue = RAW_VALUE_KEYS.has(key)
-        ? String(snapshot[key] ?? '')
+        ? String(snapshot[key])
         : JSON.stringify(snapshot[key]);
       if (localStorage.getItem(key) !== nextValue) {
         localStorage.setItem(key, nextValue);
@@ -179,13 +242,33 @@ export function applyCloudSnapshotToLocal(snapshot, presentKeys, keys = CLOUD_SY
       continue;
     }
 
-    if (pruneMissing && localStorage.getItem(key) !== null) {
+    // PROTEÇÃO ESSENCIAL: Nunca apagar o token Meta da máquina local se a nuvem vier sem valor!
+    if (key === 'meta_provider_token') {
+      continue;
+    }
+
+    if ((pruneMissing || listed) && localStorage.getItem(key) !== null) {
       localStorage.removeItem(key);
       changedLocal = true;
     }
   }
 
   return changedLocal;
+}
+
+/**
+ * Apaga chaves específicas do backup na nuvem sem reenviar o snapshot inteiro.
+ */
+export async function purgeCloudKeys(supabase, email, keys) {
+  if (!email || !Array.isArray(keys) || keys.length === 0) return false;
+
+  const { error } = await supabase
+    .from('app_preferences')
+    .delete()
+    .in('key', keys.map((key) => getPrefixedKey(email, key)));
+
+  if (error) throw error;
+  return true;
 }
 
 export async function loadCloudSnapshot(supabase, email, keys = CLOUD_SYNC_KEYS) {
@@ -209,4 +292,53 @@ export async function loadCloudSnapshot(supabase, email, keys = CLOUD_SYNC_KEYS)
 
   const changedLocal = applyCloudSnapshotToLocal(snapshot, presentKeys, keys, hasManifest);
   return { hasBackup: true, changedLocal, presentKeys, snapshot, hasManifest };
+}
+
+/**
+ * Exporta backup integral em arquivo .json para download do usuário.
+ */
+export function exportFullBackupToFile() {
+  const { snapshot, presentKeys } = readLocalCloudSnapshot(CLOUD_SYNC_KEYS);
+  const backupObject = {
+    version: '2.0',
+    exportedAt: new Date().toISOString(),
+    keys: presentKeys,
+    data: snapshot,
+  };
+
+  const blob = new Blob([JSON.stringify(backupObject, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const dateStr = new Date().toISOString().split('T')[0];
+  a.href = url;
+  a.download = `vilasmkt-backup-${dateStr}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Importa backup integral de arquivo JSON e aplica no localStorage e na nuvem.
+ */
+export async function importFullBackupFromFile(jsonContent, supabase, email) {
+  const parsed = typeof jsonContent === 'string' ? JSON.parse(jsonContent) : jsonContent;
+  const data = parsed.data || parsed;
+  const keys = parsed.keys || Object.keys(data);
+
+  applyCloudSnapshotToLocal(data, keys, CLOUD_SYNC_KEYS, false);
+
+  // Notifica todos os módulos
+  for (const k of keys) {
+    dispatchLocalStorageMapUpdated(k, data[k]);
+  }
+  window.dispatchEvent(new CustomEvent('meta-token-updated'));
+  window.dispatchEvent(new CustomEvent('local-storage-map-updated'));
+
+  // Salva na nuvem se autenticado
+  if (supabase && email) {
+    await saveCloudSnapshot(supabase, email, CLOUD_SYNC_KEYS);
+  }
+
+  return { success: true, keysCount: keys.length };
 }

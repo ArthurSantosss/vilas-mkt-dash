@@ -7,6 +7,7 @@ import {
   fetchCampaignsWithInsights,
 } from '../services/metaApi';
 import { calculateMetaBalance } from '../shared/utils/metaBalance';
+import { getStoredMetaToken, META_TOKEN_INVALIDATED_EVENT } from '../services/metaTokenGuard';
 
 const MetaAdsContext = createContext();
 
@@ -14,7 +15,7 @@ export function MetaAdsProvider({ children }) {
   const queryClient = useQueryClient();
   const [selectedPeriod, setSelectedPeriod] = useState('today');
   const [hasToken, setHasToken] = useState(
-    () => !!localStorage.getItem('meta_provider_token')
+    () => !!getStoredMetaToken()
   );
 
   // Escutar mudanças no token (login oauth)
@@ -26,19 +27,24 @@ export function MetaAdsProvider({ children }) {
       }
     };
     const handleTokenUpdate = () => {
-      setHasToken(!!localStorage.getItem('meta_provider_token'));
+      setHasToken(!!getStoredMetaToken());
       queryClient.invalidateQueries({ queryKey: ['meta'] });
     };
     const handleAccountToggle = () => {
       queryClient.invalidateQueries({ queryKey: ['meta', 'adAccounts'] });
     };
+    const handleTokenInvalidated = () => {
+      queryClient.invalidateQueries({ queryKey: ['meta'] });
+    };
     window.addEventListener('storage', handleStorageChange);
     window.addEventListener('meta-token-updated', handleTokenUpdate);
     window.addEventListener('meta-accounts-toggled', handleAccountToggle);
+    window.addEventListener(META_TOKEN_INVALIDATED_EVENT, handleTokenInvalidated);
     return () => {
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('meta-token-updated', handleTokenUpdate);
       window.removeEventListener('meta-accounts-toggled', handleAccountToggle);
+      window.removeEventListener(META_TOKEN_INVALIDATED_EVENT, handleTokenInvalidated);
     };
   }, [queryClient]);
 

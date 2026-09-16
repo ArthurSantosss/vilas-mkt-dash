@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Settings as SettingsIcon, Link2, Unlink, AlertCircle, RefreshCw,
-  ToggleLeft, ToggleRight, Shield, Building2, Plus, Trash2, LogOut
+  ToggleLeft, ToggleRight, Shield, Building2, Plus, Trash2, LogOut,
+  Download, Upload, CheckCircle2
 } from 'lucide-react';
 import { useAgency } from '../../contexts/AgencyContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -13,6 +14,9 @@ import {
   loadStoredGoogleAdsConnection,
   syncGoogleAdsAccounts,
 } from '../../services/googleAdsApi';
+import { exportFullBackupToFile, importFullBackupFromFile } from '../../shared/utils/cloudBackup';
+import { getStoredMetaToken, META_TOKEN_INVALIDATED_EVENT } from '../../services/metaTokenGuard';
+import { supabase } from '../../services/supabase';
 
 function FacebookIcon({ className = 'w-5 h-5' }) {
   return (
@@ -153,7 +157,59 @@ export default function Settings() {
     window.dispatchEvent(new CustomEvent('local-storage-map-updated'));
   };
 
-  const [metaToken, setMetaToken] = useState(() => localStorage.getItem(STORAGE_KEYS.META_TOKEN));
+  const fileInputRef = useRef(null);
+  const [backupStatus, setBackupStatus] = useState(null);
+
+  const handleCloudBackup = async () => {
+    setBackupStatus({ type: 'cloud', status: 'saving', message: 'Sincronizando com a nuvem...' });
+    try {
+      const success = await syncToCloud(user.email);
+      if (success) {
+        setBackupStatus({ type: 'cloud', status: 'success', message: 'Backup salvo na nuvem com sucesso!' });
+      } else {
+        setBackupStatus({ type: 'cloud', status: 'error', message: 'Erro ao salvar na nuvem (Supabase).' });
+      }
+    } catch (e) {
+      setBackupStatus({ type: 'cloud', status: 'error', message: `Falha: ${e.message}` });
+    }
+    setTimeout(() => setBackupStatus(null), 4500);
+  };
+
+  const handleExportBackup = () => {
+    try {
+      exportFullBackupToFile();
+      setBackupStatus({ type: 'json', status: 'success', message: 'Arquivo .json baixado com sucesso!' });
+    } catch (e) {
+      setBackupStatus({ type: 'json', status: 'error', message: `Erro ao exportar: ${e.message}` });
+    }
+    setTimeout(() => setBackupStatus(null), 4500);
+  };
+
+  const handleImportBackup = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setBackupStatus({ type: 'json', status: 'saving', message: 'Restaurando arquivo de backup...' });
+    try {
+      const text = await file.text();
+      const res = await importFullBackupFromFile(text, supabase, user?.email);
+      setBackupStatus({ type: 'json', status: 'success', message: `Backup restaurado! ${res.keysCount} dados atualizados.` });
+      setMetaToken(getStoredMetaToken());
+      try { setMetaUser(JSON.parse(localStorage.getItem(STORAGE_KEYS.META_USER))); } catch { setMetaUser(null); }
+      try { setMetaAccounts(JSON.parse(localStorage.getItem(STORAGE_KEYS.META_ACCOUNTS)) || []); } catch { setMetaAccounts([]); }
+      try { setDisabledAccounts(JSON.parse(localStorage.getItem(STORAGE_KEYS.DISABLED_ACCOUNTS)) || []); } catch { setDisabledAccounts([]); }
+      try { setClientLogos(JSON.parse(localStorage.getItem('client_logos')) || {}); } catch { setClientLogos({}); }
+      setPaymentMethods(readSavedPaymentMethods());
+      refreshGoogleState();
+    } catch (err) {
+      setBackupStatus({ type: 'json', status: 'error', message: `Erro ao restaurar: ${err.message}` });
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      setTimeout(() => setBackupStatus(null), 5000);
+    }
+  };
+
+  const [metaToken, setMetaToken] = useState(() => getStoredMetaToken());
   const [metaUser, setMetaUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.META_USER)); } catch { return null; }
   });
@@ -170,6 +226,15 @@ export default function Settings() {
   const [disabledAccounts, setDisabledAccounts] = useState(() => {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.DISABLED_ACCOUNTS)) || []; } catch { return []; }
   });
+
+  useEffect(() => {
+    const handleTokenInvalidated = () => {
+      setMetaToken(null);
+      setMetaUser(null);
+    };
+    window.addEventListener(META_TOKEN_INVALIDATED_EVENT, handleTokenInvalidated);
+    return () => window.removeEventListener(META_TOKEN_INVALIDATED_EVENT, handleTokenInvalidated);
+  }, []);
 
   const refreshGoogleState = useCallback(() => {
     setGoogleConnection(loadStoredGoogleAdsConnection());
@@ -648,45 +713,79 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* Cloud Backup */}
-      <div className="bg-surface/50 rounded-xl border border-primary/20 bg-primary/5 px-4 py-5 sm:px-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 items-center gap-3">
-            <RefreshCw size={18} className="text-primary-light" />
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-text-primary">Sincronizar com Nuvem (Backup)</p>
-              <p className="mt-0.5 text-xs text-text-secondary">Salve as configurações atuais (agências, token, contas) para seu login.</p>
+      {/* Sistema de Backup Completo */}
+      <div className="bg-surface/50 rounded-xl border border-primary/25 bg-gradient-to-br from-primary/5 via-surface/40 to-transparent p-5 sm:p-6">
+        <div className="flex flex-col gap-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-lg bg-primary/10 border border-primary/20 text-primary-light">
+                <RefreshCw size={20} className={backupStatus?.status === 'saving' ? 'animate-spin' : ''} />
+              </div>
+              <div>
+                <p className="text-base font-semibold text-text-primary">Central de Backup & Sincronização</p>
+                <p className="text-xs text-text-secondary mt-0.5">
+                  Proteja tokens da Meta, contas ativas, metas mensais, anotações, agências e histórico do painel.
+                </p>
+              </div>
             </div>
           </div>
-          <button
-            onClick={async (e) => {
-              const btn = e.currentTarget;
-              btn.disabled = true;
-              const originalText = btn.innerText;
-              btn.innerText = 'Salvando...';
-              
-              const success = await syncToCloud(user.email);
-              
-              if (success) {
-                btn.innerText = 'Salvo com sucesso!';
-                btn.classList.add('bg-success', 'text-white');
-              } else {
-                btn.innerText = 'Erro (Tabela nao existe?)';
-                btn.classList.add('bg-danger', 'text-white');
-              }
-              
-              setTimeout(() => { 
-                btn.disabled = false; 
-                btn.innerText = originalText; 
-                btn.classList.remove('bg-success', 'bg-danger', 'text-white');
-              }, 4000);
-            }}
-            className="inline-flex w-full items-center justify-center gap-2 px-5 py-2 rounded-lg text-sm font-bold sm:w-auto
-              bg-primary text-white shadow-lg shadow-primary/20
-              hover:bg-primary-light active:scale-[0.97] transition-all duration-200"
-          >
-            Fazer Backup Manual
-          </button>
+
+          {/* Feedback de status */}
+          {backupStatus && (
+            <div className={`flex items-center gap-2 px-3.5 py-2.5 rounded-lg text-xs font-medium border transition-all ${
+              backupStatus.status === 'success' ? 'bg-success/10 border-success/30 text-success' :
+              backupStatus.status === 'error' ? 'bg-danger/10 border-danger/30 text-danger' :
+              'bg-primary/10 border-primary/30 text-primary-light'
+            }`}>
+              {backupStatus.status === 'success' && <CheckCircle2 size={15} className="shrink-0" />}
+              {backupStatus.status === 'error' && <AlertCircle size={15} className="shrink-0" />}
+              {backupStatus.status === 'saving' && <RefreshCw size={15} className="animate-spin shrink-0" />}
+              <span>{backupStatus.message}</span>
+            </div>
+          )}
+
+          {/* Botões de Ação de Backup */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+            <button
+              onClick={handleCloudBackup}
+              disabled={backupStatus?.status === 'saving'}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-semibold
+                bg-primary text-white shadow-md shadow-primary/20 hover:bg-primary-light
+                active:scale-[0.98] transition-all disabled:opacity-50"
+            >
+              <RefreshCw size={14} className={backupStatus?.type === 'cloud' && backupStatus?.status === 'saving' ? 'animate-spin' : ''} />
+              Sincronizar Nuvem
+            </button>
+
+            <button
+              onClick={handleExportBackup}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-semibold
+                bg-surface border border-border hover:border-primary/40 text-text-primary hover:text-primary-light
+                active:scale-[0.98] transition-all"
+            >
+              <Download size={14} />
+              Baixar Backup (.json)
+            </button>
+
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-semibold
+                bg-surface border border-border hover:border-primary/40 text-text-primary hover:text-primary-light
+                active:scale-[0.98] transition-all"
+            >
+              <Upload size={14} />
+              Restaurar Backup (.json)
+            </button>
+
+            {/* Input oculto para carregar JSON */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json,application/json"
+              onChange={handleImportBackup}
+              className="hidden"
+            />
+          </div>
         </div>
       </div>
 

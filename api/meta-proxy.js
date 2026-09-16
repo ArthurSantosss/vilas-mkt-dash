@@ -1,7 +1,7 @@
 /* global process */
 
 // api/meta-proxy.js
-// Proxy para ocultar o Token da Meta do frontend
+// Proxy para ocultar o Token da Meta do frontend e garantir alta disponibilidade
 
 import { isAuthenticatedRequest } from './_auth.js';
 
@@ -20,14 +20,33 @@ function isAllowedMetaPath(path) {
     return ALLOWED_PATHS.some((pattern) => pattern.test(path));
 }
 
+// Códigos de OAuth da Meta que significam "esse token não vale mais"
+const INVALID_TOKEN_CODES = new Set([190, 102]);
+const INVALID_TOKEN_SUBCODES = new Set([458, 459, 460, 463, 464, 466, 467, 492]);
+
+function isInvalidTokenError(payload) {
+    const metaError = payload?.error;
+    if (!metaError) return false;
+
+    if (INVALID_TOKEN_CODES.has(Number(metaError.code))) return true;
+    if (INVALID_TOKEN_SUBCODES.has(Number(metaError.error_subcode))) return true;
+
+    const message = String(metaError.message || '').toLowerCase();
+    return (
+        message.includes('error validating access token')
+        || message.includes('session has been invalidated')
+        || message.includes('access token has expired')
+        || message.includes('malformed access token')
+    );
+}
+
 export default async function handler(req, res) {
     // Apenas permite GET e POST
     if (req.method !== 'GET' && req.method !== 'POST') {
         return res.status(405).json({ error: 'Method Not Allowed' });
     }
 
-    // Extrai e isola: `path` (rota Meta), `access_token` (caso venha como query — legado/fallback)
-    // e o resto vira queryParams reais a serem repassados.
+    // Extrai path e parâmetros
     const { path, access_token: queryToken, ...queryParams } = req.query;
     const headerToken = req.headers['x-meta-token'];
 
@@ -40,7 +59,7 @@ export default async function handler(req, res) {
     }
 
     // Prioridade: header `x-meta-token` (OAuth do usuário) > query `access_token` (legado) >
-    // env do servidor (último recurso). Token nunca aparece em logs do proxy se vier por header.
+    // env do servidor (último recurso).
     const serverToken = process.env.META_ACCESS_TOKEN || process.env.VITE_META_ACCESS_TOKEN;
     const clientToken = headerToken || queryToken;
     const activeToken = clientToken || serverToken;
@@ -53,19 +72,20 @@ export default async function handler(req, res) {
         return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    // Constroi a URL real para a Meta API. `access_token` é adicionado UMA vez aqui;
-    // o loop abaixo já não recebe `access_token` porque foi destruturado acima.
-    const targetUrl = new URL(`${META_API_BASE}${path.startsWith('/') ? path : '/' + path}`);
-    targetUrl.searchParams.append('access_token', activeToken);
+    const basePath = path.startsWith('/') ? path : '/' + path;
+    const buildTargetUrl = (token) => {
+        const targetUrl = new URL(`${META_API_BASE}${basePath}`);
+        targetUrl.searchParams.append('access_token', token);
 
-    // Repassa os query params se for GET
-    if (req.method === 'GET') {
-        for (const [key, value] of Object.entries(queryParams)) {
-            if (value !== undefined && value !== null) {
-                targetUrl.searchParams.append(key, value);
+        if (req.method === 'GET') {
+            for (const [key, value] of Object.entries(queryParams)) {
+                if (value !== undefined && value !== null) {
+                    targetUrl.searchParams.append(key, value);
+                }
             }
         }
-    }
+        return targetUrl;
+    };
 
     try {
         const fetchOptions = {
@@ -90,15 +110,35 @@ export default async function handler(req, res) {
             }
         }
 
-        const response = await fetch(targetUrl.toString(), fetchOptions);
-        const text = await response.text();
-        const data = text ? JSON.parse(text) : {};
+        const callMeta = async (token) => {
+            const response = await fetch(buildTargetUrl(token).toString(), fetchOptions);
+            const text = await response.text();
+            let data = {};
+            try {
+                data = text ? JSON.parse(text) : {};
+            } catch {
+                data = { raw: text };
+            }
+            return { response, data };
+        };
+
+        let { response, data } = await callMeta(activeToken);
+
+        // Se o token do cliente falhou e o servidor tem um token válido,
+        // refaz com o token do servidor para não deixar o usuário na mão.
+        const usedClientToken = activeToken === clientToken;
+        if (!response.ok && usedClientToken && isInvalidTokenError(data)) {
+            res.setHeader('x-meta-token-invalid', '1');
+            if (serverToken && serverToken !== clientToken && isAuthenticatedRequest(req)) {
+                ({ response, data } = await callMeta(serverToken));
+            }
+        }
 
         if (!response.ok) {
+            res.setHeader('Cache-Control', 'no-store');
             return res.status(response.status).json(data);
         }
 
-        // Repassa cabeçalhos úteis se necessário, mas envia o json diretamente
         res.setHeader('Cache-Control', 'no-store');
         return res.status(200).json(data);
 
