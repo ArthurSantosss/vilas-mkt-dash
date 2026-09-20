@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Calendar, Megaphone, Wallet, Search,
   SearchCheck, Settings, FileText, FileDown, Image, Lightbulb,
-  Bell, Scale, Menu, X
+  Bell, Scale, Menu, X, Sparkles
 } from 'lucide-react';
 import { useAlerts } from '../contexts/AlertsContext';
 
@@ -81,6 +81,26 @@ export default function Sidebar() {
             )}
           </NavLink>
         ))}
+
+        {/* ── Botão Assistente IA no Menu ── */}
+        <div className="pt-2 px-1">
+          <button
+            type="button"
+            onClick={() => {
+              setMobileOpen(false);
+              window.dispatchEvent(new CustomEvent('open-assistant'));
+            }}
+            className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-[13px] font-medium transition-all duration-250 text-text-primary bg-gradient-to-r from-primary/15 via-primary/10 to-transparent hover:from-primary/25 hover:via-primary/15 border border-primary/25 hover:border-primary/40 shadow-sm shadow-primary/10 group cursor-pointer"
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <Sparkles size={16} className="text-primary-light shrink-0 animate-pulse" />
+              <span className="font-semibold truncate text-primary-light">Assistente Vilas</span>
+            </div>
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-primary/20 text-primary-light border border-primary/30">
+              IA
+            </span>
+          </button>
+        </div>
       </nav>
 
       {/* ── Footer ── */}

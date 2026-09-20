@@ -48,6 +48,12 @@ export default function AssistantWidget() {
         if (!isOpen && ttsSupported) window.speechSynthesis.cancel();
     }, [isOpen, ttsSupported]);
 
+    useEffect(() => {
+        const handleOpen = () => setIsOpen(true);
+        window.addEventListener('open-assistant', handleOpen);
+        return () => window.removeEventListener('open-assistant', handleOpen);
+    }, []);
+
     const send = useCallback(async () => {
         const text = input.trim();
         if (!text || loading) return;
@@ -195,9 +201,10 @@ export default function AssistantWidget() {
                     type="button"
                     onClick={() => setIsOpen(true)}
                     aria-label="Abrir assistente"
-                    className="fixed bottom-24 right-4 lg:bottom-6 lg:right-6 z-40 flex items-center justify-center w-14 h-14 rounded-full bg-primary text-white shadow-lg shadow-primary/30 hover:bg-primary-light transition-colors"
+                    title="Abrir Assistente Vilas"
+                    className="fixed bottom-24 right-4 lg:bottom-6 lg:right-6 z-50 flex items-center justify-center w-14 h-14 rounded-full bg-primary text-white shadow-2xl shadow-primary/40 hover:bg-primary-light hover:scale-105 active:scale-95 transition-all cursor-pointer border-2 border-white/20"
                 >
-                    <Sparkles size={24} />
+                    <Sparkles size={24} className="animate-pulse" />
                 </button>
             )}
 
