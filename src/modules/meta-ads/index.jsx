@@ -64,21 +64,19 @@ const MetaToggle = React.memo(function MetaToggle({ isActive, isToggling, onTogg
       onClick={onToggle}
       disabled={isToggling}
       title={title}
-      className={`relative inline-flex items-center ${s.w} ${s.h} rounded-full transition-all duration-300 ease-in-out flex-shrink-0 ${
-        isToggling
+      className={`relative inline-flex items-center ${s.w} ${s.h} rounded-full transition-all duration-300 ease-in-out flex-shrink-0 ${isToggling
           ? 'bg-border cursor-wait'
           : isActive
             ? 'bg-[#0FA5AE] shadow-[0_0_8px_rgba(15,165,174,0.3)]'
             : 'bg-[#333845] hover:bg-[#3d4252]'
-      }`}
+        }`}
     >
       {isToggling ? (
         <Loader2 size={10} className="animate-spin text-text-secondary absolute left-1/2 -translate-x-1/2" />
       ) : (
         <span
-          className={`${s.dot} rounded-full bg-white shadow-md transform transition-transform duration-300 ease-in-out absolute top-[2px] ${
-            isActive ? s.translate : 'translate-x-[2px]'
-          }`}
+          className={`${s.dot} rounded-full bg-white shadow-md transform transition-transform duration-300 ease-in-out absolute top-[2px] ${isActive ? s.translate : 'translate-x-[2px]'
+            }`}
         />
       )}
     </button>
@@ -461,11 +459,10 @@ const AccountBalanceBadge = React.memo(function AccountBalanceBadge({ balance, m
     <span className="inline-flex items-center gap-1.5 ml-2">
       {/* Saldo disponível em conta */}
       {hasBalance && (
-        <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full ${
-          balance.currentBalance < 50 ? 'bg-danger/10 text-danger border border-danger/20' :
-          balance.currentBalance < 150 ? 'bg-warning/10 text-warning border border-warning/20' :
-          'bg-success/10 text-success border border-success/20'
-        }`} title={`Saldo em conta: ${formatCurrency(balance.currentBalance)}`}>
+        <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full ${balance.currentBalance < 50 ? 'bg-danger/10 text-danger border border-danger/20' :
+            balance.currentBalance < 150 ? 'bg-warning/10 text-warning border border-warning/20' :
+              'bg-success/10 text-success border border-success/20'
+          }`} title={`Saldo em conta: ${formatCurrency(balance.currentBalance)}`}>
           <Wallet size={10} />
           {formatCurrency(balance.currentBalance)}
         </span>
@@ -1171,13 +1168,12 @@ export default function MetaAdsOverview() {
                   onDragOver={(event) => handleColumnDragOver(event, col.key)}
                   onDrop={() => handleColumnDrop(col.key)}
                   onDragEnd={handleColumnDragEnd}
-                  className={`group flex items-center gap-3 rounded-xl border px-3 py-3 transition-all ${
-                    isDragging
+                  className={`group flex items-center gap-3 rounded-xl border px-3 py-3 transition-all ${isDragging
                       ? 'border-primary/40 bg-primary/10 opacity-70 scale-[0.99]'
                       : isDropTarget
                         ? 'border-primary/50 bg-primary/5 shadow-[0_0_0_1px_rgba(15,165,174,0.2)]'
                         : 'border-border bg-bg/60 hover:border-primary/25 hover:bg-bg'
-                  }`}
+                    }`}
                 >
                   <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg border border-border/70 bg-surface text-text-secondary cursor-grab active:cursor-grabbing">
                     <GripVertical size={16} />
@@ -1498,10 +1494,10 @@ export default function MetaAdsOverview() {
                         }
                         const cellClass = col.key === 'spend' ? 'text-right text-text-primary' :
                           col.key === 'messages' ? 'text-right font-medium text-text-primary' :
-                          col.key === 'costPerMsg' ? `text-right font-bold ${getCostColor(account.metrics?.costPerMessage || 0)}` :
-                          (col.key === 'balance' || col.key === 'available') ? 'text-right' :
-                          col.key === 'notes' ? 'text-left align-top' :
-                          'text-right text-text-secondary';
+                            col.key === 'costPerMsg' ? `text-right font-bold ${getCostColor(account.metrics?.costPerMessage || 0)}` :
+                              (col.key === 'balance' || col.key === 'available') ? 'text-right' :
+                                col.key === 'notes' ? 'text-left align-top' :
+                                  'text-right text-text-secondary';
                         return <td key={col.key} className={`px-3 py-3 ${cellClass}`}>{renderAccountCell(col, account, { balance: accountBalance, monthlyGoal: accountGoal, totalBudget })}</td>;
                       })}
                     </tr>
@@ -1567,9 +1563,9 @@ export default function MetaAdsOverview() {
                               }
                               const cellClass = col.key === 'spend' ? 'text-right text-text-primary' :
                                 col.key === 'messages' ? 'text-right font-medium text-text-primary' :
-                                col.key === 'costPerMsg' ? `text-right font-bold ${getCostColor(campaign.metrics?.costPerMessage || 0)}` :
-                                col.key === 'notes' ? 'text-left align-top' :
-                                'text-right text-text-secondary';
+                                  col.key === 'costPerMsg' ? `text-right font-bold ${getCostColor(campaign.metrics?.costPerMessage || 0)}` :
+                                    col.key === 'notes' ? 'text-left align-top' :
+                                      'text-right text-text-secondary';
                               return <td key={col.key} className={`px-3 py-2.5 ${cellClass}`}>{renderCampaignCell(col, campaign)}</td>;
                             })}
                           </tr>
@@ -1662,9 +1658,9 @@ export default function MetaAdsOverview() {
                                         }
                                         const cellClass = col.key === 'spend' ? 'text-right text-text-primary' :
                                           col.key === 'messages' ? 'text-right font-medium text-text-primary' :
-                                          col.key === 'costPerMsg' ? `text-right font-bold ${getCostColor(adSetCostPerMsg)}` :
-                                          col.key === 'notes' ? 'text-left align-top' :
-                                          'text-right text-text-secondary';
+                                            col.key === 'costPerMsg' ? `text-right font-bold ${getCostColor(adSetCostPerMsg)}` :
+                                              col.key === 'notes' ? 'text-left align-top' :
+                                                'text-right text-text-secondary';
                                         return <td key={col.key} className={`px-3 py-2 text-xs ${cellClass}`}>{renderAdSetCell(col, adSet)}</td>;
                                       })}
                                     </tr>
@@ -1732,9 +1728,9 @@ export default function MetaAdsOverview() {
                                                 }
                                                 const cellClass = col.key === 'spend' ? 'text-right text-text-primary' :
                                                   col.key === 'messages' ? 'text-right font-medium text-text-primary' :
-                                                  col.key === 'costPerMsg' ? `text-right font-bold ${getCostColor(adCostPerMsg)}` :
-                                                  col.key === 'notes' ? 'text-left align-top' :
-                                                  'text-right text-text-secondary';
+                                                    col.key === 'costPerMsg' ? `text-right font-bold ${getCostColor(adCostPerMsg)}` :
+                                                      col.key === 'notes' ? 'text-left align-top' :
+                                                        'text-right text-text-secondary';
                                                 return <td key={col.key} className={`px-3 py-2 text-[11px] ${cellClass}`}>{renderAdCell(col, ad)}</td>;
                                               })}
                                             </tr>

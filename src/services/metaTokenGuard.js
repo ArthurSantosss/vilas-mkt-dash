@@ -64,16 +64,16 @@ export function isInvalidMetaTokenError(payload) {
     );
 }
 
+let devEnvTokenRejected = false;
+
 export function getStoredMetaToken() {
     try {
         const token = localStorage.getItem(META_TOKEN_KEY);
         if (token && token.trim()) return token.trim();
-        // Fallback no ambiente de desenvolvimento se houver token no .env
-        if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
+        // Fallback no ambiente de desenvolvimento se houver token no .env e não tiver sido invalidado
+        if (!devEnvTokenRejected && typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
             const devToken = import.meta.env.VITE_META_ACCESS_TOKEN;
             if (devToken && devToken.trim()) {
-                // Popula o localStorage para o backup poder capturar
-                localStorage.setItem(META_TOKEN_KEY, devToken.trim());
                 return devToken.trim();
             }
         }
@@ -81,6 +81,10 @@ export function getStoredMetaToken() {
     } catch {
         return null;
     }
+}
+
+export function resetDevTokenState() {
+    devEnvTokenRejected = false;
 }
 
 function getLoggedEmail() {
@@ -102,7 +106,8 @@ let purgeInFlight = null;
  * @returns {boolean} true se um token foi de fato removido deste aparelho.
  */
 export function clearInvalidMetaToken() {
-    const hadToken = !!getStoredMetaToken();
+    devEnvTokenRejected = true;
+    const hadToken = typeof window !== 'undefined' && !!localStorage.getItem(META_TOKEN_KEY);
     if (!hadToken) return false;
 
     try {

@@ -6,7 +6,7 @@
 
 import crypto from 'node:crypto';
 import { isAuthenticatedRequest } from './_auth.js';
-import { executeReadTool, readToolSchemas } from './_assistant-tools.js';
+import { executeReadTool, readToolSchemas, runWithMetaToken } from './_assistant-tools.js';
 import { prepareWriteTool, writeToolSchemas, isWriteTool } from './_assistant-write-tools.js';
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
@@ -128,12 +128,15 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Campo "messages" é obrigatório.' });
     }
 
-    const tools = [...readToolSchemas(), ...writeToolSchemas()];
-    const toolTrace = [];
-    const pendingActions = [];
+    const clientMetaToken = req.headers['x-meta-token'] || req.body?.metaToken;
 
-    // ── Fluxo 1: Google Gemini (Prioritário se configurado) ──
-    if (geminiKey) {
+    return runWithMetaToken(clientMetaToken, async () => {
+        const tools = [...readToolSchemas(), ...writeToolSchemas()];
+        const toolTrace = [];
+        const pendingActions = [];
+
+        // ── Fluxo 1: Google Gemini (Prioritário se configurado) ──
+        if (geminiKey) {
         try {
             // Converte o histórico para o formato do Gemini
             const contents = incoming.map((m) => ({
@@ -289,8 +292,9 @@ export default async function handler(req, res) {
             toolsUsed: toolTrace,
             pendingActions,
         });
-    } catch (err) {
-        console.error('[assistant-chat] erro Claude:', err);
-        return res.status(500).json({ error: 'Erro interno no assistente', details: String(err.message || err) });
-    }
+        } catch (err) {
+            console.error('[assistant-chat] erro Claude:', err);
+            return res.status(500).json({ error: 'Erro interno no assistente', details: String(err.message || err) });
+        }
+    });
 }

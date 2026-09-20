@@ -5,6 +5,7 @@
 
 import { isAuthenticatedRequest } from './_auth.js';
 import { executeConfirmedAction } from './_assistant-write-tools.js';
+import { runWithMetaToken } from './_assistant-tools.js';
 
 export default async function handler(req, res) {
     if (req.method === 'OPTIONS') return res.status(200).end();
@@ -17,8 +18,10 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Campo "action" (com type e meta) é obrigatório.' });
     }
 
+    const clientMetaToken = req.headers['x-meta-token'] || req.body?.metaToken;
+
     try {
-        const message = await executeConfirmedAction(action);
+        const message = await runWithMetaToken(clientMetaToken, () => executeConfirmedAction(action));
         return res.status(200).json({ ok: true, message });
     } catch (err) {
         console.error('[assistant-action] erro:', err);

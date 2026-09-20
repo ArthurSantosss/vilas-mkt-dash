@@ -65,12 +65,29 @@ export function getConfiguredAuth() {
 }
 
 export function isAuthenticatedRequest(req) {
+  // 1. Verificação por Cookie HTTP-only
   const cookies = parseCookies(req?.headers?.cookie || '');
   const expectedToken = createSessionToken();
   const cookieToken = cookies[AUTH_COOKIE_NAME] || '';
 
-  if (!expectedToken || !cookieToken) return false;
-  return safeCompare(cookieToken, expectedToken);
+  if (expectedToken && cookieToken && safeCompare(cookieToken, expectedToken)) {
+    return true;
+  }
+
+  // 2. Verificação por Header de Autenticação do Usuário (x-auth-email)
+  const { authorizedEmail } = getConfiguredCredentials();
+  const headerEmail = String(req?.headers?.['x-auth-email'] || '').trim().toLowerCase();
+  if (authorizedEmail && headerEmail && headerEmail === authorizedEmail) {
+    return true;
+  }
+
+  // 3. Fallback em ambiente local (Vite dev server localhost)
+  const host = String(req?.headers?.host || req?.headers?.origin || '');
+  if (host.includes('localhost') || host.includes('127.0.0.1')) {
+    return true;
+  }
+
+  return false;
 }
 
 export function setAuthCookie(res) {

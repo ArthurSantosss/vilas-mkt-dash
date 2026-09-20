@@ -15,7 +15,7 @@ import {
   syncGoogleAdsAccounts,
 } from '../../services/googleAdsApi';
 import { exportFullBackupToFile, importFullBackupFromFile } from '../../shared/utils/cloudBackup';
-import { getStoredMetaToken, META_TOKEN_INVALIDATED_EVENT } from '../../services/metaTokenGuard';
+import { getStoredMetaToken, META_TOKEN_INVALIDATED_EVENT, resetDevTokenState } from '../../services/metaTokenGuard';
 import { supabase } from '../../services/supabase';
 
 function FacebookIcon({ className = 'w-5 h-5' }) {
@@ -103,7 +103,11 @@ async function fetchMetaProxy(path, token, params = {}) {
     const payload = await response.json();
 
     if (!response.ok) {
-      throw new Error(payload?.error?.message || payload?.error || `Erro da Meta API (${response.status})`);
+      const msg = payload?.error?.message || payload?.error || `Erro da Meta API (${response.status})`;
+      if (msg.includes('Session has expired') || msg.includes('Error validating access token') || payload?.error?.code === 190) {
+        throw new Error('O seu token de acesso da Meta expirou. Gere um novo token no Meta for Developers e clique no botão "Conectar Meta" para atualizar.');
+      }
+      throw new Error(msg);
     }
 
     return payload;
@@ -125,7 +129,11 @@ async function fetchMetaProxy(path, token, params = {}) {
   const payload = await response.json();
 
   if (!response.ok) {
-    throw new Error(payload?.error?.message || payload?.error || `Erro da Meta API (${response.status})`);
+    const msg = payload?.error?.message || payload?.error || `Erro da Meta API (${response.status})`;
+    if (msg.includes('Session has expired') || msg.includes('Error validating access token') || payload?.error?.code === 190) {
+      throw new Error('O seu token de acesso da Meta expirou. Gere um novo token no Meta for Developers e clique no botão "Conectar Meta" para atualizar.');
+    }
+    throw new Error(msg);
   }
 
   return payload;
@@ -347,6 +355,7 @@ export default function Settings() {
       const token = window.prompt('Cole o token de acesso da Meta:');
       if (token && token.trim()) {
         const trimmed = token.trim();
+        resetDevTokenState();
         setMetaToken(trimmed);
         localStorage.setItem(STORAGE_KEYS.META_TOKEN, trimmed);
         window.dispatchEvent(new Event('meta-token-updated'));
@@ -367,9 +376,10 @@ export default function Settings() {
     }
 
     if (!window.FB) {
-      const token = window.prompt('Cole o token de acesso da Meta:');
+      const token = window.prompt('Cole o novo token de acesso da Meta:');
       if (token && token.trim()) {
         const trimmed = token.trim();
+        resetDevTokenState();
         setMetaToken(trimmed);
         localStorage.setItem(STORAGE_KEYS.META_TOKEN, trimmed);
         window.dispatchEvent(new Event('meta-token-updated'));

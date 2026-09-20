@@ -5,18 +5,27 @@
 // também pelas ferramentas de escrita). Rodam server-side com o token Meta do
 // servidor — o mesmo padrão do meta-proxy.
 
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 const META_API_BASE = 'https://graph.facebook.com/v22.0';
 
-function getServerMetaToken() {
-    return process.env.META_ACCESS_TOKEN || process.env.VITE_META_ACCESS_TOKEN || '';
+export const metaTokenStorage = new AsyncLocalStorage();
+
+export function runWithMetaToken(token, fn) {
+    return metaTokenStorage.run(token, fn);
+}
+
+function getEffectiveMetaToken() {
+    const contextToken = metaTokenStorage.getStore();
+    return contextToken || process.env.META_ACCESS_TOKEN || process.env.VITE_META_ACCESS_TOKEN || '';
 }
 
 // ─── Meta Graph helpers (server-side) ────────────────────────────────────────
 
 export async function metaGet(path, params = {}) {
-    const token = getServerMetaToken();
+    const token = getEffectiveMetaToken();
     if (!token) {
-        throw new Error('Nenhum token Meta configurado no servidor (META_ACCESS_TOKEN).');
+        throw new Error('Nenhum token Meta ativo encontrado.');
     }
 
     const url = new URL(`${META_API_BASE}${path.startsWith('/') ? path : '/' + path}`);
@@ -38,9 +47,9 @@ export async function metaGet(path, params = {}) {
 // POST à Graph API (mutações: status/orçamento de campanha). Token vai no body,
 // nunca em query, para não vazar em logs.
 export async function metaPost(path, body = {}) {
-    const token = getServerMetaToken();
+    const token = getEffectiveMetaToken();
     if (!token) {
-        throw new Error('Nenhum token Meta configurado no servidor (META_ACCESS_TOKEN).');
+        throw new Error('Nenhum token Meta ativo encontrado.');
     }
 
     const url = `${META_API_BASE}${path.startsWith('/') ? path : '/' + path}`;
