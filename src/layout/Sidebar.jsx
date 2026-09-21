@@ -116,7 +116,11 @@ export default function Sidebar() {
     <>
       {/* ── Mobile hamburger button ── */}
       <button
-        className="lg:hidden fixed top-4 left-4 z-[60] p-2 rounded-lg bg-[#080A0F] border border-border/40 text-text-secondary"
+        className="lg:hidden fixed z-[60] p-2 rounded-lg bg-[#080A0F]/90 backdrop-blur-md border border-border/40 text-text-secondary active:scale-95 transition-transform"
+        style={{
+          top: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)',
+          left: 'calc(env(safe-area-inset-left, 0px) + 0.75rem)',
+        }}
         onClick={() => setMobileOpen(true)}
         aria-label="Abrir menu"
       >
@@ -133,12 +137,17 @@ export default function Sidebar() {
 
       {/* ── Mobile drawer ── */}
       <aside
-        className={`lg:hidden fixed left-0 top-0 h-screen w-60 bg-[#060810]/95 backdrop-blur-xl border-r border-white/[0.04] flex flex-col z-[56]
+        className={`lg:hidden fixed left-0 top-0 h-screen h-dvh w-64 bg-[#060810]/95 backdrop-blur-xl border-r border-white/[0.04] flex flex-col z-[56]
           shadow-[4px_0_32px_-4px_rgba(0,0,0,0.7)] transition-transform duration-300
           ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
+        style={{
+          paddingTop: 'env(safe-area-inset-top, 0px)',
+          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+        }}
       >
         <button
-          className="absolute top-4 right-4 p-1.5 text-text-secondary hover:text-text-primary transition-colors rounded-lg hover:bg-white/[0.04]"
+          className="absolute right-4 p-1.5 text-text-secondary hover:text-text-primary transition-colors rounded-lg hover:bg-white/[0.04]"
+          style={{ top: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
           onClick={() => setMobileOpen(false)}
           aria-label="Fechar menu"
         >
