@@ -140,12 +140,26 @@ export function summarizeInsights(insights) {
 
 // ─── Resolução de conta ("cliente") e campanha por nome ou ID ────────────────
 
-export async function listAccountsRaw() {
+const accountsCache = new Map();
+const CACHE_TTL_MS = 60 * 1000; // 60 segundos
+
+export async function listAccountsRaw(forceRefresh = false) {
+    const token = getEffectiveMetaToken();
+    const cacheKey = token ? token.slice(-16) : 'default';
+    const now = Date.now();
+    const cached = accountsCache.get(cacheKey);
+
+    if (!forceRefresh && cached && (now - cached.time < CACHE_TTL_MS)) {
+        return cached.data;
+    }
+
     const data = await metaGet('/me/adaccounts', {
         fields: 'id,account_id,name,account_status,currency,balance,amount_spent',
         limit: 1000,
     });
-    return data.data || [];
+    const accounts = data.data || [];
+    accountsCache.set(cacheKey, { data: accounts, time: now });
+    return accounts;
 }
 
 export async function resolveAccount(query) {

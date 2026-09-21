@@ -30,9 +30,9 @@ FERRAMENTAS DE ESCRITA (pause/activate/set_budget/create_alert/set_payment_metho
 - Se faltar informação (qual campanha, qual valor), pergunte antes de preparar.
 
 REGRAS GERAIS:
-- Seja direto, técnico e prático.
-- Ao dar números, contextualize (compare com período, aponte o que chama atenção).
-- Se uma ferramenta retornar erro ou listas de opções, ajuste e tente de novo, ou peça o que falta.
+- Responda de forma ágil, direta e concisa. Evite rodeios ou introduções longas; vá direto aos números e fatos.
+- Use listas ou tópicos curtos e claros.
+- Ao dar números, contextualize de forma breve.
 - Formate de forma legível. Valores em R$.`;
 
 // ── Chamada Anthropic Claude ──
@@ -54,15 +54,19 @@ async function callAnthropic({ apiKey, model, messages, tools }) {
 }
 
 // ── Chamada Google Gemini com Fallback de Modelo ──
+let cachedWorkingModel = 'gemini-3.5-flash-lite';
+
 async function callGemini({ apiKey, contents, tools }) {
     const candidateModels = [
         process.env.GEMINI_MODEL,
-        'gemini-2.5-flash',
-        'gemini-1.5-flash',
-        'gemini-flash-latest',
-        'gemini-2.5-flash-lite',
-        'gemini-3.5-flash',
+        cachedWorkingModel,
+        'gemini-3.5-flash-lite',
+        'gemini-3-flash-preview',
+        'gemini-3.6-flash',
+        'gemini-3.8-flash',
     ].filter(Boolean);
+
+    const uniqueModels = [...new Set(candidateModels)];
 
     const functionDeclarations = tools.map((t) => ({
         name: t.name,
@@ -76,12 +80,12 @@ async function callGemini({ apiKey, contents, tools }) {
         tools: [{ functionDeclarations }],
         generationConfig: {
             temperature: 0.2,
-            maxOutputTokens: 2048,
+            maxOutputTokens: 1024,
         },
     };
 
     let lastError = null;
-    for (const model of candidateModels) {
+    for (const model of uniqueModels) {
         try {
             const url = `${GEMINI_API_BASE}/${model}:generateContent?key=${apiKey}`;
             const response = await fetch(url, {
@@ -91,6 +95,7 @@ async function callGemini({ apiKey, contents, tools }) {
             });
 
             if (response.ok) {
+                cachedWorkingModel = model;
                 return await response.json();
             }
 
@@ -123,10 +128,11 @@ export default async function handler(req, res) {
         });
     }
 
-    const incoming = Array.isArray(req.body?.messages) ? req.body.messages : null;
-    if (!incoming || incoming.length === 0) {
+    const rawIncoming = Array.isArray(req.body?.messages) ? req.body.messages : null;
+    if (!rawIncoming || rawIncoming.length === 0) {
         return res.status(400).json({ error: 'Campo "messages" é obrigatório.' });
     }
+    const incoming = rawIncoming.slice(-10);
 
     const clientMetaToken = req.headers['x-meta-token'] || req.body?.metaToken;
 
