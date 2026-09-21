@@ -14,6 +14,7 @@ const navItems = [
   { path: '/visao-detalhada', label: 'Visão Detalhada', icon: SearchCheck },
   { path: '/relatorio-texto', label: 'Relatório Texto', icon: FileText },
   { path: '/relatorio-visual', label: 'Relatório Visual', icon: Image },
+  { path: '/envio-relatorios', label: 'Enviar Relatórios', icon: FileText },
   { path: '/avisos', label: 'Avisos Automáticos', icon: Bell },
   { path: '/configuracoes', label: 'Configurações', icon: Settings },
 ];

@@ -65,10 +65,10 @@ const MetaToggle = React.memo(function MetaToggle({ isActive, isToggling, onTogg
       disabled={isToggling}
       title={title}
       className={`relative inline-flex items-center ${s.w} ${s.h} rounded-full transition-all duration-300 ease-in-out flex-shrink-0 ${isToggling
-          ? 'bg-border cursor-wait'
-          : isActive
-            ? 'bg-[#0FA5AE] shadow-[0_0_8px_rgba(15,165,174,0.3)]'
-            : 'bg-[#333845] hover:bg-[#3d4252]'
+        ? 'bg-border cursor-wait'
+        : isActive
+          ? 'bg-[#0FA5AE] shadow-[0_0_8px_rgba(15,165,174,0.3)]'
+          : 'bg-[#333845] hover:bg-[#3d4252]'
         }`}
     >
       {isToggling ? (
@@ -460,8 +460,8 @@ const AccountBalanceBadge = React.memo(function AccountBalanceBadge({ balance, m
       {/* Saldo disponível em conta */}
       {hasBalance && (
         <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full ${balance.currentBalance < 50 ? 'bg-danger/10 text-danger border border-danger/20' :
-            balance.currentBalance < 150 ? 'bg-warning/10 text-warning border border-warning/20' :
-              'bg-success/10 text-success border border-success/20'
+          balance.currentBalance < 150 ? 'bg-warning/10 text-warning border border-warning/20' :
+            'bg-success/10 text-success border border-success/20'
           }`} title={`Saldo em conta: ${formatCurrency(balance.currentBalance)}`}>
           <Wallet size={10} />
           {formatCurrency(balance.currentBalance)}
@@ -1169,10 +1169,10 @@ export default function MetaAdsOverview() {
                   onDrop={() => handleColumnDrop(col.key)}
                   onDragEnd={handleColumnDragEnd}
                   className={`group flex items-center gap-3 rounded-xl border px-3 py-3 transition-all ${isDragging
-                      ? 'border-primary/40 bg-primary/10 opacity-70 scale-[0.99]'
-                      : isDropTarget
-                        ? 'border-primary/50 bg-primary/5 shadow-[0_0_0_1px_rgba(15,165,174,0.2)]'
-                        : 'border-border bg-bg/60 hover:border-primary/25 hover:bg-bg'
+                    ? 'border-primary/40 bg-primary/10 opacity-70 scale-[0.99]'
+                    : isDropTarget
+                      ? 'border-primary/50 bg-primary/5 shadow-[0_0_0_1px_rgba(15,165,174,0.2)]'
+                      : 'border-border bg-bg/60 hover:border-primary/25 hover:bg-bg'
                     }`}
                 >
                   <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg border border-border/70 bg-surface text-text-secondary cursor-grab active:cursor-grabbing">

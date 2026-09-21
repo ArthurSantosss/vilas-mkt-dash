@@ -29,19 +29,12 @@
     {
       "path": "/api/cron/slack-alerts",
       "schedule": "0 15 * * *"
-    },
-    {
-      "path": "/api/cron/slack-reports",
-      "schedule": "0 8 * * 1,5"
     }
   ],
   "functions": {
-    "api/cron/slack-reports.js": {
+    "api/alerts/reports.js": {
       "maxDuration": 300,
       "includeFiles": "public/**"
-    },
-    "api/alerts/reports.js": {
-      "maxDuration": 300
     }
   }
 }

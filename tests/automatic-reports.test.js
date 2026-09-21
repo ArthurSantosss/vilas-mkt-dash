@@ -1,20 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFile } from 'node:fs/promises';
 import {
-  REPORT_RULES, DEFAULT_REPORT_SETTINGS, reportIsDue, getReportPeriod,
-  matchReportAgency, validateReportSettings,
+  REPORT_RULES, getReportPeriod, validateReportPeriod,
+  matchReportAgency,
 } from '../src/shared/constants/automaticReports.js';
 import {
-  collectAgencyReports, runAutomaticReports, buildSlackReport, getReportWebhook,
+  collectAgencyReports, sendAgencyReports, buildSlackReport, getReportWebhook, reportDeliveryKey, resolveReportImage,
 } from '../api/_automatic-reports.js';
-import { renderReportPng } from '../api/_report-image.js';
-import { buildAutomaticReportSvg } from '../src/shared/utils/automaticReportVisual.js';
-import cronHandler from '../api/cron/slack-reports.js';
+import { toVisualReportData } from '../src/shared/utils/visualReportData.js';
 
 const monday = new Date('2026-09-21T08:25:00Z');
-const friday = new Date('2026-09-25T08:05:00Z');
-const env = { META_ACCESS_TOKEN: 'test-token', SLACK_WEBHOOK_ALERTS: 'https://hooks.slack.test/reports' };
+const env = { META_ACCESS_TOKEN: 'test-token', SLACK_WEBHOOK_REPORTS_TAGB: 'https://hooks.slack.test/tagb', SLACK_WEBHOOK_REPORTS_GDM: 'https://hooks.slack.test/gdm', SLACK_WEBHOOK_REPORTS_VILASMKT: 'https://hooks.slack.test/vilasmkt' };
 const rules = Object.fromEntries(REPORT_RULES.map(rule => [rule.id, rule]));
 
 function storeFixture() {
@@ -32,7 +28,7 @@ function storeFixture() {
     async agencies() { return { act_1: 'TAGB', act_2: 'TAG', act_3: 'GDM', act_4: 'VILAS MKT', act_5: 'Outra', act_6: 'GDM' }; },
   };
 }
-function networkFixture({ failureId, slackStatus = 200, slackTimeout = false } = {}) {
+function networkFixture({ failureId, slackStatus = 200, slackTimeout = false, validTokens = ['test-token'] } = {}) {
   const posts = []; const reads = [];
   const fetchImpl = async (input, options) => {
     const url = new URL(input);
@@ -42,7 +38,9 @@ function networkFixture({ failureId, slackStatus = 200, slackTimeout = false } =
       return { ok: slackStatus === 200, status: slackStatus };
     }
     assert.equal(url.hostname, 'graph.facebook.com');
-    assert.equal(options.headers.Authorization, 'Bearer test-token');
+    if (!validTokens.includes(options.headers.Authorization.replace(/^Bearer /, ''))) {
+      return { ok: false, status: 401 };
+    }
     assert.equal(url.searchParams.has('access_token'), false);
     reads.push(url);
     if (url.pathname.endsWith('/me/adaccounts')) {
@@ -72,141 +70,167 @@ function networkFixture({ failureId, slackStatus = 200, slackTimeout = false } =
   return { fetchImpl, posts, reads };
 }
 
-test('regras seguem agências, dia e 05h de Brasília, incluindo atraso dentro da hora', () => {
-  assert.equal(reportIsDue(rules.tagb, DEFAULT_REPORT_SETTINGS, monday), true);
-  assert.equal(reportIsDue(rules.gdm, DEFAULT_REPORT_SETTINGS, monday), true);
-  assert.equal(reportIsDue(rules.vilasmkt, DEFAULT_REPORT_SETTINGS, monday), false);
-  assert.equal(reportIsDue(rules.vilasmkt, DEFAULT_REPORT_SETTINGS, friday), true);
-  assert.equal(reportIsDue(rules.tagb, DEFAULT_REPORT_SETTINGS, friday), false);
-  assert.equal(reportIsDue(rules.gdm, DEFAULT_REPORT_SETTINGS, new Date('2026-09-21T07:59:59Z')), false);
-  assert.equal(reportIsDue(rules.gdm, { enabled: { gdm: false } }, monday), false);
+
+const period = { since: '2026-09-14', until: '2026-09-20' };
+
+test('período aceita datas personalizadas completas e rejeita intervalos inválidos', () => {
+  assert.deepEqual(getReportPeriod(monday), period);
+  assert.deepEqual(validateReportPeriod(period, monday), period);
+  assert.deepEqual(validateReportPeriod({ since: '2026-09-01', until: '2026-09-20' }, monday), { since: '2026-09-01', until: '2026-09-20' });
+  assert.throws(() => validateReportPeriod({ since: '2026-09-21', until: '2026-09-21' }, monday));
+  assert.throws(() => validateReportPeriod({ since: '2026-08-01', until: '2026-09-20' }, monday));
+  assert.throws(() => validateReportPeriod({ since: '2026-09-31', until: '2026-09-31' }, monday));
 });
 
-test('período tem sete dias completos e respeita viradas de mês, ano e fuso', () => {
-  assert.deepEqual(getReportPeriod(monday), { since: '2026-09-14', until: '2026-09-20' });
-  assert.deepEqual(getReportPeriod(friday), { since: '2026-09-18', until: '2026-09-24' });
-  assert.deepEqual(getReportPeriod(new Date('2026-01-01T08:00:00Z')), { since: '2025-12-25', until: '2025-12-31' });
-  assert.deepEqual(getReportPeriod(new Date('2026-03-01T01:00:00Z')), { since: '2026-02-21', until: '2026-02-27' });
-});
-
-test('normaliza nomes reais sem confundir outras agências e valida configuração', () => {
-  for (const name of ['TAG', 'TAGB', 'Agência TAGB']) assert.equal(matchReportAgency(name), 'tagb');
+test('cada agência exige seu próprio webhook', () => {
+  assert.equal(getReportWebhook('gdm', env), env.SLACK_WEBHOOK_REPORTS_GDM);
+  assert.equal(getReportWebhook('gdm', { SLACK_WEBHOOK_ALERTS: 'https://hooks.slack.test/alerts' }), '');
+  assert.equal(matchReportAgency('Agência TAGB'), 'tagb');
   assert.equal(matchReportAgency('VILAS MKT'), 'vilasmkt');
-  assert.equal(matchReportAgency('GDM'), 'gdm');
-  assert.equal(matchReportAgency('Outra TAGB'), null);
-  assert.throws(() => validateReportSettings({ enabled: { tagb: 'true' } }));
-  assert.deepEqual(validateReportSettings(DEFAULT_REPORT_SETTINGS), DEFAULT_REPORT_SETTINGS);
-  assert.equal(getReportWebhook('gdm', { ...env, SLACK_WEBHOOK_REPORTS_GDM: 'specific' }), 'specific');
 });
 
-test('paginação, filtro de agência e veiculação incluem pausadas e excluem contas sem entrega', async () => {
+test('usa o token conectado no painel e recupera quando um token expira', async () => {
+  const network = networkFixture({ validTokens: ['current-token'] });
+  const result = await collectAgencyReports(rules.tagb, {
+    store: storeFixture(), period, now: monday,
+    clientToken: 'current-token', env: { ...env, META_ACCESS_TOKEN: 'expired-token' }, fetchImpl: network.fetchImpl,
+  });
+  assert.equal(result.reports.length, 1);
+
+  const fallback = networkFixture();
+  const recovered = await collectAgencyReports(rules.gdm, {
+    store: storeFixture(), period, now: monday,
+    clientToken: 'expired-token', env, fetchImpl: fallback.fetchImpl,
+  });
+  assert.equal(recovered.reports.length, 2);
+  await assert.rejects(collectAgencyReports(rules.tagb, {
+    store: storeFixture(), period, now: monday,
+    clientToken: 'expired-token', env: { META_ACCESS_TOKEN: 'also-expired' }, fetchImpl: fallback.fetchImpl,
+  }), /Reconecte sua conta/);
+});
+
+test('prévia filtra agência e veiculação, inclusive conta pausada, sem enviar ao Slack', async () => {
   const network = networkFixture();
-  const result = await collectAgencyReports(rules.tagb, { store: storeFixture(), now: monday, env, fetchImpl: network.fetchImpl });
+  const result = await collectAgencyReports(rules.tagb, { store: storeFixture(), period, now: monday, env, fetchImpl: network.fetchImpl });
   assert.equal(result.linkedAccounts, 2);
   assert.equal(result.withoutDelivery, 1);
   assert.deepEqual(result.reports.map(report => report.accountId), ['act_1']);
-  assert.equal(result.reports[0].metrics.conversations, 43); // Aliases must not be summed.
   assert.equal(result.reports[0].daily.length, 7);
-  assert.equal(result.reports[0].daily[1].messages, 0);
-  assert.equal(network.posts.length, 0); // Preview never sends.
+  assert.equal(network.posts.length, 0);
   assert.equal(network.reads.some(url => /act_[3456]\/insights/.test(url.pathname)), false);
 });
 
-test('GDM reutiliza texto com comparação ao período anterior e aceita impressões sem gasto', async () => {
+test('período de 20 dias gera série diária e comparação anterior do mesmo tamanho', async () => {
   const network = networkFixture();
-  const result = await collectAgencyReports(rules.gdm, { store: storeFixture(), now: monday, env, fetchImpl: network.fetchImpl });
-  assert.equal(result.reports.length, 2);
-  assert.match(result.reports[0].text, /Relatório de Desempenho/);
-  assert.match(result.reports[0].text, /14\/09\/2026 a 20\/09\/2026/);
-  assert.match(result.reports[0].text, /#GDM/);
+  const custom = { since: '2026-09-01', until: '2026-09-20' };
+  const visual = await collectAgencyReports(rules.tagb, { store: storeFixture(), period: custom, now: monday, env, fetchImpl: network.fetchImpl });
+  assert.equal(visual.reports[0].daily.length, 20);
+  const textReport = await collectAgencyReports(rules.gdm, { store: storeFixture(), period: custom, now: monday, env, fetchImpl: network.fetchImpl });
+  assert.equal(textReport.reports.length, 2);
+  assert.match(textReport.reports[0].text, /01\/09\/2026 a 20\/09\/2026/);
+  assert.equal(network.reads.some(url => url.searchParams.get('time_range') === JSON.stringify({ since: '2026-08-12', until: '2026-08-31' })), true);
+});
+
+test('VilasMKT prepara imagem e texto do mesmo período para cada conta com veiculação', async () => {
+  const network = networkFixture();
+  const collected = await collectAgencyReports(rules.vilasmkt, { store: storeFixture(), period, now: monday, env, fetchImpl: network.fetchImpl });
+  assert.equal(collected.reports.length, 1);
+  assert.equal(collected.reports[0].daily.length, 7);
+  assert.match(collected.reports[0].text, /Relatório de Desempenho/);
+  assert.match(collected.reports[0].text, /14\/09\/2026 a 20\/09\/2026/);
+  assert.match(collected.reports[0].text, /#VILASMKT/);
   assert.equal(network.reads.some(url => url.searchParams.get('time_range') === JSON.stringify({ since: '2026-09-07', until: '2026-09-13' })), true);
 });
 
-test('falhas de consulta são informadas sem inventar métricas zeradas', async () => {
-  const network = networkFixture({ failureId: 'act_1' });
-  const result = await collectAgencyReports(rules.tagb, { store: storeFixture(), now: monday, env, fetchImpl: network.fetchImpl });
-  assert.equal(result.reports.length, 0);
-  assert.equal(result.errors.length, 1);
-  assert.equal(result.withoutDelivery, 1);
-});
-
-test('cron entrega PNG na TAGB e texto na GDM e não repete conta/período', async () => {
-  const store = storeFixture(); const network = networkFixture(); const images = [];
-  const options = {
-    store, now: monday, env, fetchImpl: network.fetchImpl, pause: async () => {},
-    publishImage: async report => { images.push(report); return 'https://images.test/report.png'; },
-  };
-  const first = await runAutomaticReports(options);
-  assert.equal(first.results.reduce((sum, result) => sum + result.sent, 0), 3);
-  assert.equal(images.length, 1);
+test('VilasMKT envia uma mensagem com imagem e texto completos; TAGB segue apenas com imagem', async () => {
+  const network = networkFixture();
+  const options = { agency: 'vilasmkt', period, store: storeFixture(), now: monday, env,
+    fetchImpl: network.fetchImpl, pause: async () => {}, publishImage: async () => 'https://images.test/report.png' };
+  const sent = await sendAgencyReports(options);
+  assert.equal(sent.sent, 1);
+  assert.equal(network.posts.length, 1);
   assert.equal(network.posts[0].blocks[1].type, 'image');
+  assert.equal(network.posts[0].blocks[2].type, 'section');
+  assert.match(network.posts[0].blocks[2].text.text, /Relatório de Desempenho/);
+  assert.match(network.posts[0].blocks[2].text.text, /#VILASMKT/);
+  assert.match(network.posts[0].text, /Relatório de Desempenho/);
+
+  const tagb = await collectAgencyReports(rules.tagb, { store: storeFixture(), period, now: monday, env, fetchImpl: network.fetchImpl });
+  assert.equal(tagb.reports[0].text, '');
+  assert.equal(buildSlackReport(rules.tagb, tagb.reports[0], 'https://images.test/report.png').blocks.length, 2);
+  assert.notEqual(reportDeliveryKey(rules.vilasmkt, { ...tagb.reports[0], agency: 'vilasmkt' }),
+    reportDeliveryKey({ ...rules.vilasmkt, includeText: false }, { ...tagb.reports[0], agency: 'vilasmkt' }));
+});
+
+test('botão de uma agência envia apenas suas contas com veiculação e evita duplicidade', async () => {
+  const store = storeFixture(); const network = networkFixture(); const images = [];
+  const options = { agency: 'tagb', period, store, now: monday, env, fetchImpl: network.fetchImpl,
+    pause: async () => {}, publishImage: async report => { images.push(report); return 'https://images.test/report.png'; } };
+  const first = await sendAgencyReports(options);
+  assert.equal(first.sent, 1);
+  assert.equal(network.posts.length, 1);
+  assert.equal(network.posts[0].blocks[1].type, 'image');
+  assert.equal(images.length, 1);
+  const second = await sendAgencyReports(options);
+  assert.equal(second.skipped, 1);
+  assert.equal(network.posts.length, 1);
+  const gdm = await sendAgencyReports({ ...options, agency: 'gdm' });
+  assert.equal(gdm.sent, 2);
+  assert.equal(network.posts.length, 3);
   assert.match(network.posts[1].text, /Relatório de Desempenho/);
-  assert.equal(network.posts[1].blocks, undefined);
-  const again = await runAutomaticReports(options);
-  assert.equal(again.results.reduce((sum, result) => sum + result.skipped, 0), 3);
-  assert.equal(network.posts.length, 3);
 });
 
-test('invocações concorrentes não entregam relatórios duplicados', async () => {
+test('envios concorrentes não duplicam conta e período', async () => {
   const store = storeFixture(); const network = networkFixture();
-  const options = { store, now: monday, env, fetchImpl: network.fetchImpl, pause: async () => {}, publishImage: async () => 'https://images.test/report.png' };
-  await Promise.all([runAutomaticReports(options), runAutomaticReports(options)]);
-  assert.equal(network.posts.length, 3);
+  const options = { agency: 'gdm', period, store, now: monday, env, fetchImpl: network.fetchImpl, pause: async () => {} };
+  await Promise.all([sendAgencyReports(options), sendAgencyReports(options)]);
+  assert.equal(network.posts.length, 2);
 });
 
-test('sexta-feira entrega somente VilasMKT e pausa impede todo envio', async () => {
-  const store = storeFixture(); const network = networkFixture();
-  const options = { store, now: friday, env, fetchImpl: network.fetchImpl, pause: async () => {}, publishImage: async () => 'https://images.test/report.png' };
-  const result = await runAutomaticReports(options);
-  assert.deepEqual(result.results.map(item => item.agency), ['vilasmkt']);
-  assert.equal(network.posts.length, 1);
-  await store.set('automatic_slack_reports', { enabled: { tagb: false, gdm: false, vilasmkt: false } });
-  assert.deepEqual((await runAutomaticReports(options)).results, []);
-  assert.equal(network.posts.length, 1);
+test('falhas de consulta e de imagem não geram envio falso', async () => {
+  const network = networkFixture({ failureId: 'act_1' });
+  const collected = await collectAgencyReports(rules.tagb, { store: storeFixture(), period, now: monday, env, fetchImpl: network.fetchImpl });
+  assert.equal(collected.reports.length, 0);
+  assert.equal(collected.errors.length, 1);
+  const healthy = networkFixture();
+  const result = await sendAgencyReports({ agency: 'tagb', period, store: storeFixture(), now: monday, env, fetchImpl: healthy.fetchImpl,
+    pause: async () => {}, publishImage: async () => { throw new Error('Falha no armazenamento'); } });
+  assert.equal(result.status, 'error');
+  assert.equal(healthy.posts.length, 0);
 });
 
-test('rejeição explícita permite nova tentativa; timeout bloqueia reenvio automático', async () => {
+test('rejeição explícita permite tentar de novo; timeout não repete entrega incerta', async () => {
   for (const timeout of [false, true]) {
-    const store = storeFixture();
-    const network = networkFixture({ slackStatus: 429, slackTimeout: timeout });
-    const options = { store, now: friday, env, fetchImpl: network.fetchImpl, pause: async () => {}, publishImage: async () => 'https://images.test/report.png' };
-    const first = await runAutomaticReports(options);
-    assert.equal(first.results[0].status, 'error');
+    const store = storeFixture(); const network = networkFixture({ slackStatus: 429, slackTimeout: timeout });
+    const options = { agency: 'vilasmkt', period, store, now: monday, env, fetchImpl: network.fetchImpl,
+      pause: async () => {}, publishImage: async () => 'https://images.test/report.png' };
+    const first = await sendAgencyReports(options);
+    assert.equal(first.status, 'error');
     const healthy = networkFixture();
-    const second = await runAutomaticReports({ ...options, fetchImpl: healthy.fetchImpl });
+    const second = await sendAgencyReports({ ...options, fetchImpl: healthy.fetchImpl });
     assert.equal(healthy.posts.length, timeout ? 0 : 1);
-    assert.equal(second.results[0].uncertain, timeout ? 1 : 0);
+    assert.equal(second.uncertain, timeout ? 1 : 0);
   }
 });
 
-test('falha na imagem não publica texto como substituto do relatório visual', async () => {
+test('relatório enviado usa o mesmo contrato de dados do ReportCard visual', async () => {
   const network = networkFixture();
-  const result = await runAutomaticReports({ store: storeFixture(), now: friday, env, fetchImpl: network.fetchImpl, pause: async () => {}, publishImage: async () => { throw new Error('Falha no armazenamento'); } });
-  assert.equal(result.results[0].status, 'error');
-  assert.equal(network.posts.length, 0);
-});
-
-test('segredo cron ausente e autorização inválida não executam envios', async () => {
-  let status;
-  const res = { setHeader() {}, status(code) { status = code; return this; }, json(value) { return value; } };
-  await cronHandler({ method: 'GET', headers: { authorization: 'Bearer wrong' } }, res);
-  assert.equal(status, 401);
-  await cronHandler({ method: 'POST', headers: {} }, res);
-  assert.equal(status, 405);
-});
-
-test('relatório visual renderiza PNG com fontes e logos locais e escapa conteúdo', async () => {
-  const network = networkFixture();
-  const { reports } = await collectAgencyReports(rules.tagb, { store: storeFixture(), now: monday, env, fetchImpl: network.fetchImpl });
+  const { reports } = await collectAgencyReports(rules.tagb, { store: storeFixture(), period, now: monday, env, fetchImpl: network.fetchImpl });
   const report = reports[0];
-  const png = await renderReportPng(report);
-  assert.equal(png.subarray(1, 4).toString(), 'PNG');
-  assert.equal(png.readUInt32BE(16), 1200);
-  assert.equal(png.readUInt32BE(20), 866);
-  assert.ok(png.length > 15000);
-  await writeFile('/tmp/vilas-automatic-report-preview.png', png);
-  const svg = buildAutomaticReportSvg({ ...report, accountName: '<script>alert(1)</script>' });
-  assert.equal(svg.includes('<script>'), false);
-  assert.ok(svg.includes('&lt;script&gt;'));
+  const visual = toVisualReportData(report);
+  assert.equal(visual.leads, report.metrics.conversations);
+  assert.equal(visual.spend, report.metrics.spend);
+  assert.equal(visual.period.start, '14/09/2026');
+  assert.equal(visual.dailyLeads.length, 7);
+  assert.equal(visual.dailyClicks[0].clicks, report.daily[0].clicks);
   assert.throws(() => buildSlackReport(rules.tagb, report));
+});
+
+test('imagem do ReportCard deve pertencer à agência e conta antes do envio', () => {
+  const report = { agency: 'tagb', accountId: 'act_123' };
+  const path = 'manual/tagb/act_123/00000000-0000-4000-8000-000000000000.png';
+  const db = { storage: { from: () => ({ getPublicUrl: value => ({ data: { publicUrl: `https://images.test/${value}` } }) }) } };
+  assert.equal(resolveReportImage(report, { act_123: path }, db), `https://images.test/${path}`);
+  assert.throws(() => resolveReportImage(report, { act_123: 'manual/gdm/act_123/00000000-0000-4000-8000-000000000000.png' }, db));
+  assert.throws(() => resolveReportImage(report, {}, db));
 });

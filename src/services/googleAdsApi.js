@@ -1,4 +1,6 @@
-const GOOGLE_ADS_CLIENT_ID = import.meta.env.VITE_GOOGLE_ADS_CLIENT_ID;
+const GOOGLE_ADS_CLIENT_ID =
+  import.meta.env.VITE_GOOGLE_ADS_CLIENT_ID ||
+  import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const GOOGLE_ADS_OAUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_ADS_SCOPE = 'https://www.googleapis.com/auth/adwords';
 

@@ -1,11 +1,11 @@
 /* global process */
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { getSupabase } from './_supabase-server.js';
 import { getConfiguredAuth } from './_auth.js';
 import {
-  AUTOMATIC_REPORTS_KEY, DEFAULT_REPORT_SETTINGS, REPORT_RULES,
-  validateReportSettings, matchReportAgency, reportIsDue, getReportPeriod,
+  AUTOMATIC_REPORTS_KEY, REPORT_RULES,
+  matchReportAgency, validateReportPeriod,
 } from '../src/shared/constants/automaticReports.js';
 import { buildReportFromInsights, buildReportText } from '../src/shared/utils/reportText.js';
 
@@ -52,18 +52,13 @@ export function createReportStore(db = getSupabase(), email = getConfiguredAuth(
 }
 
 export function getReportWebhook(ruleId, env = process.env) {
-  return env[`SLACK_WEBHOOK_REPORTS_${ruleId.toUpperCase()}`]
-    || env.SLACK_WEBHOOK_REPORTS || env.SLACK_WEBHOOK_ALERTS || env.VITE_SLACK_WEBHOOK_ALERTS || '';
-}
-
-export async function getReportSettings(store) {
-  return validateReportSettings(await store.get(AUTOMATIC_REPORTS_KEY) || DEFAULT_REPORT_SETTINGS);
+  return env[`SLACK_WEBHOOK_REPORTS_${ruleId.toUpperCase()}`] || '';
 }
 
 export async function getReportSetup(store, env = process.env) {
   const token = env.META_ACCESS_TOKEN || env.VITE_META_ACCESS_TOKEN || await store.get('meta_provider_token');
   return {
-    meta: Boolean(token), cron: Boolean(env.CRON_SECRET),
+    meta: Boolean(token),
     slack: Object.fromEntries(REPORT_RULES.map(rule => [rule.id, Boolean(getReportWebhook(rule.id, env))])),
   };
 }
@@ -79,7 +74,11 @@ async function metaRows(path, params, token, fetchImpl) {
     const res = await fetchImpl(url, {
       headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(20000),
     });
-    if (!res.ok) throw new Error(`Falha ao consultar dados do Meta Ads (HTTP ${res.status}).`);
+    if (!res.ok) {
+      const error = new Error(`Falha ao consultar dados do Meta Ads (HTTP ${res.status}).`);
+      error.status = res.status;
+      throw error;
+    }
     const payload = await res.json();
     if (payload.error || !Array.isArray(payload.data)) throw new Error('Resposta inválida do Meta Ads.');
     rows.push(...payload.data);
@@ -91,32 +90,47 @@ async function metaRows(path, params, token, fetchImpl) {
   throw new Error('A consulta excedeu o limite de páginas do Meta Ads.');
 }
 
-export async function collectAgencyReports(rule, { store, now = new Date(), fetchImpl = fetch, env = process.env }) {
-  const token = env.META_ACCESS_TOKEN || env.VITE_META_ACCESS_TOKEN || await store.get('meta_provider_token');
-  if (!token) throw new Error('Configure o token Meta no servidor para gerar os relatórios.');
-  const [accounts, agencyMap] = await Promise.all([
-    metaRows('me/adaccounts', { fields: 'id,account_id,name' }, token, fetchImpl),
-    store.agencies(),
-  ]);
+export async function collectAgencyReports(rule, { store, period, clientToken, now = new Date(), fetchImpl = fetch, env = process.env }) {
+  const selectedPeriod = validateReportPeriod(period, now);
+  const savedToken = await store.get('meta_provider_token');
+  const tokens = [...new Set([clientToken, savedToken, env.META_ACCESS_TOKEN, env.VITE_META_ACCESS_TOKEN]
+    .filter(token => typeof token === 'string' && token.trim()).map(token => token.trim()))];
+  if (!tokens.length) throw new Error('Conecte sua conta Meta em Configurações para gerar os relatórios.');
+  let accounts;
+  let token;
+  for (const candidate of tokens) {
+    try {
+      accounts = await metaRows('me/adaccounts', { fields: 'id,account_id,name' }, candidate, fetchImpl);
+      token = candidate;
+      break;
+    } catch (error) {
+      if (error.status !== 401) throw error;
+    }
+  }
+  if (!token) throw new Error('A conexão com a Meta expirou. Reconecte sua conta em Configurações e tente novamente.');
+  const agencyMap = await store.agencies();
   const selected = accounts.filter(account => matchReportAgency(agencyMap[account.id] || agencyMap[account.account_id]) === rule.id)
     .sort((a, b) => a.id.localeCompare(b.id));
-  const period = getReportPeriod(now);
-  const previousDate = new Date(`${period.since}T12:00:00Z`);
-  const previousPeriod = getReportPeriod(previousDate);
+  const days = Math.round((Date.parse(`${selectedPeriod.until}T12:00:00Z`) - Date.parse(`${selectedPeriod.since}T12:00:00Z`)) / 86400000) + 1;
+  const previousEnd = new Date(`${selectedPeriod.since}T12:00:00Z`);
+  previousEnd.setUTCDate(previousEnd.getUTCDate() - 1);
+  const previousStart = new Date(previousEnd);
+  previousStart.setUTCDate(previousStart.getUTCDate() - days + 1);
+  const previousPeriod = { since: previousStart.toISOString().slice(0, 10), until: previousEnd.toISOString().slice(0, 10) };
   const reports = [];
   const errors = [];
   for (let i = 0; i < selected.length; i += 4) {
     const batch = await Promise.allSettled(selected.slice(i, i + 4).map(async account => {
       const current = (await metaRows(`${account.id}/insights`, {
-        fields: FIELDS, time_range: JSON.stringify(period),
+        fields: FIELDS, time_range: JSON.stringify(selectedPeriod),
       }, token, fetchImpl))[0];
       if (!current || !(Number(current.spend) > 0 || Number(current.impressions) > 0)) return null;
       const metrics = buildReportFromInsights(current, account.name, {
-        start: dateLabel(period.since), end: dateLabel(period.until),
+        start: dateLabel(selectedPeriod.since), end: dateLabel(selectedPeriod.until),
       });
       let text = '';
       let daily = [];
-      if (rule.format === 'text') {
+      if (rule.format === 'text' || rule.includeText) {
         const previous = (await metaRows(`${account.id}/insights`, {
           fields: FIELDS, time_range: JSON.stringify(previousPeriod),
         }, token, fetchImpl))[0];
@@ -124,31 +138,33 @@ export async function collectAgencyReports(rule, { store, now = new Date(), fetc
           showCampaignName: false, agencyName: rule.label,
           prev: previous ? buildReportFromInsights(previous, account.name, {}) : null,
         });
-      } else {
+      }
+      if (rule.format === 'visual') {
         const rows = await metaRows(`${account.id}/insights`, {
-          fields: 'spend,actions,impressions,inline_link_clicks', time_range: JSON.stringify(period), time_increment: 1,
+          fields: 'spend,actions,impressions,inline_link_clicks', time_range: JSON.stringify(selectedPeriod), time_increment: 1,
         }, token, fetchImpl);
         const byDate = new Map(rows.map(row => [row.date_start, row]));
-        daily = Array.from({ length: 7 }, (_, day) => {
-          const date = new Date(`${period.since}T12:00:00Z`);
+        daily = Array.from({ length: days }, (_, day) => {
+          const date = new Date(`${selectedPeriod.since}T12:00:00Z`);
           date.setUTCDate(date.getUTCDate() + day);
           const key = date.toISOString().slice(0, 10);
           const data = buildReportFromInsights(byDate.get(key) || {}, '', {});
-          return { date: key, messages: data.conversations, spend: data.spend };
+          return { date: key, messages: data.conversations, clicks: data.clicks, engagements: data.engagements, spend: data.spend };
         });
       }
-      return { accountId: account.id, accountName: String(account.name || account.id).slice(0, 200), agency: rule.id, agencyLabel: rule.label, period, metrics, daily, text };
+      return { accountId: account.id, accountNumber: account.account_id, accountName: String(account.name || account.id).slice(0, 200), agency: rule.id, agencyLabel: rule.label, period: selectedPeriod, metrics, daily, text };
     }));
     batch.forEach((result, index) => {
       if (result.status === 'fulfilled') { if (result.value) reports.push(result.value); }
       else errors.push({ accountName: selected[i + index].name, error: result.reason.message });
     });
   }
-  return { reports, errors, period, linkedAccounts: selected.length, withoutDelivery: selected.length - reports.length - errors.length };
+  return { reports, errors, period: selectedPeriod, linkedAccounts: selected.length, withoutDelivery: selected.length - reports.length - errors.length };
 }
 
 export function reportDeliveryKey(rule, report) {
-  const id = `${rule.id}:${report.accountId}:${report.period.since}:${report.period.until}`;
+  const version = rule.includeText ? 'visual-text-v3' : rule.format === 'visual' ? 'report-card-v2' : 'text';
+  const id = `${rule.id}:${report.accountId}:${report.period.since}:${report.period.until}:${version}`;
   return `${AUTOMATIC_REPORTS_KEY}_delivery_${createHash('sha256').update(id).digest('hex')}`;
 }
 
@@ -157,84 +173,88 @@ export function buildSlackReport(rule, report, imageUrl) {
   const label = `${dateLabel(report.period.since)} a ${dateLabel(report.period.until)}`;
   if (rule.format === 'visual') {
     if (!imageUrl) throw new Error('Imagem do relatório não foi gerada.');
+    if (rule.includeText && !report.text) throw new Error('Texto do relatório não foi gerado.');
+    const characters = rule.includeText ? Array.from(report.text) : [];
+    const textChunks = Array.from({ length: Math.ceil(characters.length / 2800) }, (_, index) =>
+      characters.slice(index * 2800, (index + 1) * 2800).join(''));
     return {
-      text: `Relatório visual ${title} — ${label}`,
+      text: rule.includeText ? `${title} — ${label}\n\n${report.text}` : `Relatório visual ${title} — ${label}`,
       blocks: [
         { type: 'section', text: { type: 'plain_text', text: `${title}\n${label}` } },
         { type: 'image', image_url: imageUrl, alt_text: `Relatório de ${report.accountName}, ${label}. Investimento: R$ ${report.metrics.spend.toFixed(2)}; conversas: ${report.metrics.conversations}.` },
+        ...textChunks.map(chunk => ({ type: 'section', text: { type: 'plain_text', text: chunk, emoji: true } })),
       ],
     };
   }
   return { text: `${escapeSlack(title)}\n\n${escapeSlack(report.text)}`, mrkdwn: false, unfurl_links: false, unfurl_media: false };
 }
 
-export async function publishReportImage(report, db = getSupabase()) {
-  const { renderReportPng } = await import('./_report-image.js');
-  const png = await renderReportPng(report);
-  const path = `automatic/${report.agency}/${randomUUID()}.png`;
-  const { error } = await db.storage.from('report-images').upload(path, png, { contentType: 'image/png', upsert: false });
-  if (error) throw new Error('Não foi possível armazenar a imagem. Verifique o bucket report-images.');
+export function resolveReportImage(report, imagePaths, db = getSupabase()) {
+  const path = imagePaths?.[report.accountId];
+  const expectedPrefix = `manual/${report.agency}/${report.accountId}/`;
+  if (typeof path !== 'string' || !path.startsWith(expectedPrefix)
+    || !/^manual\/[a-z0-9]+\/act_\d+\/[a-f0-9-]{36}\.png$/.test(path)) {
+    throw new Error('Imagem do Relatório Visual ausente ou inválida. Gere a prévia novamente.');
+  }
   return db.storage.from('report-images').getPublicUrl(path).data.publicUrl;
 }
 
-export async function runAutomaticReports({
-  store = createReportStore(), now = new Date(), env = process.env,
-  fetchImpl = fetch, publishImage = publishReportImage, pause = delay,
+export async function sendAgencyReports({
+  agency, period, clientToken, imagePaths, store = createReportStore(), now = new Date(), env = process.env,
+  fetchImpl = fetch, publishImage = resolveReportImage, pause = delay,
 } = {}) {
-  const settings = await getReportSettings(store);
-  const results = [];
-  for (const rule of REPORT_RULES.filter(item => reportIsDue(item, settings, now))) {
-    const summary = { agency: rule.id, at: now.toISOString(), sent: 0, skipped: 0, uncertain: 0, errors: [] };
-    try {
-      const webhook = getReportWebhook(rule.id, env);
-      if (!webhook) throw new Error(`Configure o webhook Slack para ${rule.label}.`);
-      const collected = await collectAgencyReports(rule, { store, now, fetchImpl, env });
-      Object.assign(summary, { period: collected.period, linkedAccounts: collected.linkedAccounts, withoutDelivery: collected.withoutDelivery });
-      summary.errors.push(...collected.errors);
-      for (const report of collected.reports) {
-        const key = reportDeliveryKey(rule, report);
-        const claim = await store.claim(key);
-        if (!claim.acquired) {
-          if (claim.status === 'sent') summary.skipped++;
-          else summary.uncertain++;
-          continue;
-        }
-        let posting = false;
-        let accepted = false;
-        try {
-          const imageUrl = rule.format === 'visual' ? await publishImage(report) : null;
-          const payload = buildSlackReport(rule, report, imageUrl);
-          // Persist the image before posting so an uncertain delivery can be inspected.
-          await store.set(key, { status: 'pending', at: now.toISOString(), accountName: report.accountName, imageUrl });
-          await pause(1100);
-          posting = true;
-          const response = await fetchImpl(webhook, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload), signal: AbortSignal.timeout(20000),
-          });
-          if (!response.ok) {
-            posting = false; // Explicit rejection: safe to retry on a later invocation.
-            throw new Error(`Slack recusou o envio (HTTP ${response.status}).`);
-          }
-          accepted = true;
-          await store.set(key, { status: 'sent', at: now.toISOString(), accountName: report.accountName, imageUrl });
-          summary.sent++;
-        } catch (error) {
-          const uncertain = posting || accepted;
-          if (uncertain) summary.uncertain++;
-          await store.set(key, {
-            status: uncertain ? 'uncertain' : 'failed', at: now.toISOString(), accountName: report.accountName,
-            error: uncertain ? 'Entrega sem confirmação. Confira o canal antes de reenviar.' : error.message,
-          });
-          summary.errors.push({ accountName: report.accountName, error: uncertain ? 'Entrega sem confirmação. Confira o canal antes de reenviar.' : error.message });
-        }
+  const rule = REPORT_RULES.find(item => item.id === agency);
+  if (!rule) throw new Error('Selecione uma agência válida.');
+  const selectedPeriod = validateReportPeriod(period, now);
+  const summary = { agency: rule.id, at: now.toISOString(), sent: 0, skipped: 0, uncertain: 0, errors: [] };
+  try {
+    const webhook = getReportWebhook(rule.id, env);
+    if (!webhook) throw new Error(`Configure o webhook Slack para ${rule.label}.`);
+    const collected = await collectAgencyReports(rule, { store, period: selectedPeriod, clientToken, now, fetchImpl, env });
+    Object.assign(summary, { period: collected.period, linkedAccounts: collected.linkedAccounts, withoutDelivery: collected.withoutDelivery });
+    summary.errors.push(...collected.errors);
+    for (const report of collected.reports) {
+      const key = reportDeliveryKey(rule, report);
+      const claim = await store.claim(key);
+      if (!claim.acquired) {
+        if (claim.status === 'sent') summary.skipped++;
+        else summary.uncertain++;
+        continue;
       }
-    } catch (error) {
-      summary.errors.push({ error: error.message });
+      let posting = false;
+      let accepted = false;
+      try {
+        const imageUrl = rule.format === 'visual' ? await publishImage(report, imagePaths) : null;
+        const payload = buildSlackReport(rule, report, imageUrl);
+        // Persist the image before posting so an uncertain delivery can be inspected.
+        await store.set(key, { status: 'pending', at: now.toISOString(), accountName: report.accountName, imageUrl });
+        await pause(1100);
+        posting = true;
+        const response = await fetchImpl(webhook, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload), signal: AbortSignal.timeout(20000),
+        });
+        if (!response.ok) {
+          posting = false; // Explicit rejection: safe to retry on a later invocation.
+          throw new Error(`Slack recusou o envio (HTTP ${response.status}).`);
+        }
+        accepted = true;
+        await store.set(key, { status: 'sent', at: now.toISOString(), accountName: report.accountName, imageUrl });
+        summary.sent++;
+      } catch (error) {
+        const uncertain = posting || accepted;
+        if (uncertain) summary.uncertain++;
+        await store.set(key, {
+          status: uncertain ? 'uncertain' : 'failed', at: now.toISOString(), accountName: report.accountName,
+          error: uncertain ? 'Entrega sem confirmação. Confira o canal antes de reenviar.' : error.message,
+        });
+        summary.errors.push({ accountName: report.accountName, error: uncertain ? 'Entrega sem confirmação. Confira o canal antes de reenviar.' : error.message });
+      }
     }
-    summary.status = summary.errors.length || summary.uncertain ? 'error' : 'success';
-    await store.set(`${AUTOMATIC_REPORTS_KEY}_last_${rule.id}`, summary);
-    results.push(summary);
+  } catch (error) {
+    summary.errors.push({ error: error.message });
   }
-  return { results };
+  summary.status = summary.errors.length || summary.uncertain ? 'error' : 'success';
+  await store.set(`${AUTOMATIC_REPORTS_KEY}_last_${rule.id}`, summary);
+  return summary;
 }

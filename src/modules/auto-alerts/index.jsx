@@ -1,4 +1,3 @@
-import AutomaticReports from './AutomaticReports';
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Bell, AlertTriangle, TrendingDown, DollarSign, Trash2,
@@ -317,7 +316,6 @@ export default function AutoAlerts() {
         </div>
       </div>
 
-      <AutomaticReports />
 
       {/* ═══ SETTINGS (collapsible) ═══ */}
       <div className="bg-surface/50 rounded-2xl border border-border/50 overflow-hidden">

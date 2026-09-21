@@ -34,6 +34,7 @@ const PublicReport = lazy(() => import('./modules/public-report'));
 const PublicReportEntry = lazy(() => import('./modules/public-report').then((module) => ({ default: module.PublicReportEntry })));
 
 const AutoAlerts = lazy(() => import('./modules/auto-alerts'));
+const AgencyReports = lazy(() => import('./modules/auto-alerts/AutomaticReports'));
 
 function PageLoader() {
   return (
@@ -91,6 +92,7 @@ export default function App() {
               <Route path="relatorio-pdf" element={<Navigate to="/" replace />} />
 
               <Route path="avisos" element={<AutoAlerts />} />
+              <Route path="envio-relatorios" element={<AgencyReports />} />
               <Route path="configuracoes" element={<Settings />} />
             </Route>
 

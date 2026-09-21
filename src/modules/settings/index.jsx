@@ -13,6 +13,10 @@ import {
   loadStoredGoogleAdsAccounts,
   loadStoredGoogleAdsConnection,
   syncGoogleAdsAccounts,
+  startGoogleAdsOAuth,
+  disconnectGoogleAds,
+  isGoogleAdsConfigured,
+  formatGoogleCustomerId,
 } from '../../services/googleAdsApi';
 import { exportFullBackupToFile, importFullBackupFromFile } from '../../shared/utils/cloudBackup';
 import { getStoredMetaToken, META_TOKEN_INVALIDATED_EVENT, resetDevTokenState } from '../../services/metaTokenGuard';
@@ -230,6 +234,7 @@ export default function Settings() {
   const [paymentMethods, setPaymentMethods] = useState(() => readSavedPaymentMethods());
   const [googleConnection, setGoogleConnection] = useState(() => loadStoredGoogleAdsConnection());
   const [googleAccounts, setGoogleAccounts] = useState(() => loadStoredGoogleAdsAccounts());
+  const [loadingGoogle, setLoadingGoogle] = useState(false);
 
   const [disabledAccounts, setDisabledAccounts] = useState(() => {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.DISABLED_ACCOUNTS)) || []; } catch { return []; }
@@ -312,14 +317,40 @@ export default function Settings() {
 
   const fetchGoogleAccounts = useCallback(async () => {
     try {
+      setLoadingGoogle(true);
       setError(null);
       await syncGoogleAdsAccounts();
       refreshGoogleState();
     } catch (err) {
       console.error('Erro ao buscar contas Google Ads:', err);
       setError(err.message);
+    } finally {
+      setLoadingGoogle(false);
     }
   }, [refreshGoogleState]);
+
+  const handleConnectGoogleAds = () => {
+    setError(null);
+    if (!isGoogleAdsConfigured()) {
+      setError('Defina VITE_GOOGLE_ADS_CLIENT_ID (ou VITE_GOOGLE_CLIENT_ID) no .env e GOOGLE_ADS_* no servidor para conectar o Google Ads.');
+      return;
+    }
+    startGoogleAdsOAuth();
+  };
+
+  const handleDisconnectGoogleAds = async () => {
+    try {
+      setLoadingGoogle(true);
+      setError(null);
+      await disconnectGoogleAds();
+      refreshGoogleState();
+    } catch (err) {
+      console.error('Erro ao desconectar Google Ads:', err);
+      setError(err.message);
+    } finally {
+      setLoadingGoogle(false);
+    }
+  };
 
   useEffect(() => {
     if (googleConnection && googleAccounts.length === 0) {
@@ -490,7 +521,7 @@ export default function Settings() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-surface rounded-xl border border-border overflow-hidden">
           <div className="bg-gradient-to-r from-[#1877F2]/5 to-transparent px-4 py-4 sm:px-6 border-b border-border/50 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">
@@ -551,7 +582,67 @@ export default function Settings() {
           </div>
         </div>
 
-
+        {/* ── Google Ads Card ── */}
+        <div className="bg-surface rounded-xl border border-border overflow-hidden">
+          <div className="bg-gradient-to-r from-[#34A853]/5 to-transparent px-4 py-4 sm:px-6 border-b border-border/50 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-[#34A853]/10 flex items-center justify-center">
+                <GoogleAdsIcon />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-text-primary">Google Ads</h2>
+                <p className="text-xs text-text-secondary">Contas e campanhas</p>
+              </div>
+            </div>
+            <StatusBadge connected={!!googleConnection} />
+          </div>
+          <div className="p-5 space-y-4">
+            {googleConnection ? (
+              <>
+                <div className="flex items-center gap-3 bg-bg/30 rounded-lg p-3 border border-border/50">
+                  <div className="w-9 h-9 rounded-full bg-[#34A853]/15 flex items-center justify-center text-[#34A853]">
+                    <GoogleAdsIcon className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-text-primary truncate">
+                      {googleConnection.userEmail || 'Conta Google Conectada'}
+                    </p>
+                    <p className="text-xs text-success mt-0.5">{googleAccounts.length} conta(s) encontrada(s)</p>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <button
+                    onClick={fetchGoogleAccounts}
+                    disabled={loadingGoogle}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-[#34A853]/10 border border-[#34A853]/20 text-[#34A853] rounded-lg text-sm font-medium hover:bg-[#34A853]/20 transition-colors disabled:opacity-50"
+                  >
+                    <RefreshCw size={13} className={loadingGoogle ? 'animate-spin' : ''} />
+                    Sincronizar
+                  </button>
+                  <button
+                    onClick={handleDisconnectGoogleAds}
+                    disabled={loadingGoogle}
+                    className="flex items-center justify-center gap-2 px-3 py-2 bg-danger/10 border border-danger/20 text-danger rounded-lg text-sm font-medium hover:bg-danger/20 transition-colors"
+                  >
+                    <Unlink size={13} /> Desconectar
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-5">
+                <p className="text-sm text-text-secondary mb-4">Conecte sua conta Google Ads para carregar as contas de anúncio.</p>
+                <button
+                  onClick={handleConnectGoogleAds}
+                  disabled={loadingGoogle}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#34A853] text-white rounded-xl text-sm font-bold hover:bg-[#2E7D32] transition-colors disabled:opacity-50"
+                >
+                  {loadingGoogle ? <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Link2 size={15} />}
+                  Conectar Google Ads
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {metaAccounts.length > 0 && (
