@@ -2,7 +2,7 @@
 // Usado pelo Relatório Texto (GDM). Produz resumo executivo, pontos de
 // análise (comparativos vs período anterior + alertas) e próximos passos.
 
-import { formatCurrency, formatNumber } from './format';
+import { formatCurrency, formatNumber } from './format.js';
 
 export function pctChange(current, previous) {
   if (!previous || previous === 0) return null;

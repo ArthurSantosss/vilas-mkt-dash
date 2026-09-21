@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Sparkles, X, Send, Mic, Loader2, Volume2, VolumeX, Check, AlertTriangle } from 'lucide-react';
+import { Sparkles, X, Send, Loader2, Check, AlertTriangle } from 'lucide-react';
 import { sendAssistantMessage, confirmAssistantAction } from '../../services/assistantApi';
 
 const WELCOME = {
@@ -8,45 +8,20 @@ const WELCOME = {
         'Oi! Sou seu assistente do VilasMKT. Posso consultar as contas dos seus clientes, comparar performance, sugerir melhorias e — com a sua confirmação — pausar/ativar campanhas, ajustar orçamento, criar alertas de saldo e mudar o método de pagamento. Pergunta algo como "como está a conta do cliente X essa semana?" ou "pausa a campanha Y do cliente X".',
 };
 
-// Web Speech API (ditado). Disponível em Chrome/Edge (desktop e Android).
-function getSpeechRecognition() {
-    if (typeof window === 'undefined') return null;
-    return window.SpeechRecognition || window.webkitSpeechRecognition || null;
-}
-
-function speak(text) {
-    if (typeof window === 'undefined' || !window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = 'pt-BR';
-    utter.rate = 1.05;
-    window.speechSynthesis.speak(utter);
-}
-
 export default function AssistantWidget() {
     const [isOpen, setIsOpen] = useState(false);
     const [messages, setMessages] = useState([WELCOME]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
-    const [listening, setListening] = useState(false);
-    const [voiceOutput, setVoiceOutput] = useState(false);
     // Estado de cada ação pendente por id: { status: 'pending'|'confirming'|'done'|'cancelled'|'error', message }
     const [actionStates, setActionStates] = useState({});
 
     const scrollRef = useRef(null);
-    const recognitionRef = useRef(null);
-    const speechSupported = !!getSpeechRecognition();
-    const ttsSupported = typeof window !== 'undefined' && !!window.speechSynthesis;
 
     useEffect(() => {
         if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }, [messages, loading, actionStates]);
-
-    // Ao fechar o painel, interrompe qualquer fala em andamento.
-    useEffect(() => {
-        if (!isOpen && ttsSupported) window.speechSynthesis.cancel();
-    }, [isOpen, ttsSupported]);
 
     useEffect(() => {
         const handleOpen = () => setIsOpen(true);
@@ -78,13 +53,12 @@ export default function AssistantWidget() {
                     return next;
                 });
             }
-            if (voiceOutput && reply) speak(reply);
         } catch (err) {
             setError(err.message || 'Não consegui falar com o assistente.');
         } finally {
             setLoading(false);
         }
-    }, [input, loading, messages, voiceOutput]);
+    }, [input, loading, messages]);
 
     const handleKeyDown = (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -93,35 +67,6 @@ export default function AssistantWidget() {
         }
     };
 
-    const toggleVoice = useCallback(() => {
-        const SR = getSpeechRecognition();
-        if (!SR) return;
-        if (listening && recognitionRef.current) {
-            recognitionRef.current.stop();
-            return;
-        }
-        const recognition = new SR();
-        recognition.lang = 'pt-BR';
-        recognition.interimResults = false;
-        recognition.maxAlternatives = 1;
-        recognition.onresult = (event) => {
-            const transcript = event.results[0][0].transcript;
-            setInput((prev) => (prev ? `${prev} ${transcript}` : transcript));
-        };
-        recognition.onend = () => setListening(false);
-        recognition.onerror = () => setListening(false);
-        recognitionRef.current = recognition;
-        setListening(true);
-        recognition.start();
-    }, [listening]);
-
-    const toggleVoiceOutput = useCallback(() => {
-        setVoiceOutput((prev) => {
-            if (prev && ttsSupported) window.speechSynthesis.cancel();
-            return !prev;
-        });
-    }, [ttsSupported]);
-
     const confirmAction = useCallback(async (action) => {
         setActionStates((prev) => ({ ...prev, [action.id]: { status: 'confirming' } }));
         try {
@@ -129,11 +74,10 @@ export default function AssistantWidget() {
             if (!ok) throw new Error(message || 'Falha ao executar.');
             setActionStates((prev) => ({ ...prev, [action.id]: { status: 'done', message } }));
             setMessages((prev) => [...prev, { role: 'assistant', content: `✅ ${message}` }]);
-            if (voiceOutput) speak(message);
         } catch (err) {
             setActionStates((prev) => ({ ...prev, [action.id]: { status: 'error', message: err.message } }));
         }
-    }, [voiceOutput]);
+    }, []);
 
     const cancelAction = useCallback((action) => {
         setActionStates((prev) => ({ ...prev, [action.id]: { status: 'cancelled' } }));
@@ -196,18 +140,6 @@ export default function AssistantWidget() {
 
     return (
         <>
-            {!isOpen && (
-                <button
-                    type="button"
-                    onClick={() => setIsOpen(true)}
-                    aria-label="Abrir assistente"
-                    title="Abrir Assistente Vilas"
-                    className="fixed bottom-24 right-4 lg:bottom-6 lg:right-6 z-50 flex items-center justify-center w-14 h-14 rounded-full bg-primary text-white shadow-2xl shadow-primary/40 hover:bg-primary-light hover:scale-105 active:scale-95 transition-all cursor-pointer border-2 border-white/20"
-                >
-                    <Sparkles size={24} className="animate-pulse" />
-                </button>
-            )}
-
             {isOpen && (
                 <div className="fixed inset-0 z-50 lg:inset-auto lg:bottom-6 lg:right-6 lg:w-[400px] lg:h-[600px] lg:max-h-[80vh] flex flex-col bg-surface lg:rounded-2xl lg:border lg:border-border shadow-2xl overflow-hidden">
                     {/* Header */}
@@ -222,17 +154,6 @@ export default function AssistantWidget() {
                             </div>
                         </div>
                         <div className="flex items-center gap-1">
-                            {ttsSupported && (
-                                <button
-                                    type="button"
-                                    onClick={toggleVoiceOutput}
-                                    aria-label={voiceOutput ? 'Desativar voz' : 'Ativar voz'}
-                                    title={voiceOutput ? 'Voz ativada (respostas faladas)' : 'Voz desativada'}
-                                    className={`p-1.5 rounded-lg transition-colors ${voiceOutput ? 'text-primary-light bg-primary/10' : 'text-text-secondary hover:bg-surface-hover'}`}
-                                >
-                                    {voiceOutput ? <Volume2 size={18} /> : <VolumeX size={18} />}
-                                </button>
-                            )}
                             <button
                                 type="button"
                                 onClick={() => setIsOpen(false)}
@@ -279,24 +200,12 @@ export default function AssistantWidget() {
                     {/* Input */}
                     <div className="border-t border-border p-3">
                         <div className="flex items-end gap-2">
-                            {speechSupported && (
-                                <button
-                                    type="button"
-                                    onClick={toggleVoice}
-                                    aria-label="Ditar por voz"
-                                    className={`flex-shrink-0 flex items-center justify-center w-10 h-10 rounded-xl transition-colors ${
-                                        listening ? 'bg-red-500/20 text-red-400 animate-pulse' : 'bg-surface-hover text-text-secondary hover:text-text-primary'
-                                    }`}
-                                >
-                                    <Mic size={18} />
-                                </button>
-                            )}
                             <textarea
                                 value={input}
                                 onChange={(e) => setInput(e.target.value)}
                                 onKeyDown={handleKeyDown}
                                 rows={1}
-                                placeholder={listening ? 'Ouvindo...' : 'Pergunte ou peça uma ação...'}
+                                placeholder="Pergunte ou peça uma ação..."
                                 className="flex-1 resize-none max-h-32 rounded-xl bg-bg border border-border px-3 py-2.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-primary"
                             />
                             <button

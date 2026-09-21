@@ -1,18 +1,27 @@
 {
   "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
   ],
   "headers": [
     {
       "source": "/assets/(.*)",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
       ]
     },
     {
       "source": "/(.*)\\.(png|jpg|jpeg|gif|webp|svg|ico|woff|woff2|ttf)",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=604800, must-revalidate" }
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=604800, must-revalidate"
+        }
       ]
     }
   ],
@@ -20,6 +29,19 @@
     {
       "path": "/api/cron/slack-alerts",
       "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/cron/slack-reports",
+      "schedule": "0 8 * * 1,5"
     }
-  ]
+  ],
+  "functions": {
+    "api/cron/slack-reports.js": {
+      "maxDuration": 300,
+      "includeFiles": "public/**"
+    },
+    "api/alerts/reports.js": {
+      "maxDuration": 300
+    }
+  }
 }
