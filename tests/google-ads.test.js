@@ -246,3 +246,37 @@ test('mutações de campanha validam a entrada, resolvem o MCC no servidor e rej
   assert.equal(mutations[1].pathname, '/v25/customers/2222222222/campaignBudgets:mutate');
   assert.deepEqual(mutations[1].body.operations, [{ update: { resourceName: 'customers/2222222222/campaignBudgets/7', amountMicros: '12340000' }, updateMask: 'amount_micros' }]);
 });
+
+
+test('descoberta descarta contas encerradas/suspensas e o MCC delas, mantendo as sem status', async t => {
+  const manager = '1111111111'; const ativa = '2222222222'; const cancelada = '3333333333';
+  const suspensa = '4444444444'; const semStatus = '5555555555'; const mccEncerrado = '6666666666';
+  const consultadas = [];
+  mockFetch(t, async (input, options) => {
+    const url = new URL(input);
+    if (url.pathname.endsWith('listAccessibleCustomers')) return response({ resourceNames: [`customers/${manager}`] });
+    const id = url.pathname.split('/')[3];
+    const { query } = JSON.parse(options.body);
+    if (query.includes('FROM customer_client')) {
+      consultadas.push(id);
+      return response({
+        results: [
+          { id: manager, level: 0, manager: true, status: 'ENABLED' },
+          { id: ativa, level: 1, status: 'ENABLED' },
+          { id: cancelada, level: 1, status: 'CANCELED' },
+          { id: suspensa, level: 1, status: 'SUSPENDED' },
+          { id: semStatus, level: 1 },
+          { id: mccEncerrado, level: 1, manager: true, status: 'CLOSED' },
+        ].map(customerClient => ({ customerClient })),
+      });
+    }
+    return response({ results: [{ customer: { id, manager: id === manager, descriptiveName: id, currencyCode: 'BRL', timeZone: 'America/Bahia' } }] });
+  });
+
+  const result = await listReachableAccounts('token');
+  const ids = result.accounts.map(a => a.accountId).sort();
+  assert.deepEqual(ids, [ativa, semStatus]);
+  // O MCC encerrado não entra na fila de travessia.
+  assert.deepEqual(consultadas, [manager]);
+  assert.deepEqual(result.warnings, []);
+});

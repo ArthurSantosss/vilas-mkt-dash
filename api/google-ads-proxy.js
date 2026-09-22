@@ -344,6 +344,14 @@ async function fetchHierarchyRows(customerId, accessToken, loginCustomerId) {
     .filter((row) => row.customerId);
 }
 
+// customer_client.status continua retornando contas CANCELED/CLOSED/SUSPENDED que o MCC
+// enxerga mas ninguém consegue consultar: o Google responde PERMISSION_DENIED nelas.
+const SERVABLE_CLIENT_STATUSES = new Set(['', 'ENABLED', 'UNKNOWN', 'UNSPECIFIED']);
+
+function isServableClient(row) {
+  return SERVABLE_CLIENT_STATUSES.has(String(row.rawStatus || '').toUpperCase());
+}
+
 function upsertLeafAccount(map, account) {
   const existing = map.get(account.accountId);
   if (!existing) {
@@ -379,6 +387,7 @@ export async function listReachableAccounts(accessToken) {
         const rows = await fetchHierarchyRows(currentId, accessToken, seedId);
         for (const row of rows) {
           if (row.level === 0) continue;
+          if (!isServableClient(row)) continue;
           if (row.manager) { queue.push(row.customerId); continue; }
           // Hidden accounts can still be accessible; do not silently drop them.
           upsertLeafAccount(accountMap, { id: row.customerId, accountId: row.customerId, name: row.name, currency: row.currency, timeZone: row.timeZone, loginCustomerId: seedId, source: 'manager', isManager: false });

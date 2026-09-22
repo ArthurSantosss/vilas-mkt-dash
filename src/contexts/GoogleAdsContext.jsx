@@ -168,6 +168,19 @@ export function GoogleAdsProvider({ children }) {
     return { accounts: nextAccounts, campaigns: nextCampaigns };
   }, [accountQueries, rawAccounts]);
 
+  // Uma conta sem permissão não pode derrubar as demais: o erro dela fica isolado aqui.
+  const accountErrors = useMemo(() => accountQueries
+    .map((query, index) => {
+      if (!query.error) return null;
+      const rawAccount = rawAccounts[index];
+      return {
+        accountId: rawAccount?.accountId || null,
+        name: rawAccount?.name || rawAccount?.accountId || 'Conta desconhecida',
+        message: query.error.message,
+      };
+    })
+    .filter(Boolean), [accountQueries, rawAccounts]);
+
   const loading = hasConnection ? loadingAccounts || accountQueries.some((query) => query.isLoading) : false;
   const error = !hasConnection
     ? null
@@ -203,6 +216,7 @@ export function GoogleAdsProvider({ children }) {
     todayTotals,
     loading,
     error,
+    accountErrors,
     hasConnection,
     disabledAccounts,
     refreshData,
@@ -214,6 +228,7 @@ export function GoogleAdsProvider({ children }) {
     todayTotals,
     loading,
     error,
+    accountErrors,
     hasConnection,
     disabledAccounts,
     refreshData,

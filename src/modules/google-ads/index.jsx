@@ -267,7 +267,7 @@ function formatChannelType(channelType) {
 }
 
 export default function GoogleAdsOverview() {
-  const { accounts, campaigns, selectedPeriod, setSelectedPeriod, loading, error, hasConnection, refreshData } = useGoogleAds();
+  const { accounts, campaigns, selectedPeriod, setSelectedPeriod, loading, error, accountErrors, hasConnection, refreshData } = useGoogleAds();
   const { agencies, accountAgencies } = useAgency();
   const [selectedAccount, setSelectedAccount] = useState('all');
   const [selectedAgency, setSelectedAgency] = useState('all');
@@ -481,7 +481,7 @@ export default function GoogleAdsOverview() {
     );
   }
 
-  if (error) {
+  if (error && accounts.length === 0) {
     return (
       <div className="space-y-6">
         <div className="rounded-2xl border border-border bg-gradient-to-br from-surface via-[#1a1d27] to-[#0f1117] p-4 sm:p-6">{header}</div>
@@ -574,6 +574,34 @@ export default function GoogleAdsOverview() {
         <div className="flex items-center gap-2 text-sm text-danger bg-danger/10 border border-danger/20 px-4 py-3 rounded-xl">
           <span className="flex-1">{actionError}</span>
           <button onClick={() => setActionError(null)} className="text-danger/60 hover:text-danger text-xs font-bold">x</button>
+        </div>
+      )}
+
+      {/* error já embute o primeiro erro de conta; só mostramos aqui quando não há detalhe por conta. */}
+      {error && accounts.length > 0 && !accountErrors?.length && (
+        <div role="alert" className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
+          Alguns dados podem estar incompletos. {error} Confira as conexões em Configurações.
+        </div>
+      )}
+
+      {accountErrors?.length > 0 && (
+        <div role="alert" className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
+          <p className="font-semibold">
+            {accountErrors.length} conta{accountErrors.length !== 1 ? 's' : ''} não retornou dados neste período. As demais seguem abaixo.
+          </p>
+          <ul className="mt-2 space-y-1 text-xs">
+            {accountErrors.map((item) => (
+              <li key={item.accountId || item.name}>
+                <span className="font-medium">{item.name}</span>
+                {item.accountId && <span className="font-mono"> · {formatGoogleCustomerId(item.accountId)}</span>}
+                {' — '}{item.message}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs opacity-80">
+            "The caller does not have permission" normalmente indica conta encerrada, suspensa ou sem acesso para o perfil
+            Google conectado. Sincronize as contas em Configurações ou desative a conta na lista de Contas de Anuncio.
+          </p>
         </div>
       )}
 
