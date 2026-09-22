@@ -24,6 +24,8 @@ export const CLOUD_SYNC_KEYS = [
   'meta_user_info',
   'google_ads_accounts',
   'google_ads_connection',
+  'disabled_google_ads_accounts',
+  'google_ads_column_order',
   'client_logos',
   'agencies_list',
   'account_agencies',

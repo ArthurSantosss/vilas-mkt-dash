@@ -12,6 +12,8 @@ import {
   consumeGoogleAdsFlashError,
   loadStoredGoogleAdsAccounts,
   loadStoredGoogleAdsConnection,
+  loadDisabledGoogleAdsAccounts,
+  toggleGoogleAdsAccount,
   syncGoogleAdsAccounts,
   startGoogleAdsOAuth,
   disconnectGoogleAds,
@@ -148,6 +150,7 @@ export default function Settings() {
   const { user, signOut, syncToCloud } = useAuth();
   const [newAgencyName, setNewAgencyName] = useState('');
   const [showOnlyActive, setShowOnlyActive] = useState(false);
+  const [showOnlyActiveGoogle, setShowOnlyActiveGoogle] = useState(false);
 
   const [clientLogos, setClientLogos] = useState(() => {
     try {
@@ -234,6 +237,7 @@ export default function Settings() {
   const [paymentMethods, setPaymentMethods] = useState(() => readSavedPaymentMethods());
   const [googleConnection, setGoogleConnection] = useState(() => loadStoredGoogleAdsConnection());
   const [googleAccounts, setGoogleAccounts] = useState(() => loadStoredGoogleAdsAccounts());
+  const [disabledGoogleAccounts, setDisabledGoogleAccounts] = useState(() => loadDisabledGoogleAdsAccounts());
   const [loadingGoogle, setLoadingGoogle] = useState(false);
 
   const [disabledAccounts, setDisabledAccounts] = useState(() => {
@@ -252,6 +256,11 @@ export default function Settings() {
   const refreshGoogleState = useCallback(() => {
     setGoogleConnection(loadStoredGoogleAdsConnection());
     setGoogleAccounts(loadStoredGoogleAdsAccounts());
+    setDisabledGoogleAccounts(loadDisabledGoogleAdsAccounts());
+  }, []);
+
+  const toggleGoogleAccount = useCallback((accountId) => {
+    setDisabledGoogleAccounts(toggleGoogleAdsAccount(accountId));
   }, []);
 
   useEffect(() => {
@@ -477,6 +486,22 @@ export default function Settings() {
 
   const activeMetaCount = metaAccounts.filter(a => !disabledAccounts.includes(a.id)).length;
 
+  const sortedGoogleAccounts = useMemo(() => {
+    return [...googleAccounts].sort((a, b) => {
+      const aAgency = (accountAgencies[a.accountId] || '').trim().toLowerCase() || '\uffff';
+      const bAgency = (accountAgencies[b.accountId] || '').trim().toLowerCase() || '\uffff';
+      const agencyCmp = aAgency.localeCompare(bAgency, 'pt-BR');
+      if (agencyCmp !== 0) return agencyCmp;
+      return (a.name || a.accountId || '').localeCompare((b.name || b.accountId || ''), 'pt-BR');
+    });
+  }, [accountAgencies, googleAccounts]);
+
+  const displayedGoogleAccounts = showOnlyActiveGoogle
+    ? sortedGoogleAccounts.filter(a => !disabledGoogleAccounts.includes(String(a.accountId)))
+    : sortedGoogleAccounts;
+
+  const activeGoogleCount = googleAccounts.filter(a => !disabledGoogleAccounts.includes(String(a.accountId))).length;
+
   const getAccountStatusLabel = (status) => {
     switch (status) {
       case 1: return { label: 'Ativa', color: 'text-success' };
@@ -619,14 +644,12 @@ export default function Settings() {
                 <RefreshCw size={14} className={loadingGoogle ? 'animate-spin' : ''} /> Sincronizar contas
               </button>}
             </div>
-            {googleConnection && <p className="text-xs text-text-secondary">{googleAccounts.length} conta(s) únicas no painel. Contas presentes em mais de um perfil aparecem uma vez.</p>}
-            {googleAccounts.length > 0 && <div className="max-h-64 overflow-y-auto divide-y divide-border/50">
-              {googleAccounts.map(account => <div key={account.accountId} className="py-2 text-xs">
-                <p className="font-medium text-text-primary">{account.name} · {formatGoogleCustomerId(account.accountId)}</p>
-                <p className="text-text-secondary">{account.userEmail} · {account.loginCustomerId ? `MCC ${formatGoogleCustomerId(account.loginCustomerId)}` : 'Acesso direto'}</p>
-              </div>)}
-            </div>}
-
+            {googleConnection && (
+              <p className="text-xs text-text-secondary">
+                {googleAccounts.length} conta(s) únicas no painel. Contas presentes em mais de um perfil aparecem uma vez.
+                {googleAccounts.length > 0 && ' Gerencie agência e ativação na lista abaixo.'}
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -730,6 +753,104 @@ export default function Settings() {
       )}
 
 
+
+      {googleAccounts.length > 0 && (
+        <div className="bg-surface rounded-xl border border-border overflow-hidden">
+          <div className="flex flex-col gap-4 border-b border-border/50 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+            <div>
+              <h2 className="text-lg font-bold text-text-primary">Contas de Anuncio - Google Ads</h2>
+              <p className="text-xs text-text-secondary">Ordenadas por agencia (sem agencia no final)</p>
+            </div>
+            <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center">
+              <button
+                onClick={() => setShowOnlyActiveGoogle(v => !v)}
+                className={`w-full sm:w-auto text-xs px-3 py-1.5 rounded-lg border transition-all ${showOnlyActiveGoogle ? 'bg-primary/15 text-primary-light border-primary/30' : 'bg-surface border-border text-text-secondary hover:text-text-primary hover:border-primary/30'}`}
+              >
+                {showOnlyActiveGoogle ? 'Mostrar todas' : 'Ocultar inativas'}
+              </button>
+              <div className="bg-surface border border-border rounded-lg px-4 py-2 text-sm text-center sm:text-left">
+                <span className="text-text-secondary">Ativas: </span>
+                <span className="font-bold text-text-primary">{activeGoogleCount}/{googleAccounts.length}</span>
+              </div>
+            </div>
+          </div>
+
+          {loadingGoogle ? (
+            <div className="px-6 py-12 text-center">
+              <div className="w-8 h-8 border-2 border-[#34A853]/30 border-t-[#34A853] rounded-full animate-spin mx-auto mb-3" />
+              <p className="text-sm text-text-secondary">Buscando contas de anuncio...</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-border/50">
+              {displayedGoogleAccounts.map((account) => {
+                const accountId = String(account.accountId);
+                const isEnabled = !disabledGoogleAccounts.includes(accountId);
+                return (
+                  <div key={accountId} className={`flex flex-col gap-4 px-4 py-4 transition-colors sm:flex-row sm:items-center sm:justify-between sm:px-6 ${isEnabled ? 'hover:bg-surface-hover/50' : 'opacity-50'}`}>
+                    <div className="flex w-full min-w-0 items-start gap-4">
+                      <div className="w-8 h-8 rounded-lg bg-[#34A853]/10 flex items-center justify-center shrink-0">
+                        <GoogleAdsIcon className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-text-primary truncate">{account.name || accountId}</p>
+                        <div className="flex items-center gap-2 text-xs text-text-secondary flex-wrap">
+                          <span className="font-mono">{formatGoogleCustomerId(accountId)}</span>
+                          <span>•</span>
+                          <span className={account.unavailable ? 'text-warning' : 'text-success'}>
+                            {account.unavailable ? 'Indisponivel' : 'Ativa'}
+                          </span>
+                          {account.currency && <><span>•</span><span>{account.currency}</span></>}
+                          <span>•</span>
+                          <span>{account.loginCustomerId ? `MCC ${formatGoogleCustomerId(account.loginCustomerId)}` : 'Acesso direto'}</span>
+                          {account.userEmail && <><span>•</span><span className="truncate">{account.userEmail}</span></>}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex w-full flex-col gap-3 sm:ml-4 sm:w-auto sm:flex-row sm:items-center sm:justify-end">
+                      <div className="flex items-center gap-2 w-full sm:w-[220px]">
+                        <input
+                          type="text"
+                          value={clientLogos[accountId] || ''}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setClientLogos(prev => ({ ...prev, [accountId]: val }));
+                          }}
+                          onBlur={e => saveClientLogo(accountId, e.target.value)}
+                          placeholder="URL da Logo do Cliente"
+                          className="w-full bg-bg border border-border rounded-lg px-3 py-1.5 text-xs text-text-primary focus:outline-none focus:border-primary"
+                        />
+                        {clientLogos[accountId] && (
+                          <img
+                            src={clientLogos[accountId]}
+                            alt="Logo preview"
+                            onError={(e) => { e.target.style.display = 'none'; }}
+                            className="w-7 h-7 object-contain rounded border border-border bg-bg/50 p-0.5 shrink-0"
+                            style={{ display: 'block' }}
+                          />
+                        )}
+                      </div>
+
+                      {agencies.length > 0 && (
+                        <select
+                          value={accountAgencies[accountId] || ''}
+                          onChange={e => setAccountAgency(accountId, e.target.value)}
+                          className="w-full bg-bg border border-border rounded-lg px-2 py-2 text-xs text-text-primary focus:outline-none focus:border-primary sm:w-[150px]"
+                        >
+                          <option value="">Sem agencia</option>
+                          {agencies.map(ag => <option key={ag} value={ag}>{ag}</option>)}
+                        </select>
+                      )}
+                      <button onClick={() => toggleGoogleAccount(accountId)} className="self-end transition-colors sm:self-auto" title={isEnabled ? 'Desativar no dashboard' : 'Ativar no dashboard'}>
+                        {isEnabled ? <ToggleRight size={28} className="text-success" /> : <ToggleLeft size={28} className="text-text-secondary/40" />}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="bg-surface rounded-xl border border-border overflow-hidden">
         <div className="px-6 py-4 border-b border-border/50 flex items-center gap-3">

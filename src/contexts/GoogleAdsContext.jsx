@@ -4,9 +4,11 @@ import {
   fetchGoogleAdsAccountOverview,
   loadStoredGoogleAdsConnection,
   loadStoredGoogleAdsAccounts,
+  loadDisabledGoogleAdsAccounts,
   syncGoogleAdsAccounts,
   getGoogleAdsStatus,
   GOOGLE_ADS_STORAGE_KEYS,
+  GOOGLE_ADS_ACCOUNTS_TOGGLED_EVENT,
 } from '../services/googleAdsApi';
 
 const GoogleAdsContext = createContext();
@@ -26,8 +28,10 @@ function normalizeGoogleAccount(rawAccount, overview) {
     currency: rawAccount.currency || 'BRL',
     loginCustomerId: rawAccount.loginCustomerId || null,
     connectionId: rawAccount.connectionId,
+    userEmail: rawAccount.userEmail || null,
     source: rawAccount.source || 'direct',
     status: hasActiveCampaign ? 'active' : 'paused',
+    campaignCount: campaigns.length,
     metrics: {
       spend: totals.spend || 0,
       impressions: totals.impressions || 0,
@@ -61,6 +65,7 @@ function normalizeGoogleCampaigns(rawAccount, overview) {
     ...campaign,
     platform: 'google_ads',
     accountId: rawAccount.accountId,
+    connectionId: rawAccount.connectionId,
     metrics: {
       ...campaign.metrics,
       messages: campaign.metrics?.conversions || 0,
@@ -76,6 +81,7 @@ export function GoogleAdsProvider({ children }) {
   const queryClient = useQueryClient();
   const [selectedPeriod, setSelectedPeriod] = useState('today');
   const [connection, setConnection] = useState(loadStoredGoogleAdsConnection);
+  const [disabledAccounts, setDisabledAccounts] = useState(loadDisabledGoogleAdsAccounts);
   const hasConnection = Boolean(connection);
 
   useEffect(() => {
@@ -87,20 +93,28 @@ export function GoogleAdsProvider({ children }) {
         setConnection(loadStoredGoogleAdsConnection());
         queryClient.setQueryData(['googleAds', 'accounts'], loadStoredGoogleAdsAccounts());
       }
+      if (event.key === GOOGLE_ADS_STORAGE_KEYS.DISABLED_ACCOUNTS) {
+        setDisabledAccounts(loadDisabledGoogleAdsAccounts());
+      }
     };
 
     const handleGoogleAdsUpdate = () => {
       setConnection(loadStoredGoogleAdsConnection());
+      setDisabledAccounts(loadDisabledGoogleAdsAccounts());
       queryClient.setQueryData(['googleAds', 'accounts'], loadStoredGoogleAdsAccounts());
 
     };
 
+    const handleAccountToggle = () => setDisabledAccounts(loadDisabledGoogleAdsAccounts());
+
     window.addEventListener('storage', handleStorageChange);
     window.addEventListener('google-ads-updated', handleGoogleAdsUpdate);
+    window.addEventListener(GOOGLE_ADS_ACCOUNTS_TOGGLED_EVENT, handleAccountToggle);
 
     return () => {
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('google-ads-updated', handleGoogleAdsUpdate);
+      window.removeEventListener(GOOGLE_ADS_ACCOUNTS_TOGGLED_EVENT, handleAccountToggle);
     };
   }, [queryClient]);
 
@@ -109,7 +123,7 @@ export function GoogleAdsProvider({ children }) {
   }, [queryClient]);
 
   const {
-    data: rawAccounts = [],
+    data: allRawAccounts = [],
     isLoading: loadingAccounts,
     error: accountsError,
   } = useQuery({
@@ -118,6 +132,12 @@ export function GoogleAdsProvider({ children }) {
     enabled: hasConnection,
     staleTime: 5 * 60 * 1000,
   });
+
+  // Contas desativadas em Configurações não geram consulta nem aparecem no painel.
+  const rawAccounts = useMemo(
+    () => allRawAccounts.filter((account) => !disabledAccounts.includes(String(account.accountId))),
+    [allRawAccounts, disabledAccounts]
+  );
 
   const accountQueries = useQueries({
     queries: rawAccounts.map((account) => ({
@@ -184,6 +204,7 @@ export function GoogleAdsProvider({ children }) {
     loading,
     error,
     hasConnection,
+    disabledAccounts,
     refreshData,
   }), [
     accounts,
@@ -194,6 +215,7 @@ export function GoogleAdsProvider({ children }) {
     loading,
     error,
     hasConnection,
+    disabledAccounts,
     refreshData,
   ]);
 

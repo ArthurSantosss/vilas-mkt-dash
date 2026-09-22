@@ -1,9 +1,12 @@
 export const GOOGLE_ADS_STORAGE_KEYS = {
   ACCOUNTS: 'google_ads_accounts',
   CONNECTION: 'google_ads_connection',
+  DISABLED_ACCOUNTS: 'disabled_google_ads_accounts',
   OAUTH_STATE: 'google_ads_oauth_state',
   FLASH_ERROR: 'google_ads_connect_error',
 };
+
+export const GOOGLE_ADS_ACCOUNTS_TOGGLED_EVENT = 'google-accounts-toggled';
 
 function dispatchStorageUpdate(key, value) {
   window.dispatchEvent(new CustomEvent('local-storage-map-updated', {
@@ -41,6 +44,25 @@ export function loadStoredGoogleAdsAccounts() {
 
 export function loadStoredGoogleAdsConnection() {
   return safeParse(GOOGLE_ADS_STORAGE_KEYS.CONNECTION, null);
+}
+
+export function loadDisabledGoogleAdsAccounts() {
+  const stored = safeParse(GOOGLE_ADS_STORAGE_KEYS.DISABLED_ACCOUNTS, []);
+  return Array.isArray(stored) ? stored : [];
+}
+
+export function isGoogleAdsAccountEnabled(accountId, disabledAccounts = loadDisabledGoogleAdsAccounts()) {
+  return !disabledAccounts.includes(String(accountId));
+}
+
+export function toggleGoogleAdsAccount(accountId) {
+  const id = String(accountId);
+  const current = loadDisabledGoogleAdsAccounts();
+  const updated = current.includes(id) ? current.filter(item => item !== id) : [...current, id];
+  localStorage.setItem(GOOGLE_ADS_STORAGE_KEYS.DISABLED_ACCOUNTS, JSON.stringify(updated));
+  dispatchStorageUpdate(GOOGLE_ADS_STORAGE_KEYS.DISABLED_ACCOUNTS, updated);
+  window.dispatchEvent(new Event(GOOGLE_ADS_ACCOUNTS_TOGGLED_EVENT));
+  return updated;
 }
 
 export function formatGoogleCustomerId(customerId) {
@@ -156,4 +178,12 @@ export async function disconnectGoogleAds(connectionId) {
 
 export async function fetchGoogleAdsAccountOverview(customerId, period, _loginCustomerId, connectionId) {
   return postGoogleAdsProxy({ action: 'get-account-overview', customerId, period, connectionId });
+}
+
+export async function updateGoogleCampaignStatus(customerId, campaignId, status, connectionId) {
+  return postGoogleAdsProxy({ action: 'update-campaign-status', customerId, campaignId, status, connectionId });
+}
+
+export async function updateGoogleCampaignBudget(customerId, budgetId, amount, connectionId) {
+  return postGoogleAdsProxy({ action: 'update-campaign-budget', customerId, budgetId, amount, connectionId });
 }

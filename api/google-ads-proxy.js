@@ -274,6 +274,35 @@ export async function googleAdsSearch(customerId, query, accessToken, loginCusto
   return { results };
 }
 
+async function googleAdsMutate(customerId, resource, operations, accessToken, loginCustomerId) {
+  const response = await fetch(`${GOOGLE_ADS_API_BASE}/customers/${String(customerId).replace(/-/g, '')}/${resource}:mutate`, {
+    method: 'POST', signal: AbortSignal.timeout(20_000), headers: buildGoogleAdsHeaders(accessToken, loginCustomerId),
+    body: JSON.stringify({ operations, partialFailure: false, validateOnly: false }),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error?.message || `Google Ads API ${response.status}`);
+  return payload;
+}
+
+export async function updateCampaignStatus(accessToken, customerId, campaignId, status, loginCustomerId) {
+  const normalizedCustomerId = String(customerId).replace(/-/g, '');
+  return googleAdsMutate(normalizedCustomerId, 'campaigns', [{
+    update: { resourceName: `customers/${normalizedCustomerId}/campaigns/${campaignId}`, status },
+    updateMask: 'status',
+  }], accessToken, loginCustomerId);
+}
+
+export async function updateCampaignBudget(accessToken, customerId, budgetId, amount, loginCustomerId) {
+  const normalizedCustomerId = String(customerId).replace(/-/g, '');
+  return googleAdsMutate(normalizedCustomerId, 'campaignBudgets', [{
+    update: {
+      resourceName: `customers/${normalizedCustomerId}/campaignBudgets/${budgetId}`,
+      amountMicros: String(Math.round(amount * 1_000_000)),
+    },
+    updateMask: 'amount_micros',
+  }], accessToken, loginCustomerId);
+}
+
 async function listAccessibleCustomerIds(accessToken) {
   const payload = await googleAdsGet('/customers:listAccessibleCustomers', accessToken);
   return (payload.resourceNames || []).map((resourceName) => resourceName.replace('customers/', ''));
@@ -375,7 +404,9 @@ export async function fetchAccountOverview(accessToken, customerId, period, logi
           campaign.name,
           campaign.status,
           campaign.advertising_channel_type,
+          campaign_budget.id,
           campaign_budget.amount_micros,
+          campaign_budget.explicitly_shared,
           metrics.cost_micros,
           metrics.impressions,
           metrics.clicks,
@@ -426,6 +457,8 @@ export async function fetchAccountOverview(accessToken, customerId, period, logi
       status: normalizeCampaignStatus(campaign.status),
       channelType: campaign.advertisingChannelType || null,
       dailyBudget: microsToUnit(budget.amountMicros),
+      budgetId: budget.id ? String(budget.id) : null,
+      budgetShared: Boolean(budget.explicitlyShared),
       metrics: {
         spend,
         impressions,
@@ -549,16 +582,46 @@ async function handleListAccounts(_req, res) {
   return json(res, 200, publicSnapshot(await readConnections()));
 }
 
-async function handleGetAccountOverview(_req, res, body) {
+function httpError(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+// Every account-scoped action resolves the route on the server: the client never picks the MCC or the token.
+async function resolveAccountRoute(body) {
   const customerId = String(body.customerId || '').replace(/-/g, '');
-  if (!/^\d{10}$/.test(customerId)) return json(res, 400, { error: 'customerId inválido.' });
+  if (!/^\d{10}$/.test(customerId)) throw httpError(400, 'customerId inválido.');
   const connections = await readConnections();
   const route = publicSnapshot(connections).accounts.find(a => a.accountId === customerId && (!body.connectionId || a.connectionId === body.connectionId));
-  if (!route) return json(res, 403, { error: 'Conta não disponível nesta conexão. Sincronize as contas em Configurações.' });
+  if (!route) throw httpError(403, 'Conta não disponível nesta conexão. Sincronize as contas em Configurações.');
   const connection = connections.find(c => c.id === route.connectionId);
   const accessToken = await refreshAccessToken(connection.refresh_token);
+  return { customerId, route, accessToken };
+}
+
+async function handleGetAccountOverview(_req, res, body) {
+  const { customerId, route, accessToken } = await resolveAccountRoute(body);
   const payload = await fetchAccountOverview(accessToken, customerId, body.period, route.loginCustomerId, route.timeZone);
   return json(res, 200, { success: true, customerId, ...payload });
+}
+
+async function handleUpdateCampaignStatus(_req, res, body) {
+  const status = String(body.status || '').toUpperCase();
+  if (status !== 'ENABLED' && status !== 'PAUSED') throw httpError(400, 'Status inválido: use ENABLED ou PAUSED.');
+  if (!/^\d+$/.test(String(body.campaignId || ''))) throw httpError(400, 'campaignId inválido.');
+  const { customerId, route, accessToken } = await resolveAccountRoute(body);
+  await updateCampaignStatus(accessToken, customerId, body.campaignId, status, route.loginCustomerId);
+  return json(res, 200, { success: true, customerId, campaignId: String(body.campaignId), status });
+}
+
+async function handleUpdateCampaignBudget(_req, res, body) {
+  const amount = Number(body.amount);
+  if (!Number.isFinite(amount) || amount <= 0) throw httpError(400, 'Informe um orçamento diário maior que zero.');
+  if (!/^\d+$/.test(String(body.budgetId || ''))) throw httpError(400, 'budgetId inválido.');
+  const { customerId, route, accessToken } = await resolveAccountRoute(body);
+  await updateCampaignBudget(accessToken, customerId, body.budgetId, amount, route.loginCustomerId);
+  return json(res, 200, { success: true, customerId, budgetId: String(body.budgetId), amount });
 }
 
 async function handleDisconnect(_req, res, body) {
@@ -581,10 +644,12 @@ export default async function handler(req, res) {
       case 'list-accounts': return await handleListAccounts(req, res);
       case 'status': return json(res, 200, publicSnapshot(await readConnections()));
       case 'get-account-overview': return await handleGetAccountOverview(req, res, body);
+      case 'update-campaign-status': return await handleUpdateCampaignStatus(req, res, body);
+      case 'update-campaign-budget': return await handleUpdateCampaignBudget(req, res, body);
       case 'disconnect': return await handleDisconnect(req, res, body);
       default: return json(res, 400, { error: 'Ação desconhecida.' });
     }
   } catch (error) {
-    return json(res, 400, { error: error.message || 'Erro ao processar Google Ads.' });
+    return json(res, error.status || 400, { error: error.message || 'Erro ao processar Google Ads.' });
   }
 }

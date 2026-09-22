@@ -207,3 +207,42 @@ test('perfil com falha não encobre outro perfil saudável para a mesma conta', 
   ]);
   assert.equal(snapshot.accounts[0].connectionId, 'healthy');
 });
+
+
+test('mutações de campanha validam a entrada, resolvem o MCC no servidor e rejeitam conta alheia', async t => {
+  const cookie = setup(t); const mutations = [];
+  const tables = databaseMock(t, async (url, options) => {
+    if (url.hostname === 'oauth2.googleapis.com') return response({ access_token: 'active-token' });
+    assert.equal(options.headers.Authorization, 'Bearer active-token');
+    assert.equal(options.headers['login-customer-id'], '1111111111');
+    mutations.push({ pathname: url.pathname, body: JSON.parse(options.body) });
+    return response({ results: [{}] });
+  });
+  tables.google_ads_connections.push(connection('active', [leaf('2222222222', { loginCustomerId: '1111111111' })]));
+
+  const alheia = await call({ action: 'update-campaign-status', customerId: '9999999999', campaignId: '5', status: 'PAUSED' }, cookie);
+  assert.equal(alheia.statusCode, 403);
+  assert.equal(mutations.length, 0);
+
+  const statusInvalido = await call({ action: 'update-campaign-status', customerId: '2222222222', campaignId: '5', status: 'REMOVED' }, cookie);
+  assert.equal(statusInvalido.statusCode, 400);
+
+  const campanhaInvalida = await call({ action: 'update-campaign-status', customerId: '2222222222', campaignId: '5; DROP', status: 'PAUSED' }, cookie);
+  assert.equal(campanhaInvalida.statusCode, 400);
+
+  const orcamentoInvalido = await call({ action: 'update-campaign-budget', customerId: '2222222222', budgetId: '7', amount: 0 }, cookie);
+  assert.equal(orcamentoInvalido.statusCode, 400);
+  assert.equal(mutations.length, 0);
+
+  const pausada = await call({ action: 'update-campaign-status', customerId: '2222222222', campaignId: '5', status: 'paused' }, cookie);
+  assert.equal(pausada.statusCode, 200);
+  assert.equal(pausada.body.status, 'PAUSED');
+  assert.equal(mutations[0].pathname, '/v25/customers/2222222222/campaigns:mutate');
+  assert.deepEqual(mutations[0].body.operations, [{ update: { resourceName: 'customers/2222222222/campaigns/5', status: 'PAUSED' }, updateMask: 'status' }]);
+  assert.equal(mutations[0].body.validateOnly, false);
+
+  const orcamento = await call({ action: 'update-campaign-budget', customerId: '2222222222', budgetId: '7', amount: 12.34 }, cookie);
+  assert.equal(orcamento.statusCode, 200);
+  assert.equal(mutations[1].pathname, '/v25/customers/2222222222/campaignBudgets:mutate');
+  assert.deepEqual(mutations[1].body.operations, [{ update: { resourceName: 'customers/2222222222/campaignBudgets/7', amountMicros: '12340000' }, updateMask: 'amount_micros' }]);
+});

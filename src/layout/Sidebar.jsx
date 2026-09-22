@@ -10,6 +10,7 @@ import { useAlerts } from '../contexts/AlertsContext';
 const navItems = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/meta-ads', label: 'Meta Ads', icon: Megaphone },
+  { path: '/google-ads', label: 'Google Ads', icon: Search },
   { path: '/saldos-meta', label: 'Saldos Meta', icon: Wallet },
   { path: '/visao-detalhada', label: 'Visão Detalhada', icon: SearchCheck },
   { path: '/relatorio-texto', label: 'Relatório Texto', icon: FileText },
