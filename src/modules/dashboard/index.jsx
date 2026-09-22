@@ -25,6 +25,7 @@ export default function Dashboard() {
     accounts: googleAccounts,
     campaigns: googleCampaigns,
     loading: googleLoading,
+    error: googleError,
     setSelectedPeriod: setGoogleSelectedPeriod,
     refreshData: refreshGoogleData,
   } = useGoogleAds();
@@ -264,6 +265,9 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6 pb-12">
+      {googleError && <div role="alert" className="rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm text-warning">
+        Google Ads: alguns dados não puderam ser atualizados. Os totais podem estar incompletos. {googleError} Confira as conexões em Configurações.
+      </div>}
       <div className="relative rounded-2xl border border-border bg-gradient-to-br from-surface via-[#1a1d27] to-[#0f1117] p-6">
         <div className="absolute inset-0 overflow-hidden rounded-2xl pointer-events-none">
           <div className="absolute -top-20 -right-20 h-60 w-60 rounded-full bg-primary/5 blur-3xl" />

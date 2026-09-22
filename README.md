@@ -17,3 +17,7 @@ If you are developing a production application, we recommend using TypeScript wi
 # dashvilasmkt
 # dashboardvilasmkt
 # dashboardvilasmkt
+
+## Integração Google Ads
+
+Consulte [o guia de configuração](docs/google-ads-setup.md) para conectar vários perfis Google, contas diretas e MCCs, aplicar a migração privada e configurar o ambiente.

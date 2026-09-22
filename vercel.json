@@ -35,6 +35,9 @@
     "api/alerts/reports.js": {
       "maxDuration": 300,
       "includeFiles": "public/**"
+    },
+    "api/google-ads-proxy.js": {
+      "maxDuration": 300
     }
   }
 }

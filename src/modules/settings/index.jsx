@@ -15,7 +15,7 @@ import {
   syncGoogleAdsAccounts,
   startGoogleAdsOAuth,
   disconnectGoogleAds,
-  isGoogleAdsConfigured,
+  getGoogleAdsStatus,
   formatGoogleCustomerId,
 } from '../../services/googleAdsApi';
 import { exportFullBackupToFile, importFullBackupFromFile } from '../../shared/utils/cloudBackup';
@@ -329,20 +329,18 @@ export default function Settings() {
     }
   }, [refreshGoogleState]);
 
-  const handleConnectGoogleAds = () => {
+  const handleConnectGoogleAds = async () => {
     setError(null);
-    if (!isGoogleAdsConfigured()) {
-      setError('Defina VITE_GOOGLE_ADS_CLIENT_ID (ou VITE_GOOGLE_CLIENT_ID) no .env e GOOGLE_ADS_* no servidor para conectar o Google Ads.');
-      return;
-    }
-    startGoogleAdsOAuth();
+    setLoadingGoogle(true);
+    try { await startGoogleAdsOAuth(); }
+    catch (err) { setError(err.message); setLoadingGoogle(false); }
   };
 
-  const handleDisconnectGoogleAds = async () => {
+  const handleDisconnectGoogleAds = async (connectionId) => {
     try {
       setLoadingGoogle(true);
       setError(null);
-      await disconnectGoogleAds();
+      await disconnectGoogleAds(connectionId);
       refreshGoogleState();
     } catch (err) {
       console.error('Erro ao desconectar Google Ads:', err);
@@ -353,10 +351,8 @@ export default function Settings() {
   };
 
   useEffect(() => {
-    if (googleConnection && googleAccounts.length === 0) {
-      fetchGoogleAccounts();
-    }
-  }, [fetchGoogleAccounts, googleAccounts.length, googleConnection]);
+    getGoogleAdsStatus().then(refreshGoogleState).catch(err => setError(err.message));
+  }, [refreshGoogleState]);
 
   useEffect(() => {
     const syncPaymentMethods = () => setPaymentMethods(readSavedPaymentMethods());
@@ -597,50 +593,40 @@ export default function Settings() {
             <StatusBadge connected={!!googleConnection} />
           </div>
           <div className="p-5 space-y-4">
-            {googleConnection ? (
-              <>
-                <div className="flex items-center gap-3 bg-bg/30 rounded-lg p-3 border border-border/50">
-                  <div className="w-9 h-9 rounded-full bg-[#34A853]/15 flex items-center justify-center text-[#34A853]">
-                    <GoogleAdsIcon className="w-5 h-5" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-text-primary truncate">
-                      {googleConnection.userEmail || 'Conta Google Conectada'}
-                    </p>
-                    <p className="text-xs text-success mt-0.5">{googleAccounts.length} conta(s) encontrada(s)</p>
-                  </div>
+            <p className="text-sm text-text-secondary">Conecte os perfis Google que têm acesso às suas contas, diretamente ou por MCC.</p>
+            {(googleConnection?.profiles || []).map(profile => (
+              <div key={profile.id} className="flex items-center gap-3 bg-bg/30 rounded-lg p-3 border border-border/50">
+                <GoogleAdsIcon className="w-5 h-5 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-text-primary truncate">{profile.userEmail}</p>
+                  <p className="text-xs text-text-secondary">{profile.accountCount} conta(s) encontradas</p>
                 </div>
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <button
-                    onClick={fetchGoogleAccounts}
-                    disabled={loadingGoogle}
-                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-[#34A853]/10 border border-[#34A853]/20 text-[#34A853] rounded-lg text-sm font-medium hover:bg-[#34A853]/20 transition-colors disabled:opacity-50"
-                  >
-                    <RefreshCw size={13} className={loadingGoogle ? 'animate-spin' : ''} />
-                    Sincronizar
-                  </button>
-                  <button
-                    onClick={handleDisconnectGoogleAds}
-                    disabled={loadingGoogle}
-                    className="flex items-center justify-center gap-2 px-3 py-2 bg-danger/10 border border-danger/20 text-danger rounded-lg text-sm font-medium hover:bg-danger/20 transition-colors"
-                  >
-                    <Unlink size={13} /> Desconectar
-                  </button>
-                </div>
-              </>
-            ) : (
-              <div className="text-center py-5">
-                <p className="text-sm text-text-secondary mb-4">Conecte sua conta Google Ads para carregar as contas de anúncio.</p>
-                <button
-                  onClick={handleConnectGoogleAds}
-                  disabled={loadingGoogle}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#34A853] text-white rounded-xl text-sm font-bold hover:bg-[#2E7D32] transition-colors disabled:opacity-50"
-                >
-                  {loadingGoogle ? <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Link2 size={15} />}
-                  Conectar Google Ads
+                <button onClick={() => handleDisconnectGoogleAds(profile.id)} disabled={loadingGoogle} className="text-xs text-danger disabled:opacity-50" aria-label={`Desconectar ${profile.userEmail}`}>
+                  Desconectar
                 </button>
               </div>
-            )}
+            ))}
+            {(googleConnection?.warnings || []).map((warning, index) => (
+              <p key={index} role="alert" className="text-xs text-warning">
+                {warning.userEmail}{warning.customerId ? ` — ${warning.customerId}` : ''}: {warning.message}
+              </p>
+            ))}
+            <div className="flex flex-wrap gap-2">
+              <button onClick={handleConnectGoogleAds} disabled={loadingGoogle} className="inline-flex items-center gap-2 px-4 py-2 bg-[#34A853] text-white rounded-lg text-sm font-bold disabled:opacity-50">
+                <Link2 size={15} /> {googleConnection ? 'Adicionar perfil Google' : 'Conectar Google Ads'}
+              </button>
+              {googleConnection && <button onClick={fetchGoogleAccounts} disabled={loadingGoogle} className="inline-flex items-center gap-2 px-4 py-2 border border-border rounded-lg text-sm disabled:opacity-50">
+                <RefreshCw size={14} className={loadingGoogle ? 'animate-spin' : ''} /> Sincronizar contas
+              </button>}
+            </div>
+            {googleConnection && <p className="text-xs text-text-secondary">{googleAccounts.length} conta(s) únicas no painel. Contas presentes em mais de um perfil aparecem uma vez.</p>}
+            {googleAccounts.length > 0 && <div className="max-h-64 overflow-y-auto divide-y divide-border/50">
+              {googleAccounts.map(account => <div key={account.accountId} className="py-2 text-xs">
+                <p className="font-medium text-text-primary">{account.name} · {formatGoogleCustomerId(account.accountId)}</p>
+                <p className="text-text-secondary">{account.userEmail} · {account.loginCustomerId ? `MCC ${formatGoogleCustomerId(account.loginCustomerId)}` : 'Acesso direto'}</p>
+              </div>)}
+            </div>}
+
           </div>
         </div>
       </div>

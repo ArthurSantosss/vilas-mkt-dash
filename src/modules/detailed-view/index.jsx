@@ -268,13 +268,14 @@ export default function DetailedView() {
     accounts: googleAccounts,
     campaigns: googleCampaigns,
     loading: googleLoading,
+    error: googleError,
     refreshData: googleRefreshData,
     selectedPeriod: googleSelectedPeriod,
     setSelectedPeriod: googleSetPeriod,
   } = useGoogleAds();
   const { agencies, accountAgencies } = useAgency();
 
-  const [platform] = useState('meta');
+  const [platform, setPlatform] = useState('meta');
   const [selectedAgency, setSelectedAgency] = useState('all');
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [selectedCampaignId, setSelectedCampaignId] = useState('');
@@ -389,7 +390,8 @@ export default function DetailedView() {
           const overview = await fetchGoogleAdsAccountOverview(
             selectedAccountId,
             prevPeriod,
-            account?.loginCustomerId
+            account?.loginCustomerId,
+            account?.connectionId
           );
           const prevCampaign = selectedCampaignId
             ? (overview.campaigns || []).find(c => c.id === selectedCampaignId)
@@ -468,7 +470,7 @@ export default function DetailedView() {
 
     loadPreviousPeriod();
     return () => { cancelled = true; };
-  }, [account?.loginCustomerId, currentPeriod, platform, selectedAccountId, selectedCampaignId]);
+  }, [account?.loginCustomerId, account?.connectionId, currentPeriod, platform, selectedAccountId, selectedCampaignId]);
 
   // ── Local campaign analysis (Diagnóstico & Sugestões) ──
   useEffect(() => {
@@ -692,6 +694,9 @@ export default function DetailedView() {
 
   return (
     <div className="space-y-6 pb-12">
+      {platform === 'google' && googleError && <div role="alert" className="rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm text-warning">
+        Google Ads: {googleError} Confira as conexões em Configurações.
+      </div>}
 
       {/* ═══ HEADER ═══ */}
       <div className="relative rounded-2xl border border-border bg-gradient-to-br from-surface via-[#1a1d27] to-[#0f1117] p-6">
@@ -710,6 +715,16 @@ export default function DetailedView() {
               <p className="text-sm text-text-secondary">Análise profunda e insights por conta</p>
             </div>
           </div>
+        </div>
+
+        <div className="relative mt-4 flex gap-2" role="group" aria-label="Plataforma de anúncios">
+          {[['meta', 'Meta Ads'], ['google', 'Google Ads']].map(([value, label]) => (
+            <button key={value} aria-pressed={platform === value}
+              onClick={() => { setPlatform(value); setSelectedAgency('all'); handleSelectAccount(''); }}
+              className={`px-4 py-2 rounded-lg text-sm border ${platform === value ? 'border-primary bg-primary/15 text-primary-light' : 'border-border text-text-secondary'}`}>
+              {label}
+            </button>
+          ))}
         </div>
 
         {/* Selectors */}
@@ -739,7 +754,7 @@ export default function DetailedView() {
             <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Conta</label>
             <select value={selectedAccountId} onChange={e => handleSelectAccount(e.target.value)}
               className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer">
-              <option value="">Selecione uma conta Meta</option>
+              <option value="">Selecione uma conta {platform === 'meta' ? 'Meta' : 'Google Ads'}</option>
               {accounts.map(a => <option key={a.id} value={a.id}>{a.clientName}</option>)}
             </select>
           </div>

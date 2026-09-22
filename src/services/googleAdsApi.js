@@ -1,9 +1,3 @@
-const GOOGLE_ADS_CLIENT_ID =
-  import.meta.env.VITE_GOOGLE_ADS_CLIENT_ID ||
-  import.meta.env.VITE_GOOGLE_CLIENT_ID;
-const GOOGLE_ADS_OAUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
-const GOOGLE_ADS_SCOPE = 'https://www.googleapis.com/auth/adwords';
-
 export const GOOGLE_ADS_STORAGE_KEYS = {
   ACCOUNTS: 'google_ads_accounts',
   CONNECTION: 'google_ads_connection',
@@ -41,14 +35,6 @@ async function postGoogleAdsProxy(body) {
   return payload;
 }
 
-export function isGoogleAdsConfigured() {
-  return Boolean(GOOGLE_ADS_CLIENT_ID);
-}
-
-export function getGoogleAdsRedirectUri() {
-  return `${window.location.origin}/auth/callback`;
-}
-
 export function loadStoredGoogleAdsAccounts() {
   return safeParse(GOOGLE_ADS_STORAGE_KEYS.ACCOUNTS, []);
 }
@@ -79,7 +65,7 @@ export function consumeGoogleAdsFlashError() {
 export function clearGoogleAdsLocalState() {
   localStorage.removeItem(GOOGLE_ADS_STORAGE_KEYS.ACCOUNTS);
   localStorage.removeItem(GOOGLE_ADS_STORAGE_KEYS.CONNECTION);
-  localStorage.removeItem(GOOGLE_ADS_STORAGE_KEYS.OAUTH_STATE);
+  sessionStorage.removeItem(GOOGLE_ADS_STORAGE_KEYS.OAUTH_STATE);
   dispatchStorageUpdate(GOOGLE_ADS_STORAGE_KEYS.ACCOUNTS, []);
   dispatchStorageUpdate(GOOGLE_ADS_STORAGE_KEYS.CONNECTION, null);
 }
@@ -94,26 +80,11 @@ function saveGoogleAdsAccounts(accounts) {
   dispatchStorageUpdate(GOOGLE_ADS_STORAGE_KEYS.ACCOUNTS, accounts);
 }
 
-export function startGoogleAdsOAuth() {
-  if (!isGoogleAdsConfigured()) {
-    throw new Error('VITE_GOOGLE_ADS_CLIENT_ID não está configurado no frontend.');
-  }
-
-  const stateId = globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const state = `google_ads:${stateId}`;
-  localStorage.setItem(GOOGLE_ADS_STORAGE_KEYS.OAUTH_STATE, state);
-
-  const url = new URL(GOOGLE_ADS_OAUTH_URL);
-  url.searchParams.set('client_id', GOOGLE_ADS_CLIENT_ID);
-  url.searchParams.set('redirect_uri', getGoogleAdsRedirectUri());
-  url.searchParams.set('response_type', 'code');
-  url.searchParams.set('scope', GOOGLE_ADS_SCOPE);
-  url.searchParams.set('access_type', 'offline');
-  url.searchParams.set('include_granted_scopes', 'true');
-  url.searchParams.set('prompt', 'consent');
-  url.searchParams.set('state', state);
-
-  window.location.assign(url.toString());
+export async function startGoogleAdsOAuth() {
+  const payload = await postGoogleAdsProxy({ action: 'oauth-start' });
+  const url = new URL(payload.url);
+  sessionStorage.setItem(GOOGLE_ADS_STORAGE_KEYS.OAUTH_STATE, url.searchParams.get('state'));
+  window.location.assign(url.href);
 }
 
 export function isGoogleAdsOAuthCallback(searchParams) {
@@ -123,10 +94,18 @@ export function isGoogleAdsOAuthCallback(searchParams) {
   );
 }
 
-export async function completeGoogleAdsOAuthCallback(searchParams) {
+// React StrictMode can mount the callback twice. Exchange each code once per page.
+const callbackRequests = new Map();
+export function completeGoogleAdsOAuthCallback(searchParams) {
+  const code = searchParams.get('code');
+  if (!callbackRequests.has(code)) callbackRequests.set(code, exchangeGoogleAdsCallback(searchParams));
+  return callbackRequests.get(code);
+}
+
+async function exchangeGoogleAdsCallback(searchParams) {
   const code = searchParams.get('code');
   const returnedState = searchParams.get('state');
-  const expectedState = localStorage.getItem(GOOGLE_ADS_STORAGE_KEYS.OAUTH_STATE);
+  const expectedState = sessionStorage.getItem(GOOGLE_ADS_STORAGE_KEYS.OAUTH_STATE);
 
   if (!code) {
     throw new Error('O Google não retornou o code do OAuth.');
@@ -136,51 +115,45 @@ export async function completeGoogleAdsOAuthCallback(searchParams) {
     throw new Error('Falha ao validar o state do OAuth do Google Ads.');
   }
 
-  localStorage.removeItem(GOOGLE_ADS_STORAGE_KEYS.OAUTH_STATE);
+  sessionStorage.removeItem(GOOGLE_ADS_STORAGE_KEYS.OAUTH_STATE);
 
   const payload = await postGoogleAdsProxy({
     action: 'oauth-exchange',
     code,
-    redirectUri: getGoogleAdsRedirectUri(),
+    state: returnedState,
   });
 
-  saveGoogleAdsConnection(payload.connection || {
-    connectedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  });
-  saveGoogleAdsAccounts(payload.accounts || []);
+  applySnapshot(payload);
 
   return payload;
 }
 
-export async function syncGoogleAdsAccounts() {
-  try {
-    const payload = await postGoogleAdsProxy({ action: 'list-accounts' });
-
-    if (payload.connection) {
-      saveGoogleAdsConnection(payload.connection);
-    }
-    saveGoogleAdsAccounts(payload.accounts || []);
-
-    return payload.accounts || [];
-  } catch (error) {
-    if (String(error.message || '').toLowerCase().includes('não conectado')) {
-      clearGoogleAdsLocalState();
-    }
-    throw error;
+function applySnapshot(payload) {
+  if (payload.connection) saveGoogleAdsConnection(payload.connection);
+  else {
+    localStorage.removeItem(GOOGLE_ADS_STORAGE_KEYS.CONNECTION);
+    dispatchStorageUpdate(GOOGLE_ADS_STORAGE_KEYS.CONNECTION, null);
   }
+  saveGoogleAdsAccounts(payload.accounts || []);
 }
 
-export async function disconnectGoogleAds() {
-  await postGoogleAdsProxy({ action: 'disconnect' });
-  clearGoogleAdsLocalState();
+export async function syncGoogleAdsAccounts() {
+  const payload = await postGoogleAdsProxy({ action: 'list-accounts' });
+  applySnapshot(payload);
+  return payload.accounts || [];
 }
 
-export async function fetchGoogleAdsAccountOverview(customerId, period, loginCustomerId) {
-  return postGoogleAdsProxy({
-    action: 'get-account-overview',
-    customerId,
-    period,
-    loginCustomerId: loginCustomerId || null,
-  });
+export async function getGoogleAdsStatus() {
+  const payload = await postGoogleAdsProxy({ action: 'status' });
+  applySnapshot(payload);
+  return payload;
+}
+
+export async function disconnectGoogleAds(connectionId) {
+  const payload = await postGoogleAdsProxy({ action: 'disconnect', connectionId });
+  applySnapshot(payload);
+}
+
+export async function fetchGoogleAdsAccountOverview(customerId, period, _loginCustomerId, connectionId) {
+  return postGoogleAdsProxy({ action: 'get-account-overview', customerId, period, connectionId });
 }

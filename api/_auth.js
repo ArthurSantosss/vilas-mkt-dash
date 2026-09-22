@@ -14,14 +14,14 @@ function parseCookies(cookieHeader = '') {
     .reduce((acc, part) => {
       const [rawKey, ...rawValue] = part.split('=');
       if (!rawKey) return acc;
-      acc[rawKey] = decodeURIComponent(rawValue.join('=') || '');
+      acc[rawKey] = rawValue.join('=') || '';
       return acc;
     }, {});
 }
 
 function getConfiguredCredentials() {
   const authorizedEmail = (process.env.AUTH_EMAIL || process.env.VITE_AUTH_EMAIL || '').trim().toLowerCase();
-  const authorizedPass = process.env.AUTH_PASS || process.env.VITE_AUTH_PASS || '';
+  const authorizedPass = process.env.AUTH_PASS || '';
   const sessionSecret = process.env.AUTH_SESSION_SECRET || authorizedPass;
 
   return { authorizedEmail, authorizedPass, sessionSecret };
@@ -71,19 +71,6 @@ export function isAuthenticatedRequest(req) {
   const cookieToken = cookies[AUTH_COOKIE_NAME] || '';
 
   if (expectedToken && cookieToken && safeCompare(cookieToken, expectedToken)) {
-    return true;
-  }
-
-  // 2. Verificação por Header de Autenticação do Usuário (x-auth-email)
-  const { authorizedEmail } = getConfiguredCredentials();
-  const headerEmail = String(req?.headers?.['x-auth-email'] || '').trim().toLowerCase();
-  if (authorizedEmail && headerEmail && headerEmail === authorizedEmail) {
-    return true;
-  }
-
-  // 3. Fallback em ambiente local (Vite dev server localhost)
-  const host = String(req?.headers?.host || req?.headers?.origin || '');
-  if (host.includes('localhost') || host.includes('127.0.0.1')) {
     return true;
   }
 

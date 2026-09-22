@@ -3,7 +3,9 @@ import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
 import {
   fetchGoogleAdsAccountOverview,
   loadStoredGoogleAdsConnection,
+  loadStoredGoogleAdsAccounts,
   syncGoogleAdsAccounts,
+  getGoogleAdsStatus,
   GOOGLE_ADS_STORAGE_KEYS,
 } from '../services/googleAdsApi';
 
@@ -23,6 +25,7 @@ function normalizeGoogleAccount(rawAccount, overview) {
     accountId: rawAccount.accountId,
     currency: rawAccount.currency || 'BRL',
     loginCustomerId: rawAccount.loginCustomerId || null,
+    connectionId: rawAccount.connectionId,
     source: rawAccount.source || 'direct',
     status: hasActiveCampaign ? 'active' : 'paused',
     metrics: {
@@ -64,7 +67,7 @@ function normalizeGoogleCampaigns(rawAccount, overview) {
       costPerMessage: campaign.metrics?.costPerConversion || 0,
       reach: 0,
       frequency: 0,
-      roas: 0,
+      roas: campaign.metrics?.spend > 0 ? campaign.metrics.conversionsValue / campaign.metrics.spend : 0,
     },
   }));
 }
@@ -72,7 +75,8 @@ function normalizeGoogleCampaigns(rawAccount, overview) {
 export function GoogleAdsProvider({ children }) {
   const queryClient = useQueryClient();
   const [selectedPeriod, setSelectedPeriod] = useState('today');
-  const [hasConnection, setHasConnection] = useState(() => !!loadStoredGoogleAdsConnection());
+  const [connection, setConnection] = useState(loadStoredGoogleAdsConnection);
+  const hasConnection = Boolean(connection);
 
   useEffect(() => {
     const handleStorageChange = (event) => {
@@ -80,14 +84,15 @@ export function GoogleAdsProvider({ children }) {
         event.key === GOOGLE_ADS_STORAGE_KEYS.CONNECTION ||
         event.key === GOOGLE_ADS_STORAGE_KEYS.ACCOUNTS
       ) {
-        setHasConnection(Boolean(loadStoredGoogleAdsConnection()));
-        queryClient.invalidateQueries({ queryKey: ['googleAds'] });
+        setConnection(loadStoredGoogleAdsConnection());
+        queryClient.setQueryData(['googleAds', 'accounts'], loadStoredGoogleAdsAccounts());
       }
     };
 
     const handleGoogleAdsUpdate = () => {
-      setHasConnection(Boolean(loadStoredGoogleAdsConnection()));
-      queryClient.invalidateQueries({ queryKey: ['googleAds'] });
+      setConnection(loadStoredGoogleAdsConnection());
+      queryClient.setQueryData(['googleAds', 'accounts'], loadStoredGoogleAdsAccounts());
+
     };
 
     window.addEventListener('storage', handleStorageChange);
@@ -97,6 +102,10 @@ export function GoogleAdsProvider({ children }) {
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('google-ads-updated', handleGoogleAdsUpdate);
     };
+  }, [queryClient]);
+
+  useEffect(() => {
+    getGoogleAdsStatus().then(() => queryClient.invalidateQueries({ queryKey: ['googleAds', 'accounts'] })).catch(() => { /* Settings exposes connection errors. */ });
   }, [queryClient]);
 
   const {
@@ -112,8 +121,8 @@ export function GoogleAdsProvider({ children }) {
 
   const accountQueries = useQueries({
     queries: rawAccounts.map((account) => ({
-      queryKey: ['googleAds', 'accountData', account.accountId, account.loginCustomerId || 'direct', selectedPeriod],
-      queryFn: () => fetchGoogleAdsAccountOverview(account.accountId, selectedPeriod, account.loginCustomerId),
+      queryKey: ['googleAds', 'accountData', account.accountId, account.connectionId, account.loginCustomerId || 'direct', selectedPeriod],
+      queryFn: () => fetchGoogleAdsAccountOverview(account.accountId, selectedPeriod, account.loginCustomerId, account.connectionId),
       enabled: hasConnection,
       staleTime: 2 * 60 * 1000,
     })),
@@ -142,7 +151,8 @@ export function GoogleAdsProvider({ children }) {
   const loading = hasConnection ? loadingAccounts || accountQueries.some((query) => query.isLoading) : false;
   const error = !hasConnection
     ? null
-    : accountsError?.message || accountQueries.find((query) => query.error)?.error?.message || null;
+    : accountsError?.message || accountQueries.find((query) => query.error)?.error?.message
+      || connection?.warnings?.map(warning => `${warning.userEmail}: ${warning.message}`).join(' · ') || null;
 
   const activeAccounts = useMemo(
     () => accounts.filter((account) => account.status === 'active'),

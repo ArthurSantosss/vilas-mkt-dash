@@ -1,87 +1,113 @@
 /* global process */
 
+import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { getConfiguredAuth, isAuthenticatedRequest } from './_auth.js';
 
-const GOOGLE_ADS_API_VERSION = 'v24';
+const GOOGLE_ADS_API_VERSION = 'v25';
 const GOOGLE_ADS_API_BASE = `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}`;
-const GOOGLE_OAUTH_TOKEN_URL = 'https://www.googleapis.com/oauth2/v3/token';
+const GOOGLE_OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_ADS_SCOPE = 'https://www.googleapis.com/auth/adwords';
 
-const SECURE_CONNECTION_KEY_SUFFIX = 'google_ads_secure_connection';
-const ACCOUNTS_KEY_SUFFIX = 'google_ads_accounts';
+const OAUTH_COOKIE = 'google_ads_oauth';
+const CONNECTION_TABLE = 'google_ads_connections';
 
 function json(res, status, body) {
+  res.setHeader('Cache-Control', 'no-store');
   res.status(status).json(body);
 }
 
 function getSupabaseClient() {
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-  const supabaseKey =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_ANON_KEY ||
-    process.env.VITE_SUPABASE_ANON_KEY;
-
-  if (!supabaseUrl || !supabaseKey) {
-    throw new Error('SUPABASE_URL/SUPABASE_ANON_KEY não configurados no servidor.');
-  }
-
-  return createClient(supabaseUrl, supabaseKey);
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error('Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no servidor e aplique a migração Google Ads.');
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
-function getStorageKey(suffix) {
+function owner() {
   const { authorizedEmail } = getConfiguredAuth();
-  if (!authorizedEmail) {
-    throw new Error('AUTH_EMAIL não configurado no servidor.');
+  if (!authorizedEmail) throw new Error('AUTH_EMAIL não configurado no servidor.');
+  return authorizedEmail;
+}
+
+async function readConnections() {
+  const { data, error } = await getSupabaseClient().from(CONNECTION_TABLE).select('*').eq('owner_email', owner()).order('id');
+  if (error) throw new Error('Não foi possível ler as conexões. Confira a migração Google Ads e a chave de serviço do Supabase.');
+  return data || [];
+}
+
+async function writeConnection(connection, existingOnly = false) {
+  const table = getSupabaseClient().from(CONNECTION_TABLE);
+  const { error } = await (existingOnly
+    ? table.update(connection).eq('owner_email', owner()).eq('id', connection.id)
+    : table.upsert(connection, { onConflict: 'owner_email,id' }));
+  if (error) throw new Error('Não foi possível salvar a conexão privada do Google Ads.');
+}
+
+export function publicSnapshot(connections) {
+  const accounts = new Map();
+  for (const connection of connections) {
+    for (const account of connection.accounts || []) {
+      const unavailable = (connection.warnings || []).some(w => !w.rootCustomerId || w.rootCustomerId === (account.loginCustomerId || account.accountId));
+      const candidate = { ...account, connectionId: connection.id, userEmail: connection.user_email, unavailable };
+      const existing = accounts.get(account.accountId);
+      if (!existing || (existing.unavailable && !candidate.unavailable) || (existing.unavailable === candidate.unavailable && existing.loginCustomerId && !candidate.loginCustomerId)) accounts.set(account.accountId, candidate);
+    }
   }
-  return `${authorizedEmail}_${suffix}`;
-}
-
-async function readPreference(key) {
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from('app_preferences')
-    .select('value')
-    .eq('key', key)
-    .maybeSingle();
-
-  if (error) throw new Error(`Erro ao ler app_preferences: ${error.message}`);
-  return data?.value ?? null;
-}
-
-async function writePreference(key, value) {
-  const supabase = getSupabaseClient();
-  const { error } = await supabase
-    .from('app_preferences')
-    .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
-
-  if (error) throw new Error(`Erro ao salvar app_preferences: ${error.message}`);
-}
-
-async function deletePreferences(keys) {
-  const supabase = getSupabaseClient();
-  const { error } = await supabase
-    .from('app_preferences')
-    .delete()
-    .in('key', keys);
-
-  if (error) throw new Error(`Erro ao remover app_preferences: ${error.message}`);
+  const profiles = connections.map(c => ({ id: c.id, userEmail: c.user_email, connectedAt: c.connected_at, updatedAt: c.updated_at, accountCount: (c.accounts || []).length, warnings: c.warnings || [] }));
+  return {
+    success: true,
+    connection: profiles.length ? { profiles, warnings: profiles.flatMap(c => c.warnings.map(w => ({ ...w, userEmail: c.userEmail }))) } : null,
+    accounts: [...accounts.values()].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')),
+  };
 }
 
 function getGoogleAdsCredentials() {
-  const clientId =
-    process.env.GOOGLE_ADS_CLIENT_ID ||
-    process.env.VITE_GOOGLE_ADS_CLIENT_ID;
+  const clientId = process.env.GOOGLE_ADS_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_ADS_CLIENT_SECRET;
-  const developerToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
+  if (!clientId || !clientSecret) throw new Error('Configure GOOGLE_ADS_CLIENT_ID e GOOGLE_ADS_CLIENT_SECRET no servidor.');
+  return { clientId, clientSecret };
+}
 
-  if (!clientId || !clientSecret || !developerToken) {
-    throw new Error(
-      'GOOGLE_ADS_CLIENT_ID, GOOGLE_ADS_CLIENT_SECRET e GOOGLE_ADS_DEVELOPER_TOKEN precisam estar configurados.'
-    );
+function redirectUri() {
+  const value = process.env.GOOGLE_ADS_REDIRECT_URI;
+  if (!value) throw new Error('Configure GOOGLE_ADS_REDIRECT_URI no servidor (URL da plataforma + /auth/callback).');
+  const url = new URL(value);
+  if (url.protocol !== 'https:' && !(process.env.NODE_ENV !== 'production' && url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))) {
+    throw new Error('GOOGLE_ADS_REDIRECT_URI precisa usar HTTPS em produção.');
   }
+  if (url.pathname !== '/auth/callback' || url.search || url.hash) throw new Error('GOOGLE_ADS_REDIRECT_URI deve terminar em /auth/callback, sem parâmetros.');
+  return url.href;
+}
 
-  return { clientId, clientSecret, developerToken };
+function setOAuthCookie(res, state, maxAge) {
+  res.setHeader('Set-Cookie', `${OAUTH_COOKIE}=${state}; Path=/api/google-ads-proxy; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
+}
+
+async function startOAuth(req, res) {
+  const { clientId } = getGoogleAdsCredentials();
+  const uri = redirectUri();
+  if (req.headers.origin !== new URL(uri).origin) throw new Error('Abra a plataforma no domínio configurado para conectar o Google Ads.');
+  const state = `google_ads:${crypto.randomBytes(32).toString('hex')}`;
+  const verifier = crypto.randomBytes(48).toString('base64url');
+  const db = getSupabaseClient();
+  const cleanup = await db.from('google_ads_oauth_states').delete().lt('expires_at', new Date().toISOString());
+  if (cleanup.error) throw new Error('Aplique a migração Google Ads no Supabase antes de conectar.');
+  const { error } = await db.from('google_ads_oauth_states').insert({ state, owner_email: owner(), verifier, redirect_uri: uri, expires_at: new Date(Date.now() + 10 * 60_000).toISOString() });
+  if (error) throw new Error('Não foi possível iniciar o OAuth. Confira a migração Google Ads.');
+  const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  for (const [key, value] of Object.entries({ client_id: clientId, redirect_uri: uri, response_type: 'code', scope: `${GOOGLE_ADS_SCOPE} openid email`, access_type: 'offline', prompt: 'consent select_account', state, code_challenge: crypto.createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256' })) url.searchParams.set(key, value);
+  setOAuthCookie(res, state, 600);
+  return json(res, 200, { url: url.href });
+}
+
+async function consumeOAuthState(req, res, state) {
+  const cookie = (req.headers.cookie || '').split(';').map(p => p.trim()).find(p => p.startsWith(`${OAUTH_COOKIE}=`))?.slice(OAUTH_COOKIE.length + 1);
+  if (!state || cookie !== state) throw new Error('Sessão OAuth inválida. Inicie a conexão novamente.');
+  const { data, error } = await getSupabaseClient().from('google_ads_oauth_states').delete().eq('state', state).eq('owner_email', owner()).gt('expires_at', new Date().toISOString()).select('*').maybeSingle();
+  setOAuthCookie(res, '', 0);
+  if (error || !data) throw new Error('Conexão expirada ou já utilizada. Inicie novamente.');
+  return data;
 }
 
 function toNumber(value) {
@@ -93,29 +119,14 @@ function microsToUnit(value) {
   return toNumber(value) / 1_000_000;
 }
 
-function formatYmd(date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+function formatYmd(date) { return date.toISOString().slice(0, 10); }
+function subDays(date, days) { return new Date(date.getTime() - days * 86_400_000); }
+function getToday(timeZone, now) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now).map(p => [p.type, p.value]));
+  return new Date(`${parts.year}-${parts.month}-${parts.day}T00:00:00Z`);
 }
-
-function getToday() {
-  const date = new Date();
-  date.setHours(0, 0, 0, 0);
-  return date;
-}
-
-function getYesterday() {
-  const date = getToday();
-  date.setDate(date.getDate() - 1);
-  return date;
-}
-
-function subDays(date, days) {
-  const nextDate = new Date(date);
-  nextDate.setDate(nextDate.getDate() - days);
-  return nextDate;
+function validDate(value) {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
 }
 
 function normalizeCampaignStatus(status) {
@@ -131,13 +142,14 @@ function normalizeCampaignStatus(status) {
   }
 }
 
-function normalizePeriodToDateFilter(period) {
-  if (period && typeof period === 'object' && period.type === 'custom' && period.startDate && period.endDate) {
+export function normalizePeriodToDateFilter(period, timeZone = 'UTC', now = new Date()) {
+  if (period && typeof period === 'object') {
+    if (period.type !== 'custom' || !validDate(period.startDate) || !validDate(period.endDate) || period.startDate > period.endDate) throw new Error('Período inválido. Informe datas reais em YYYY-MM-DD, em ordem crescente.');
     return `segments.date BETWEEN '${period.startDate}' AND '${period.endDate}'`;
   }
 
-  const today = getToday();
-  const yesterday = getYesterday();
+  const today = getToday(timeZone, now);
+  const yesterday = subDays(today, 1);
 
   switch (period) {
     case 'today':
@@ -153,12 +165,12 @@ function normalizePeriodToDateFilter(period) {
     case '30d':
       return `segments.date BETWEEN '${formatYmd(subDays(yesterday, 29))}' AND '${formatYmd(yesterday)}'`;
     case 'month': {
-      const monthStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), 1);
-      return `segments.date BETWEEN '${formatYmd(monthStart)}' AND '${formatYmd(yesterday)}'`;
+      const monthStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+      return `segments.date BETWEEN '${formatYmd(monthStart)}' AND '${formatYmd(today)}'`;
     }
     case 'last_month': {
-      const lastMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-      const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
+      const lastMonthStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1));
+      const lastMonthEnd = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 0));
       return `segments.date BETWEEN '${formatYmd(lastMonthStart)}' AND '${formatYmd(lastMonthEnd)}'`;
     }
     default:
@@ -166,11 +178,12 @@ function normalizePeriodToDateFilter(period) {
   }
 }
 
-async function exchangeCodeForTokens(code, redirectUri) {
+async function exchangeCodeForTokens(code, redirectUri, verifier) {
   const { clientId, clientSecret } = getGoogleAdsCredentials();
 
   const response = await fetch(GOOGLE_OAUTH_TOKEN_URL, {
     method: 'POST',
+    signal: AbortSignal.timeout(20_000),
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       code,
@@ -178,18 +191,13 @@ async function exchangeCodeForTokens(code, redirectUri) {
       client_secret: clientSecret,
       redirect_uri: redirectUri,
       grant_type: 'authorization_code',
+      code_verifier: verifier,
     }),
   });
 
   const payload = await response.json();
   if (!response.ok) {
     throw new Error(payload.error_description || payload.error || 'Falha ao trocar o code do Google Ads.');
-  }
-
-  if (!payload.refresh_token) {
-    throw new Error(
-      'O Google não retornou refresh_token. Revogue o acesso do app e reconecte com consentimento.'
-    );
   }
 
   return payload;
@@ -200,6 +208,7 @@ async function refreshAccessToken(refreshToken) {
 
   const response = await fetch(GOOGLE_OAUTH_TOKEN_URL, {
     method: 'POST',
+    signal: AbortSignal.timeout(20_000),
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       client_id: clientId,
@@ -211,6 +220,7 @@ async function refreshAccessToken(refreshToken) {
 
   const payload = await response.json();
   if (!response.ok) {
+    if (payload.error === 'invalid_grant') throw new Error('Acesso expirado ou revogado (invalid_grant). Adicione novamente este perfil Google.');
     throw new Error(payload.error_description || payload.error || 'Falha ao renovar token do Google Ads.');
   }
 
@@ -218,10 +228,8 @@ async function refreshAccessToken(refreshToken) {
 }
 
 function buildGoogleAdsHeaders(accessToken, loginCustomerId) {
-  const { developerToken } = getGoogleAdsCredentials();
   const headers = {
     Authorization: `Bearer ${accessToken}`,
-    'developer-token': developerToken,
     Accept: 'application/json',
     'Content-Type': 'application/json',
   };
@@ -236,6 +244,7 @@ function buildGoogleAdsHeaders(accessToken, loginCustomerId) {
 async function googleAdsGet(path, accessToken, loginCustomerId) {
   const response = await fetch(`${GOOGLE_ADS_API_BASE}${path}`, {
     headers: buildGoogleAdsHeaders(accessToken, loginCustomerId),
+    signal: AbortSignal.timeout(20_000),
   });
 
   const payload = await response.json();
@@ -246,22 +255,23 @@ async function googleAdsGet(path, accessToken, loginCustomerId) {
   return payload;
 }
 
-async function googleAdsSearch(customerId, query, accessToken, loginCustomerId) {
-  const response = await fetch(
-    `${GOOGLE_ADS_API_BASE}/customers/${String(customerId).replace(/-/g, '')}/googleAds:search`,
-    {
-      method: 'POST',
-      headers: buildGoogleAdsHeaders(accessToken, loginCustomerId),
-      body: JSON.stringify({ query }),
-    }
-  );
-
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(payload.error?.message || `Google Ads API ${response.status}`);
-  }
-
-  return payload;
+export async function googleAdsSearch(customerId, query, accessToken, loginCustomerId) {
+  const results = [];
+  let pageToken;
+  const seen = new Set();
+  do {
+    const response = await fetch(`${GOOGLE_ADS_API_BASE}/customers/${String(customerId).replace(/-/g, '')}/googleAds:search`, {
+      method: 'POST', signal: AbortSignal.timeout(20_000), headers: buildGoogleAdsHeaders(accessToken, loginCustomerId),
+      body: JSON.stringify({ query, ...(pageToken ? { pageToken } : {}) }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error?.message || `Google Ads API ${response.status}`);
+    results.push(...(payload.results || []));
+    pageToken = payload.nextPageToken;
+    if (pageToken && seen.has(pageToken)) throw new Error('Paginação repetida retornada pelo Google Ads.');
+    seen.add(pageToken);
+  } while (pageToken);
+  return { results };
 }
 
 async function listAccessibleCustomerIds(accessToken) {
@@ -280,7 +290,8 @@ async function fetchHierarchyRows(customerId, accessToken, loginCustomerId) {
         customer_client.manager,
         customer_client.status,
         customer_client.descriptive_name,
-        customer_client.currency_code
+        customer_client.currency_code,
+        customer_client.time_zone
       FROM customer_client
       WHERE customer_client.level <= 1
     `,
@@ -295,6 +306,7 @@ async function fetchHierarchyRows(customerId, accessToken, loginCustomerId) {
       customerId: String(customerClient.id || ''),
       name: customerClient.descriptiveName || `Conta ${customerClient.id || ''}`,
       currency: customerClient.currencyCode || 'BRL',
+      timeZone: customerClient.timeZone || 'UTC',
       manager: Boolean(customerClient.manager),
       hidden: Boolean(customerClient.hidden),
       level: toNumber(customerClient.level),
@@ -315,67 +327,43 @@ function upsertLeafAccount(map, account) {
   }
 }
 
-async function listReachableAccounts(accessToken) {
+export async function listReachableAccounts(accessToken) {
   const seedIds = await listAccessibleCustomerIds(accessToken);
   const accountMap = new Map();
-
+  const warnings = [];
   for (const seedId of seedIds) {
-    const rootLoginCustomerId = seedId;
     const queue = [seedId];
-    const visitedManagers = new Set();
-
-    while (queue.length > 0) {
-      const currentManagerId = queue.shift();
-      if (!currentManagerId || visitedManagers.has(currentManagerId)) continue;
-      visitedManagers.add(currentManagerId);
-
-      const loginCustomerId = currentManagerId === seedId ? null : rootLoginCustomerId;
-      const rows = await fetchHierarchyRows(currentManagerId, accessToken, loginCustomerId);
-      if (!rows.length) continue;
-
-      for (const row of rows) {
-        if (row.hidden) continue;
-
-        if (row.level === 0) {
-          if (!row.manager) {
-            upsertLeafAccount(accountMap, {
-              id: row.customerId,
-              accountId: row.customerId,
-              name: row.name,
-              currency: row.currency,
-              loginCustomerId: null,
-              source: 'direct',
-              isManager: false,
-            });
-          }
+    const visited = new Set();
+    while (queue.length) {
+      const currentId = queue.shift();
+      if (visited.has(currentId)) continue;
+      visited.add(currentId);
+      try {
+        // customer is available for both direct advertiser accounts and managers.
+        const info = await googleAdsSearch(currentId, 'SELECT customer.id, customer.descriptive_name, customer.manager, customer.currency_code, customer.time_zone FROM customer', accessToken, currentId === seedId ? null : seedId);
+        const customer = info.results[0]?.customer;
+        if (!customer) throw new Error('O Google não retornou os dados da conta.');
+        if (!customer.manager) {
+          upsertLeafAccount(accountMap, { id: currentId, accountId: currentId, name: customer.descriptiveName || `Conta ${currentId}`, currency: customer.currencyCode, timeZone: customer.timeZone || 'UTC', loginCustomerId: currentId === seedId ? null : seedId, source: currentId === seedId ? 'direct' : 'manager', isManager: false });
           continue;
         }
-
-        if (row.manager) {
-          queue.push(row.customerId);
-          continue;
+        const rows = await fetchHierarchyRows(currentId, accessToken, seedId);
+        for (const row of rows) {
+          if (row.level === 0) continue;
+          if (row.manager) { queue.push(row.customerId); continue; }
+          // Hidden accounts can still be accessible; do not silently drop them.
+          upsertLeafAccount(accountMap, { id: row.customerId, accountId: row.customerId, name: row.name, currency: row.currency, timeZone: row.timeZone, loginCustomerId: seedId, source: 'manager', isManager: false });
         }
-
-        upsertLeafAccount(accountMap, {
-          id: row.customerId,
-          accountId: row.customerId,
-          name: row.name,
-          currency: row.currency,
-          loginCustomerId: rootLoginCustomerId,
-          source: rootLoginCustomerId === row.customerId ? 'direct' : 'manager',
-          isManager: false,
-        });
+      } catch (error) {
+        warnings.push({ customerId: currentId, rootCustomerId: seedId, message: error.message });
       }
     }
   }
-
-  return [...accountMap.values()].sort((left, right) =>
-    (left.name || left.accountId).localeCompare(right.name || right.accountId, 'pt-BR')
-  );
+  return { accounts: [...accountMap.values()], warnings };
 }
 
-async function fetchAccountOverview(accessToken, customerId, period, loginCustomerId) {
-  const dateFilter = normalizePeriodToDateFilter(period);
+export async function fetchAccountOverview(accessToken, customerId, period, loginCustomerId, timeZone = 'UTC') {
+  const dateFilter = normalizePeriodToDateFilter(period, timeZone);
   const normalizedCustomerId = String(customerId).replace(/-/g, '');
 
   const [campaignPayload, dailyPayload] = await Promise.all([
@@ -398,9 +386,7 @@ async function fetchAccountOverview(accessToken, customerId, period, loginCustom
           metrics.conversions_value
         FROM campaign
         WHERE ${dateFilter}
-          AND campaign.status != 'REMOVED'
         ORDER BY metrics.cost_micros DESC
-        LIMIT 500
       `,
       accessToken,
       loginCustomerId
@@ -417,7 +403,6 @@ async function fetchAccountOverview(accessToken, customerId, period, loginCustom
           metrics.conversions_value
         FROM campaign
         WHERE ${dateFilter}
-          AND campaign.status != 'REMOVED'
         ORDER BY segments.date
       `,
       accessToken,
@@ -445,7 +430,7 @@ async function fetchAccountOverview(accessToken, customerId, period, loginCustom
         spend,
         impressions,
         clicks,
-        ctr: toNumber(metrics.ctr),
+        ctr: toNumber(metrics.ctr) * 100,
         cpc: microsToUnit(metrics.averageCpc),
         cpm: microsToUnit(metrics.averageCpm),
         conversions,
@@ -518,140 +503,88 @@ async function fetchAccountOverview(accessToken, customerId, period, loginCustom
   return { campaigns, totals, dailyMetrics };
 }
 
-async function loadStoredConnection() {
-  return readPreference(getStorageKey(SECURE_CONNECTION_KEY_SUFFIX));
-}
-
-async function loadStoredRefreshToken() {
-  const connection = await loadStoredConnection();
-  const refreshToken = connection?.refreshToken;
-  if (!refreshToken) {
-    throw new Error('Google Ads não conectado. Conecte a conta em Configurações.');
+function mergeDiscovery(previous, discovered) {
+  const map = new Map(discovered.accounts.map(a => [a.accountId, a]));
+  for (const account of previous || []) {
+    if (!map.has(account.accountId) && discovered.warnings.some(w => w.rootCustomerId === (account.loginCustomerId || account.accountId))) map.set(account.accountId, account);
   }
-  return refreshToken;
-}
-
-async function saveConnection(refreshToken) {
-  const nextConnection = {
-    refreshToken,
-    scope: GOOGLE_ADS_SCOPE,
-    connectedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-
-  await writePreference(getStorageKey(SECURE_CONNECTION_KEY_SUFFIX), nextConnection);
-  return nextConnection;
-}
-
-async function saveAccounts(accounts) {
-  await writePreference(getStorageKey(ACCOUNTS_KEY_SUFFIX), accounts);
+  return [...map.values()];
 }
 
 async function handleOAuthExchange(req, res, body) {
-  const { code, redirectUri } = body;
-  if (!code || !redirectUri) {
-    return json(res, 400, { error: 'code e redirectUri são obrigatórios.' });
-  }
-
+  if (typeof body.code !== 'string' || !body.code) throw new Error('O Google não retornou o código de autorização.');
+  const flow = await consumeOAuthState(req, res, body.state);
+  const tokens = await exchangeCodeForTokens(body.code, flow.redirect_uri, flow.verifier);
+  const response = await fetch('https://openidconnect.googleapis.com/v1/userinfo', { signal: AbortSignal.timeout(20_000), headers: { Authorization: `Bearer ${tokens.access_token}` } });
+  const profile = await response.json();
+  if (!response.ok || !profile.sub || !profile.email || !profile.email_verified) throw new Error('Não foi possível confirmar o perfil Google. Autorize o acesso ao e-mail e ao Google Ads.');
+  const previous = (await readConnections()).find(c => c.id === profile.sub);
+  const refreshToken = tokens.refresh_token || previous?.refresh_token;
+  if (!refreshToken) throw new Error('O Google não retornou acesso offline. Revogue o acesso do app na Conta Google e conecte novamente.');
+  const now = new Date().toISOString();
+  // Persist the grant before discovery: API approval failures must not lose it.
+  const connection = { owner_email: owner(), id: profile.sub, user_email: profile.email, refresh_token: refreshToken, connected_at: previous?.connected_at || now, updated_at: now, accounts: previous?.accounts || [], warnings: [] };
+  await writeConnection(connection);
   try {
-    const tokenPayload = await exchangeCodeForTokens(code, redirectUri);
-    const accessToken = tokenPayload.access_token;
-    const connection = await saveConnection(tokenPayload.refresh_token);
-    const accounts = await listReachableAccounts(accessToken);
-    await saveAccounts(accounts);
-
-    return json(res, 200, {
-      success: true,
-      connection: { ...connection, refreshToken: undefined },
-      accounts,
-    });
-  } catch (error) {
-    return json(res, 400, { error: error.message });
-  }
+    const discovery = await listReachableAccounts(tokens.access_token);
+    connection.accounts = mergeDiscovery(connection.accounts, discovery);
+    connection.warnings = discovery.warnings;
+  } catch (error) { connection.warnings = [{ message: error.message }]; }
+  await writeConnection(connection, true);
+  return json(res, 200, publicSnapshot(await readConnections()));
 }
 
 async function handleListAccounts(_req, res) {
-  try {
-    const refreshToken = await loadStoredRefreshToken();
-    const accessToken = await refreshAccessToken(refreshToken);
-    const accounts = await listReachableAccounts(accessToken);
-    const connection = await loadStoredConnection();
-
-    await saveAccounts(accounts);
-
-    return json(res, 200, {
-      success: true,
-      accounts,
-      connection: connection
-        ? { ...connection, refreshToken: undefined, updatedAt: new Date().toISOString() }
-        : null,
-    });
-  } catch (error) {
-    return json(res, 400, { error: error.message });
+  const connections = await readConnections();
+  for (const connection of connections) {
+    try {
+      const accessToken = await refreshAccessToken(connection.refresh_token);
+      const discovery = await listReachableAccounts(accessToken);
+      connection.accounts = mergeDiscovery(connection.accounts, discovery);
+      connection.warnings = discovery.warnings;
+      connection.updated_at = new Date().toISOString();
+    } catch (error) { connection.warnings = [{ message: error.message }]; }
+    await writeConnection(connection, true);
   }
+  return json(res, 200, publicSnapshot(await readConnections()));
 }
 
 async function handleGetAccountOverview(_req, res, body) {
-  const { customerId, period, loginCustomerId } = body;
-  if (!customerId) {
-    return json(res, 400, { error: 'customerId é obrigatório.' });
-  }
-
-  try {
-    const refreshToken = await loadStoredRefreshToken();
-    const accessToken = await refreshAccessToken(refreshToken);
-    const payload = await fetchAccountOverview(accessToken, customerId, period, loginCustomerId || null);
-
-    return json(res, 200, {
-      success: true,
-      customerId: String(customerId).replace(/-/g, ''),
-      ...payload,
-    });
-  } catch (error) {
-    return json(res, 400, { error: error.message });
-  }
+  const customerId = String(body.customerId || '').replace(/-/g, '');
+  if (!/^\d{10}$/.test(customerId)) return json(res, 400, { error: 'customerId inválido.' });
+  const connections = await readConnections();
+  const route = publicSnapshot(connections).accounts.find(a => a.accountId === customerId && (!body.connectionId || a.connectionId === body.connectionId));
+  if (!route) return json(res, 403, { error: 'Conta não disponível nesta conexão. Sincronize as contas em Configurações.' });
+  const connection = connections.find(c => c.id === route.connectionId);
+  const accessToken = await refreshAccessToken(connection.refresh_token);
+  const payload = await fetchAccountOverview(accessToken, customerId, body.period, route.loginCustomerId, route.timeZone);
+  return json(res, 200, { success: true, customerId, ...payload });
 }
 
-async function handleDisconnect(_req, res) {
-  try {
-    await deletePreferences([
-      getStorageKey(SECURE_CONNECTION_KEY_SUFFIX),
-      getStorageKey(ACCOUNTS_KEY_SUFFIX),
-    ]);
-
-    return json(res, 200, { success: true });
-  } catch (error) {
-    return json(res, 400, { error: error.message });
-  }
+async function handleDisconnect(_req, res, body) {
+  if (typeof body.connectionId !== 'string' || !body.connectionId) return json(res, 400, { error: 'Selecione o perfil a desconectar.' });
+  const { error } = await getSupabaseClient().from(CONNECTION_TABLE).delete().eq('owner_email', owner()).eq('id', body.connectionId);
+  if (error) throw new Error('Não foi possível desconectar o perfil.');
+  return json(res, 200, publicSnapshot(await readConnections()));
 }
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return json(res, 405, { error: 'Method Not Allowed' });
-  }
-
-  if (!isAuthenticatedRequest(req)) {
-    return json(res, 401, { error: 'Unauthorized' });
-  }
-
+  if (req.method !== 'POST') return json(res, 405, { error: 'Method Not Allowed' });
+  if (!isAuthenticatedRequest(req)) return json(res, 401, { error: 'Sua sessão expirou. Saia da plataforma e entre novamente.' });
+  // Reject browser requests from other origins; never trust client-provided redirect URLs.
   try {
+    if (req.headers.origin && req.headers.origin !== new URL(redirectUri()).origin) return json(res, 403, { error: 'Origem não autorizada.' });
     const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
-    const action = body.action;
-
-    switch (action) {
-      case 'oauth-exchange':
-        return handleOAuthExchange(req, res, body);
-      case 'list-accounts':
-        return handleListAccounts(req, res);
-      case 'get-account-overview':
-        return handleGetAccountOverview(req, res, body);
-      case 'disconnect':
-        return handleDisconnect(req, res);
-      default:
-        return json(res, 400, { error: `Ação desconhecida: ${action}` });
+    switch (body.action) {
+      case 'oauth-start': return await startOAuth(req, res);
+      case 'oauth-exchange': return await handleOAuthExchange(req, res, body);
+      case 'list-accounts': return await handleListAccounts(req, res);
+      case 'status': return json(res, 200, publicSnapshot(await readConnections()));
+      case 'get-account-overview': return await handleGetAccountOverview(req, res, body);
+      case 'disconnect': return await handleDisconnect(req, res, body);
+      default: return json(res, 400, { error: 'Ação desconhecida.' });
     }
   } catch (error) {
-    console.error('[google-ads-proxy] Erro:', error);
-    return json(res, 500, { error: error.message || 'Erro interno ao processar Google Ads.' });
+    return json(res, 400, { error: error.message || 'Erro ao processar Google Ads.' });
   }
 }
