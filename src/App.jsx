@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './contexts/AuthContext';
 import PrivateRoute from './components/PrivateRoute';
+import ErrorBoundary from './components/ErrorBoundary';
 import AppLayout from './layout/AppLayout';
 import { MetaAdsProvider } from './contexts/MetaAdsContext';
 import { GoogleAdsProvider } from './contexts/GoogleAdsContext';
@@ -71,6 +72,7 @@ function ProtectedAppShell() {
 
 export default function App() {
   return (
+    <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <AuthProvider>
@@ -107,5 +109,6 @@ export default function App() {
         </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>
+    </ErrorBoundary>
   );
 }

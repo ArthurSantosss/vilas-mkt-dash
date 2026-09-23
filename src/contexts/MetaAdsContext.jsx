@@ -250,7 +250,8 @@ export function MetaAdsProvider({ children }) {
 
   const todayTotals = useMemo(() => {
     return activeAccounts.reduce((acc, account) => {
-      const todayMetric = account.dailyMetrics?.at(-1);
+      const daily = account.dailyMetrics;
+      const todayMetric = daily && daily.length ? daily[daily.length - 1] : null;
       return {
         spend: acc.spend + (todayMetric?.spend || 0),
         messages: acc.messages + (todayMetric?.messages || 0),
