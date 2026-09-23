@@ -16,10 +16,16 @@ import {
   fetchCampaignDailyInsights, getPreviousPeriodRange
 } from '../../services/metaApi';
 import { PRESETS } from '../../shared/utils/dateUtils';
+import { getAgencyLogoSources } from '../../shared/utils/agencyLogo';
 import { toPng } from 'html-to-image';
 
 const SHARE_BASE_URL = (import.meta.env.VITE_PUBLIC_SHARE_BASE_URL || '').trim();
 const META_LOGO_SOURCES = ['/meta-ads-logo.png', '/logometa.png'];
+const GOOGLE_LOGO_SOURCES = ['/google-ads-logo.svg'];
+
+function getPlatformLogoSources(platform) {
+  return platform === 'google' ? GOOGLE_LOGO_SOURCES : META_LOGO_SOURCES;
+}
 
 function matchAgencyVisual(name) {
   const n = (name || '').toLowerCase();
@@ -169,9 +175,7 @@ function readClientLogos() {
   }
 }
 
-function getAgencyLogoSources(agencyType) {
-  return agencyType === 'tag' ? ['/logotag.png'] : ['/favicon.png'];
-}
+
 
 async function fetchImageBlob(url) {
   if (!url) return null;
@@ -724,7 +728,6 @@ function ReportVisualContent({ platform, onPlatformChange }) {
     return matchAgencyVisual(selectedAgency) || 'vilasmkt';
   }, [selectedAgency, selectedAccount, accountAgencies, accounts]);
 
-  const logoSources = useMemo(() => getAgencyLogoSources(agencyType), [agencyType]);
 
   // Nome da agência usado no card. Agências conhecidas têm nome de exibição
   // fixo; qualquer outra agência cadastrada usa o próprio nome.
@@ -732,6 +735,8 @@ function ReportVisualContent({ platform, onPlatformChange }) {
     if (selectedAgency && selectedAgency !== '__all__') return selectedAgency;
     return accountAgencies[selectedAccount] || '';
   }, [selectedAgency, selectedAccount, accountAgencies]);
+
+  const logoSources = useMemo(() => getAgencyLogoSources(resolvedAgencyName, agencyType), [resolvedAgencyName, agencyType]);
 
   const agencyLabel = useMemo(() => {
     if (agencyType === 'tag') return 'Grupo Tag';
@@ -841,8 +846,9 @@ function ReportVisualContent({ platform, onPlatformChange }) {
         const account = accounts.find(a => a.id === selectedAccount);
         const { current, previous, period } = await fetchGoogleReport(account, selectedPeriod, selectedCampaignIds);
         const clientLogoUrl = clientLogos[selectedAccount] || clientLogos[account.accountId] || null;
-        const [agencyLogoB64, clientLogoB64] = await Promise.all([
+        const [agencyLogoB64, platformLogoB64, clientLogoB64] = await Promise.all([
           toBase64FromSources(logoSources),
+          toBase64FromSources(GOOGLE_LOGO_SOURCES),
           clientLogoUrl ? Promise.race([toRasterizedPngDataUrl(clientLogoUrl), new Promise(resolve => setTimeout(() => resolve(null), 15000))]) : null,
         ]);
         setReportData({
@@ -850,7 +856,7 @@ function ReportVisualContent({ platform, onPlatformChange }) {
           scopeLabel: hasCampaignFilter ? campaignScopeLabel : 'Conta inteira',
           selectedCampaignNames: selectedCampaigns.map(c => c.name),
           filteredCampaignCount: selectedCampaignIds.length,
-          agencyLogoB64, metaLogoB64: null, clientLogoUrl,
+          agencyLogoB64, metaLogoB64: platformLogoB64, clientLogoUrl,
           clientLogoExportSrc: getSafeExportLogoSrc(clientLogoUrl, clientLogoB64),
         });
         return;
@@ -1534,7 +1540,7 @@ function ReportVisualContent({ platform, onPlatformChange }) {
                   <ReportCard
                     data={d}
                     agencyLogoSrc={d.agencyLogoB64 ? [d.agencyLogoB64] : logoSources}
-                    metaLogoSrc={d.metaLogoB64 ? [d.metaLogoB64] : META_LOGO_SOURCES}
+                    platformLogoSrc={d.metaLogoB64 ? [d.metaLogoB64] : getPlatformLogoSources(d.platform)}
                     clientLogoSrc={d.clientLogoUrl}
                     agencyLabel={agencyLabel}
                     showAccountName={false}
@@ -1575,7 +1581,7 @@ function ReportVisualContent({ platform, onPlatformChange }) {
           <ReportCard
             data={d}
             agencyLogoSrc={d.agencyLogoB64 ? [d.agencyLogoB64] : logoSources}
-            metaLogoSrc={d.metaLogoB64 ? [d.metaLogoB64] : META_LOGO_SOURCES}
+            platformLogoSrc={d.metaLogoB64 ? [d.metaLogoB64] : getPlatformLogoSources(d.platform)}
             clientLogoSrc={d.clientLogoExportSrc}
             agencyLabel={agencyLabel}
             showAccountName={false}

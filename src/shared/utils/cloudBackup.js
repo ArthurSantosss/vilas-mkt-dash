@@ -33,6 +33,7 @@ export const CLOUD_SYNC_KEYS = [
   'google_account_billing_frequencies',
   'client_logos',
   'agencies_list',
+  'agency_logos',
   'account_agencies',
   'checklist_all_tasks',
   AUTO_ALERTS_STORAGE_KEY,

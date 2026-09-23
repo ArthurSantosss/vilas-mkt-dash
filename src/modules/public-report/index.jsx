@@ -10,6 +10,7 @@ import {
 } from '../../services/metaApi';
 import PeriodSelector from '../../shared/components/PeriodSelector';
 import ReportCard from '../../shared/components/ReportCard';
+import { getAgencyLogoSources, getAgencyLabel } from '../../shared/utils/agencyLogo';
 import { PRESETS } from '../../shared/utils/dateUtils';
 
 const LEAD_ACTION_TYPES = [
@@ -21,6 +22,7 @@ const LEAD_ACTION_TYPES = [
 const ENGAGEMENT_ACTION_TYPES = ['post_engagement', 'page_engagement'];
 const SHARE_BASE_URL = (import.meta.env.VITE_PUBLIC_SHARE_BASE_URL || '').trim();
 const META_LOGO_SOURCES = ['/meta-ads-logo.png', '/logometa.png'];
+const GOOGLE_LOGO_SOURCES = ['/google-ads-logo.svg'];
 
 const OBJECTIVE_OPTIONS = [
   { id: 'messages', label: 'Mensagens' },
@@ -351,9 +353,10 @@ export default function PublicReport({ shareKey: shareKeyProp = null }) {
   const [selectedObjective, setSelectedObjective] = useState('messages');
   const [objectiveTouched, setObjectiveTouched] = useState(false);
 
-  const agencyType = data?.agency === 'tag' ? 'tag' : 'vilasmkt';
-  const agencyLabel = agencyType === 'tag' ? 'Grupo Tag' : 'Vilas Growth Marketing';
-  const agencyLogoSrc = agencyType === 'tag' ? ['/logotag.png'] : ['/favicon.png'];
+  // A agência vem do relatório publicado; sem ela, cai na Vilas.
+  const agencyType = data?.agency || 'vilasmkt';
+  const agencyLabel = getAgencyLabel(data?.agencyName, agencyType);
+  const agencyLogoSrc = getAgencyLogoSources(data?.agencyName, agencyType);
 
   const fetchReport = useCallback(async () => {
     if (!shareKey) return;
@@ -489,7 +492,7 @@ export default function PublicReport({ shareKey: shareKeyProp = null }) {
             <ReportCard
               data={data}
               agencyLogoSrc={agencyLogoSrc}
-              metaLogoSrc={META_LOGO_SOURCES}
+              platformLogoSrc={data.platform === 'google' ? GOOGLE_LOGO_SOURCES : META_LOGO_SOURCES}
               clientLogoSrc={data.clientLogoUrl}
               agencyLabel={agencyLabel}
               showAccountName={false}

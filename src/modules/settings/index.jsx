@@ -30,6 +30,7 @@ import {
 } from '../../services/metaTokensApi';
 import { supabase } from '../../services/supabase';
 import { MetaIcon, GoogleAdsIcon } from '../../shared/components/PlatformIcons';
+import { readAgencyLogos, saveAgencyLogo } from '../../shared/utils/agencyLogo';
 
 
 const FB_SDK_SRC = 'https://connect.facebook.net/pt_BR/sdk.js';
@@ -116,6 +117,7 @@ export default function Settings() {
   const [newAgencyName, setNewAgencyName] = useState('');
   const [showOnlyActive, setShowOnlyActive] = useState(false);
   const [showOnlyActiveGoogle, setShowOnlyActiveGoogle] = useState(false);
+  const [agencyLogos, setAgencyLogos] = useState(() => readAgencyLogos());
   const [metaAccountsOpen, setMetaAccountsOpen] = useState(false);
   const [googleAccountsOpen, setGoogleAccountsOpen] = useState(false);
 
@@ -1052,15 +1054,36 @@ export default function Settings() {
           {agencies.length === 0 ? (
             <p className="text-sm text-text-secondary/60 text-center py-4">Nenhuma agencia criada ainda</p>
           ) : (
-            <div className="flex flex-wrap gap-2">
+            <div className="divide-y divide-border/50">
               {agencies.map(ag => (
-                <span key={ag} className="flex items-center gap-2 bg-bg border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary">
-                  <Building2 size={13} className="text-primary-light" />
-                  {ag}
-                  <button onClick={() => removeAgency(ag)} className="text-text-secondary/50 hover:text-danger transition-colors" title="Remover agencia">
-                    <Trash2 size={13} />
-                  </button>
-                </span>
+                <div key={ag} className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <span className="flex items-center gap-2 text-sm text-text-primary">
+                    <Building2 size={14} className="text-primary-light shrink-0" />
+                    {ag}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={agencyLogos[ag] || ''}
+                      onChange={e => setAgencyLogos(prev => ({ ...prev, [ag]: e.target.value }))}
+                      onBlur={e => setAgencyLogos(saveAgencyLogo(ag, e.target.value))}
+                      placeholder="URL da logo da agência"
+                      className="w-full bg-bg border border-border rounded-lg px-3 py-1.5 text-xs text-text-primary focus:outline-none focus:border-primary sm:w-[240px]"
+                    />
+                    {agencyLogos[ag] && (
+                      <img
+                        src={agencyLogos[ag]}
+                        alt=""
+                        onError={(e) => { e.target.style.display = 'none'; }}
+                        className="w-7 h-7 object-contain rounded border border-border bg-bg/50 p-0.5 shrink-0"
+                        style={{ display: 'block' }}
+                      />
+                    )}
+                    <button onClick={() => removeAgency(ag)} className="text-text-secondary/50 hover:text-danger transition-colors shrink-0" title="Remover agencia">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
               ))}
             </div>
           )}

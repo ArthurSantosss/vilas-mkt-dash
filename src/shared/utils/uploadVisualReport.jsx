@@ -2,6 +2,7 @@ import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { toPng } from 'html-to-image';
 import ReportCard from '../components/ReportCard';
+import { getAgencyLogoSources, getAgencyLabel } from './agencyLogo';
 import { toVisualReportData } from './visualReportData';
 import { supabase } from '../../services/supabase';
 
@@ -63,8 +64,9 @@ async function waitForCard(node) {
 }
 
 export async function renderVisualReportPng(report) {
-  const agencyLogo = await asDataUrl(report.agency === 'tagb' ? '/logotag.png' : '/favicon.png');
-  const metaLogo = await asDataUrl('/meta-ads-logo.png');
+  const agencyLogoSources = getAgencyLogoSources(report.agencyName, report.agency);
+  const agencyLogo = agencyLogoSources.length ? await asDataUrl(agencyLogoSources[0]) : null;
+  const platformLogo = await asDataUrl(report.platform === 'google' ? '/google-ads-logo.svg' : '/meta-ads-logo.png');
   const clientLogo = await clientLogoDataUrl(report);
   const host = document.createElement('div');
   host.style.cssText = 'position:fixed;left:-200vw;top:0;opacity:0;pointer-events:none;width:1200px;z-index:-1';
@@ -74,10 +76,10 @@ export async function renderVisualReportPng(report) {
     flushSync(() => root.render(
       <ReportCard
         data={toVisualReportData(report)}
-        agencyLogoSrc={[agencyLogo]}
-        metaLogoSrc={[metaLogo]}
+        agencyLogoSrc={agencyLogo ? [agencyLogo] : []}
+        platformLogoSrc={[platformLogo]}
         clientLogoSrc={clientLogo}
-        agencyLabel={report.agency === 'tagb' ? 'Grupo Tag' : 'Vilas Growth Marketing'}
+        agencyLabel={getAgencyLabel(report.agencyName, report.agency)}
         showAccountName={false}
         objective="messages"
         withBarChart

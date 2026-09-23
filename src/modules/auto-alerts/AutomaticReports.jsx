@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { CheckCircle2, Eye, FileText, Image, Loader2, Send, X } from 'lucide-react';
 import { REPORT_RULES, getReportPeriod, matchReportAgency, reportLocalDate } from '../../shared/constants/automaticReports';
 import ReportCard from '../../shared/components/ReportCard';
+import { getAgencyLogoSources, getAgencyLabel } from '../../shared/utils/agencyLogo';
 import { toVisualReportData } from '../../shared/utils/visualReportData';
 import { uploadVisualReport } from '../../shared/utils/uploadVisualReport';
 import { getStoredMetaToken } from '../../services/metaTokenGuard';
@@ -19,10 +20,10 @@ function VisualPreview({ report }) {
   return <div className="overflow-x-auto">
     <ReportCard
       data={toVisualReportData(report)}
-      agencyLogoSrc={report.agency === 'tagb' ? '/logotag.png' : '/favicon.png'}
-      metaLogoSrc="/meta-ads-logo.png"
+      agencyLogoSrc={getAgencyLogoSources(report.agencyName, report.agency)}
+      platformLogoSrc={report.platform === 'google' ? '/google-ads-logo.svg' : '/meta-ads-logo.png'}
       clientLogoSrc={logos[report.accountId] || logos[report.accountNumber]}
-      agencyLabel={report.agency === 'tagb' ? 'Grupo Tag' : 'Vilas Growth Marketing'}
+      agencyLabel={getAgencyLabel(report.agencyName, report.agency)}
       showAccountName={false}
       objective="messages"
       withBarChart

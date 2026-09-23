@@ -33,7 +33,7 @@ function AgencyLogo({ src, label }) {
   );
 }
 
-function MetaLogo({ src }) {
+function PlatformLogo({ src, label }) {
   const sources = useMemo(() => getImageSources(src), [src]);
   const [index, setIndex] = useState(0);
   const currentSrc = sources[index] || sources[0];
@@ -43,13 +43,13 @@ function MetaLogo({ src }) {
       {currentSrc && (
         <img
           src={currentSrc}
-          alt="Meta Ads"
+          alt={label}
           onError={() => setIndex((prev) => (prev + 1 < sources.length ? prev + 1 : sources.length))}
           style={{ height: 26, width: 'auto', objectFit: 'contain', display: 'block', flexShrink: 0 }}
         />
       )}
       <span style={{ fontSize: 16, fontWeight: 800, color: '#ffffff', letterSpacing: '0.02em', whiteSpace: 'nowrap', opacity: 0.95 }}>
-        Meta Ads
+        {label}
       </span>
     </div>
   );
@@ -344,6 +344,7 @@ const ReportCard = function ReportCard({
   data,
   agencyLogoSrc,
   metaLogoSrc,
+  platformLogoSrc,
   clientLogoSrc,
   agencyLabel,
   showAccountName = true,
@@ -419,7 +420,10 @@ const ReportCard = function ReportCard({
             height: 32, width: 1, flexShrink: 0,
             background: 'linear-gradient(to bottom, transparent, rgba(56,189,248,0.4), transparent)',
           }} />
-          {data.platform === 'google' ? <span style={{ color: '#fff', fontSize: 23, fontWeight: 700 }}>Google Ads</span> : <MetaLogo src={metaLogoSrc} />}
+          <PlatformLogo
+            src={platformLogoSrc || metaLogoSrc}
+            label={data.platform === 'google' ? 'Google Ads' : 'Meta Ads'}
+          />
         </div>
 
         {showClientLogo && (
