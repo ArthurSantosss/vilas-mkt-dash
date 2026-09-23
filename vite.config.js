@@ -2,6 +2,10 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import legacy from '@vitejs/plugin-legacy'
+import postcss from 'postcss'
+import cascadeLayers from '@csstools/postcss-cascade-layers'
+import oklabFunction from '@csstools/postcss-oklab-function'
 import path from 'node:path'
 import fs from 'node:fs'
 
@@ -19,6 +23,49 @@ function readBody(req) {
 // adaptando a interface do Node http para a interface estilo Vercel (req.query,
 // req.body, res.status().json()). Assim login, meta-proxy, o assistente etc.
 // funcionam no `vite dev` sem precisar do `vercel dev`.
+// O Tailwind v4 envolve tudo em @layer e usa oklch() na paleta; nada disso existe
+// no Safari 12 (iPad Air 1 / iOS 12), que descarta a folha inteira e deixa a tela
+// preta. Em vez de degradar o CSS de todo mundo — achatar camadas custa ~10 mil
+// hacks de especificidade e quase dobra o arquivo — geramos uma SEGUNDA folha com
+// os equivalentes antigos e só os navegadores sem @layer a baixam.
+const legacyCssPlugin = () => ({
+  name: 'legacy-css-fallback',
+  apply: 'build',
+  enforce: 'post',
+  async generateBundle(_options, bundle) {
+    const cssAssets = Object.values(bundle).filter(
+      (asset) => asset.type === 'asset' && asset.fileName.endsWith('.css')
+    )
+    if (cssAssets.length === 0) return
+
+    const processor = postcss([
+      cascadeLayers(),
+      oklabFunction({ preserve: false, subFeatures: { displayP3: false } }),
+    ])
+
+    const legacyFiles = []
+    for (const asset of cssAssets) {
+      const result = await processor.process(String(asset.source), { from: undefined })
+      const fileName = asset.fileName.replace(/\.css$/, '.legacy.css')
+      this.emitFile({ type: 'asset', fileName, source: result.css })
+      legacyFiles.push(fileName)
+    }
+
+    const html = Object.values(bundle).find(
+      (asset) => asset.type === 'asset' && asset.fileName === 'index.html'
+    )
+    if (!html) return
+
+    // CSSLayerBlockRule existe a partir do Safari 15.4/Chrome 99. Onde não existe,
+    // @layer também não — é a checagem exata do que quebra.
+    const loader = `<script>(function(){if(typeof window.CSSLayerBlockRule!=="undefined")return;`
+      + `var f=${JSON.stringify(legacyFiles)};for(var i=0;i<f.length;i++){`
+      + `var l=document.createElement("link");l.rel="stylesheet";l.href="/"+f[i];`
+      + `document.head.appendChild(l);}})();</script>`
+    html.source = String(html.source).replace('</head>', `${loader}</head>`)
+  },
+})
+
 const vercelApiDevPlugin = () => ({
   name: 'vercel-api-dev',
   configureServer(server) {
@@ -89,7 +136,19 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
-    plugins: [react(), tailwindcss(), vercelApiDevPlugin()],
+    plugins: [
+      react(),
+      tailwindcss(),
+      vercelApiDevPlugin(),
+      legacyCssPlugin(),
+      // Bundle extra só para navegadores antigos (iPad Air 1 / iOS 12 = Safari 12).
+      // Navegadores modernos carregam o bundle `module` e ignoram este por completo.
+      legacy({
+        targets: ['safari >= 12', 'ios_saf >= 12'],
+        modernPolyfills: false,
+        renderLegacyChunks: true,
+      }),
+    ],
     esbuild: {
       drop: ['console', 'debugger'],
     },
