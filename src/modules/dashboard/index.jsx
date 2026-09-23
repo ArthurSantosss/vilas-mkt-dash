@@ -280,7 +280,6 @@ export default function Dashboard() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-text-primary tracking-tight">Dashboard</h1>
-              <p className="text-sm text-text-secondary">Prioridades, saúde da operação e contas que pedem ação.</p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3 z-50 shrink-0">

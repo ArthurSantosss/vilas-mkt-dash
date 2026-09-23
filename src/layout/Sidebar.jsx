@@ -1,17 +1,22 @@
 import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
-  LayoutDashboard, Calendar, Megaphone, Wallet, Search,
+  LayoutDashboard, Calendar, Wallet,
   SearchCheck, Settings, FileText, Image, Lightbulb,
   Bell, Scale, Menu, X, Sparkles
 } from 'lucide-react';
 import { useAlerts } from '../contexts/AlertsContext';
+import { MetaIcon, GoogleAdsIcon } from '../shared/components/PlatformIcons';
+
+// Marcas em monocromático: herdam a cor do item (ativo, hover, padrão).
+const MetaNavIcon = (props) => <MetaIcon {...props} mono />;
+const GoogleAdsNavIcon = (props) => <GoogleAdsIcon {...props} mono />;
 
 const navItems = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { path: '/meta-ads', label: 'Meta Ads', icon: Megaphone },
-  { path: '/google-ads', label: 'Google Ads', icon: Search },
-  { path: '/saldos-meta', label: 'Saldos Meta', icon: Wallet },
+  { path: '/meta-ads', label: 'Meta Ads', icon: MetaNavIcon },
+  { path: '/google-ads', label: 'Google Ads', icon: GoogleAdsNavIcon },
+  { path: '/saldos', label: 'Saldos', icon: Wallet },
   { path: '/visao-detalhada', label: 'Visão Detalhada', icon: SearchCheck },
   { path: '/relatorio-texto', label: 'Relatório Texto', icon: FileText },
   { path: '/relatorio-visual', label: 'Relatório Visual', icon: Image },
@@ -103,14 +108,6 @@ export default function Sidebar() {
           </button>
         </div>
       </nav>
-
-      {/* ── Footer ── */}
-      <div className="px-5 py-4 border-t border-white/[0.04]">
-        <div className="flex items-center gap-2">
-          <div className="w-1.5 h-1.5 rounded-full bg-success shadow-[0_0_6px_rgba(52,211,153,0.5)] animate-pulse" />
-          <p className="text-[10px] text-text-secondary/40 font-medium tracking-wider uppercase">v1.0 — Painel VilasMKT</p>
-        </div>
-      </div>
     </>
   );
 

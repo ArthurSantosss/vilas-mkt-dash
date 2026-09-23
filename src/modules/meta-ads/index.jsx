@@ -6,9 +6,10 @@ import { formatCurrency, formatNumber, formatPercent, getCostColor } from '../..
 import { readSavedPaymentMethods, isCreditCardPaymentMethod, getAccountPaymentMethod } from '../../shared/utils/paymentMethod';
 import { getNextPaymentDate, getDaysUntil, formatDateBR, readSavedLastPayments, readSavedBillingFrequencies, readSavedNextPaymentOverrides, parseDateInput, formatDateInput } from '../../shared/utils/nextPayment';
 
-import { Megaphone, Power, ChevronDown, ChevronRight, Loader2, RefreshCw, Settings2, Wallet, AlertTriangle, Clock, DollarSign, Check, X, ChevronUp, Info, Image, Pencil, CreditCard, CalendarClock, GripVertical, MessageSquare, Plus } from 'lucide-react';
+import { Power, ChevronDown, ChevronRight, Loader2, RefreshCw, Settings2, Wallet, AlertTriangle, Clock, DollarSign, Check, X, ChevronUp, Info, Image, Pencil, CreditCard, CalendarClock, GripVertical, MessageSquare, Plus } from 'lucide-react';
 import { updateCampaignStatus, updateCampaignBudget, fetchAdSetsForCampaign, updateAdSetBudget, updateAdSetStatus, updateAdStatus, fetchAdsForAdSet } from '../../services/metaApi';
 import PeriodSelector from '../../shared/components/PeriodSelector';
+import { MetaIcon } from '../../shared/components/PlatformIcons';
 
 const ALL_COLUMNS = [
   { key: 'name', label: 'Conta / Cliente', align: 'left' },
@@ -1003,11 +1004,10 @@ export default function MetaAdsOverview() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg bg-meta/10">
-              <Megaphone size={24} className="text-meta" />
+              <MetaIcon className="w-6 h-6 text-meta" mono />
             </div>
             <div>
               <h1 className="text-2xl font-bold text-text-primary">Meta Ads — Visão Geral</h1>
-              <p className="text-sm text-text-secondary">Performance de todas as contas Meta Ads</p>
             </div>
           </div>
           <button
@@ -1031,11 +1031,10 @@ export default function MetaAdsOverview() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg bg-meta/10">
-              <Megaphone size={24} className="text-meta" />
+              <MetaIcon className="w-6 h-6 text-meta" mono />
             </div>
             <div>
               <h1 className="text-2xl font-bold text-text-primary">Meta Ads — Visão Geral</h1>
-              <p className="text-sm text-text-secondary">Performance de todas as contas Meta Ads</p>
             </div>
           </div>
           <button
@@ -1065,11 +1064,10 @@ export default function MetaAdsOverview() {
         <div className="relative">
           <div className="flex items-center gap-3 mb-1">
             <div className="flex items-center justify-center w-11 h-11 rounded-xl bg-gradient-to-br from-primary to-primary-light shadow-lg shadow-primary/20">
-              <Megaphone size={22} className="text-white" />
+              <MetaIcon className="w-6 h-6 text-white" mono />
             </div>
             <div>
               <h1 className="text-lg sm:text-2xl font-bold text-text-primary tracking-tight">Meta Ads — Visão Geral</h1>
-              <p className="text-xs sm:text-sm text-text-secondary">Performance de todas as contas Meta Ads</p>
             </div>
           </div>
         </div>

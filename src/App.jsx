@@ -26,7 +26,7 @@ const AuthCallback = lazy(() => import('./modules/auth/AuthCallback'));
 const Dashboard = lazy(() => import('./modules/dashboard'));
 const MetaAdsOverview = lazy(() => import('./modules/meta-ads'));
 const GoogleAdsOverview = lazy(() => import('./modules/google-ads'));
-const MetaBalances = lazy(() => import('./modules/meta-balances'));
+const Balances = lazy(() => import('./modules/balances'));
 const DetailedView = lazy(() => import('./modules/detailed-view'));
 const Settings = lazy(() => import('./modules/settings'));
 const ReportText = lazy(() => import('./modules/report-text'));
@@ -87,7 +87,10 @@ export default function App() {
               <Route index element={<Dashboard />} />
               <Route path="meta-ads" element={<MetaAdsOverview />} />
               <Route path="google-ads" element={<GoogleAdsOverview />} />
-              <Route path="saldos-meta" element={<MetaBalances />} />
+              <Route path="saldos" element={<Balances />} />
+              {/* Links antigos continuam funcionando. */}
+              <Route path="saldos-meta" element={<Navigate to="/saldos" replace />} />
+              <Route path="saldos-google" element={<Navigate to="/saldos" replace />} />
               <Route path="visao-detalhada" element={<DetailedView />} />
               <Route path="relatorio-texto" element={<ReportText />} />
               <Route path="relatorio-visual" element={<ReportVisual />} />

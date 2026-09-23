@@ -66,6 +66,7 @@ export function buildReportFromInsights(data, campaignName, periodDates) {
 
 // ── Report text template ──
 export function buildReportText(d, options = {}) {
+  if (d.platform === 'google') return buildGoogleReportText(d, options);
   const {
     showCampaignName = true,
     prev = null,
@@ -108,4 +109,35 @@ ${entityLine}
 
 Fico a disposição para qualquer dúvida!
 Obrigado e tenha uma excelente semana!${signature} 🚀`;
+}
+
+function buildGoogleReportText(d, { showCampaignName = true, prev = null, agencyName = '' } = {}) {
+  const money = value => formatCurrency(value || 0, d.currency);
+  const comparison = prev && prev.conversions > 0
+    ? `\n- As conversões variaram ${formatPercentValue((d.conversions - prev.conversions) / prev.conversions * 100)} em relação ao período anterior.` : '';
+  return `Excelente dia pessoal!
+
+Segue relatório de desempenho 👇
+
+⭐ Relatório de Desempenho — Google Ads ⭐
+
+📅 Período Analisado: ${d.periodStart} a ${d.periodEnd}
+${showCampaignName && d.campaignName ? `📌 Campanha: ${d.campaignName}\n` : ''}
+➡️ Valor Investido: ${money(d.spend)}
+➡️ Conversões: ${formatNumber(d.conversions || 0)}
+➡️ Impressões: ${formatNumber(d.impressions || 0)}
+➡️ Cliques: ${formatNumber(d.clicks || 0)}
+➡️ Custo por conversão: ${money(d.costPerConversion)}
+➡️ CPC: ${money(d.cpc)}
+➡️ CTR: ${formatPercentValue(d.ctr)}
+➡️ Valor de conversões: ${money(d.conversionsValue)}
+
+📈 Leitura do período:
+- A conta gerou ${formatNumber(d.conversions || 0)} conversões e ${formatNumber(d.clicks || 0)} cliques.${comparison}
+
+📍 Próximos passos:
+- ${d.conversions > 0 ? 'Compare custo por conversão e qualidade dos resultados antes de ajustar os investimentos.' : 'Confira a configuração das conversões e a relevância dos anúncios antes de ampliar o investimento.'}
+
+Fico à disposição para qualquer dúvida!
+Obrigado e tenha uma excelente semana!${buildAgencySignature(agencyName)} 🚀`;
 }

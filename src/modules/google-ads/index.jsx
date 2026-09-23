@@ -4,11 +4,13 @@ import { useAgency } from '../../contexts/AgencyContext';
 import { dispatchLocalStorageMapUpdated } from '../../shared/utils/cloudBackup';
 import { formatCurrency, formatNumber, formatPercent, getCostColor } from '../../shared/utils/format';
 import { formatGoogleCustomerId, updateGoogleCampaignStatus, updateGoogleCampaignBudget } from '../../services/googleAdsApi';
+import GoogleAdsIssues from '../../shared/components/GoogleAdsIssues';
 import PeriodSelector from '../../shared/components/PeriodSelector';
+import { GoogleAdsIcon } from '../../shared/components/PlatformIcons';
 
 import {
   ChevronDown, ChevronRight, ChevronUp, Loader2, RefreshCw, Settings2,
-  DollarSign, Check, X, Info, GripVertical, Link2, Target, TrendingUp, Users, Wallet,
+  DollarSign, Check, X, Info, GripVertical, Link2,
 } from 'lucide-react';
 
 const ALL_COLUMNS = [
@@ -37,15 +39,6 @@ function normalizeColumnOrder(savedOrder) {
   return [...sanitized, ...missing];
 }
 
-function GoogleAdsIcon({ className = 'w-5 h-5' }) {
-  return (
-    <svg viewBox="0 0 64 64" className={className} aria-hidden="true">
-      <path fill="#4285F4" d="M19.8 12.6c4.2 0 7.7 2.8 8.9 6.6l15.3 27.6c1.8 3.2.6 7.3-2.6 9.1-3.2 1.8-7.3.6-9.1-2.6L17 25.8c-1.8-3.2-.6-7.3 2.6-9.1z" />
-      <path fill="#34A853" d="M44.7 53.9c-3.7 0-6.8-3-6.8-6.8s3-6.8 6.8-6.8 6.8 3 6.8 6.8-3.1 6.8-6.8 6.8z" />
-      <path fill="#FBBC04" d="M21.3 10.1c5.1 0 9.3 4.1 9.3 9.3s-4.1 9.3-9.3 9.3S12 24.6 12 19.4s4.2-9.3 9.3-9.3z" />
-    </svg>
-  );
-}
 
 // ── Toggle Switch (mesmo padrão da aba Meta Ads) ──
 const AdsToggle = React.memo(function AdsToggle({ isActive, isToggling, onToggle, size = 'md', title }) {
@@ -170,64 +163,6 @@ const SharedBudgetBadge = React.memo(function SharedBudgetBadge({ amount }) {
 });
 
 // ── Cards de resumo ──
-const SummaryCards = React.memo(function SummaryCards({ accounts }) {
-  const totals = useMemo(() => accounts.reduce((acc, account) => {
-    const m = account.metrics || {};
-    acc.spend += m.spend || 0;
-    acc.conversions += m.conversions || 0;
-    acc.clicks += m.clicks || 0;
-    acc.impressions += m.impressions || 0;
-    if (account.status === 'active') acc.activeAccounts += 1;
-    return acc;
-  }, { spend: 0, conversions: 0, clicks: 0, impressions: 0, activeAccounts: 0 }), [accounts]);
-
-  const costPerConversion = totals.conversions > 0 ? totals.spend / totals.conversions : 0;
-
-  if (accounts.length === 0) return null;
-
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-      <div className="bg-surface rounded-xl border border-border p-4 hover:bg-surface-hover transition-all">
-        <div className="flex items-center gap-2 mb-2">
-          <div className="p-1.5 rounded-lg bg-primary/10"><Wallet size={16} className="text-primary-light" /></div>
-          <span className="text-xs text-text-secondary font-medium">Gasto no período</span>
-        </div>
-        <p className="text-xl font-bold text-text-primary">{formatCurrency(totals.spend)}</p>
-        <p className="text-[11px] text-text-secondary mt-1">{formatNumber(totals.impressions)} impressões</p>
-      </div>
-
-      <div className="bg-surface rounded-xl border border-border p-4 hover:bg-surface-hover transition-all">
-        <div className="flex items-center gap-2 mb-2">
-          <div className="p-1.5 rounded-lg bg-success/10"><Target size={16} className="text-success" /></div>
-          <span className="text-xs text-text-secondary font-medium">Conversões</span>
-        </div>
-        <p className="text-xl font-bold text-text-primary">{formatNumber(Math.round(totals.conversions))}</p>
-        <p className="text-[11px] text-text-secondary mt-1">{formatNumber(totals.clicks)} cliques</p>
-      </div>
-
-      <div className="bg-surface rounded-xl border border-border p-4 hover:bg-surface-hover transition-all">
-        <div className="flex items-center gap-2 mb-2">
-          <div className="p-1.5 rounded-lg bg-info/10"><TrendingUp size={16} className="text-info" /></div>
-          <span className="text-xs text-text-secondary font-medium">Custo / Conversão</span>
-        </div>
-        <p className={`text-xl font-bold ${getCostColor(costPerConversion)}`}>
-          {costPerConversion > 0 ? formatCurrency(costPerConversion) : '—'}
-        </p>
-        <p className="text-[11px] text-text-secondary mt-1">Média das contas exibidas</p>
-      </div>
-
-      <div className="bg-surface rounded-xl border border-border p-4 hover:bg-surface-hover transition-all">
-        <div className="flex items-center gap-2 mb-2">
-          <div className="p-1.5 rounded-lg bg-warning/10"><Users size={16} className="text-warning" /></div>
-          <span className="text-xs text-text-secondary font-medium">Contas veiculando</span>
-        </div>
-        <p className="text-xl font-bold text-text-primary">{totals.activeAccounts}/{accounts.length}</p>
-        <p className="text-[11px] text-text-secondary mt-1">Com campanhas ativas</p>
-      </div>
-    </div>
-  );
-});
-
 // ── Helper: orçamento diário total das campanhas ativas (sem contar 2x orçamento compartilhado) ──
 function getTotalBudget(accountCampaigns) {
   let total = 0;
@@ -267,7 +202,7 @@ function formatChannelType(channelType) {
 }
 
 export default function GoogleAdsOverview() {
-  const { accounts, campaigns, selectedPeriod, setSelectedPeriod, loading, error, accountErrors, hasConnection, refreshData } = useGoogleAds();
+  const { accounts, campaigns, selectedPeriod, setSelectedPeriod, loading, error, accountErrors, connectionWarnings, hasConnection, refreshData } = useGoogleAds();
   const { agencies, accountAgencies } = useAgency();
   const [selectedAccount, setSelectedAccount] = useState('all');
   const [selectedAgency, setSelectedAgency] = useState('all');
@@ -443,11 +378,10 @@ export default function GoogleAdsOverview() {
   const header = (
     <div className="flex items-center gap-3 mb-1">
       <div className="flex items-center justify-center w-11 h-11 rounded-xl bg-gradient-to-br from-primary to-primary-light shadow-lg shadow-primary/20">
-        <GoogleAdsIcon className="w-6 h-6" />
+        <GoogleAdsIcon className="w-6 h-6 text-white" mono />
       </div>
       <div>
         <h1 className="text-lg sm:text-2xl font-bold text-text-primary tracking-tight">Google Ads — Visão Geral</h1>
-        <p className="text-xs sm:text-sm text-text-secondary">Performance de todas as contas Google Ads</p>
       </div>
     </div>
   );
@@ -577,35 +511,7 @@ export default function GoogleAdsOverview() {
         </div>
       )}
 
-      {/* error já embute o primeiro erro de conta; só mostramos aqui quando não há detalhe por conta. */}
-      {error && accounts.length > 0 && !accountErrors?.length && (
-        <div role="alert" className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
-          Alguns dados podem estar incompletos. {error} Confira as conexões em Configurações.
-        </div>
-      )}
-
-      {accountErrors?.length > 0 && (
-        <div role="alert" className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
-          <p className="font-semibold">
-            {accountErrors.length} conta{accountErrors.length !== 1 ? 's' : ''} não retornou dados neste período. As demais seguem abaixo.
-          </p>
-          <ul className="mt-2 space-y-1 text-xs">
-            {accountErrors.map((item) => (
-              <li key={item.accountId || item.name}>
-                <span className="font-medium">{item.name}</span>
-                {item.accountId && <span className="font-mono"> · {formatGoogleCustomerId(item.accountId)}</span>}
-                {' — '}{item.message}
-              </li>
-            ))}
-          </ul>
-          <p className="mt-2 text-xs opacity-80">
-            "The caller does not have permission" normalmente indica conta encerrada, suspensa ou sem acesso para o perfil
-            Google conectado. Sincronize as contas em Configurações ou desative a conta na lista de Contas de Anuncio.
-          </p>
-        </div>
-      )}
-
-      <SummaryCards accounts={filteredAccounts} />
+      <GoogleAdsIssues issues={[...accountErrors, ...connectionWarnings]} error={error} />
 
       {showColumnSettings && (
         <div className="bg-surface rounded-2xl border border-border p-4 lg:p-5 shadow-[0_2px_12px_-4px_rgba(0,0,0,0.25)]">

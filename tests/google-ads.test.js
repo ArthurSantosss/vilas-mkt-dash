@@ -57,6 +57,32 @@ function databaseMock(t, network) {
 const leaf = (id, extra = {}) => ({ id, accountId: id, name: `Conta ${id}`, currency: 'BRL', timeZone: 'America/Bahia', loginCustomerId: null, source: 'direct', ...extra });
 const connection = (id, accounts, extra = {}) => ({ owner_email: owner, id, user_email: `${id}@example.test`, refresh_token: `secret-${id}`, accounts, warnings: [], connected_at: '2026-09-22', updated_at: '2026-09-22', ...extra });
 
+test('leitura recupera permissão por outro perfil armazenado sem confiar na MCC enviada', async t => {
+  const cookie = setup(t);
+  const seen = [];
+  const tables = databaseMock(t, async (url, options) => {
+    if (url.hostname === 'oauth2.googleapis.com') {
+      const token = new URLSearchParams(options.body).get('refresh_token');
+      return response({ access_token: token });
+    }
+    seen.push([options.headers.Authorization, options.headers['login-customer-id']]);
+    if (options.headers.Authorization === 'Bearer secret-direct') return response({ error: { message: 'denied', details: [{ errors: [{ errorCode: { authorizationError: 'USER_PERMISSION_DENIED' } }] }] } }, 403);
+    assert.equal(options.headers['login-customer-id'], '1111111111');
+    return response({ results: [] });
+  });
+  tables.google_ads_connections.push(
+    connection('direct', [leaf('2222222222')]),
+    connection('manager', [leaf('2222222222', { loginCustomerId: '1111111111' })]),
+  );
+  const result = await call({ action: 'get-account-overview', customerId: '2222222222', connectionId: 'direct', loginCustomerId: '9999999999', period: '7d' }, cookie);
+  assert.equal(result.statusCode, 200);
+  assert.ok(seen.some(([token]) => token === 'Bearer secret-direct'));
+  assert.ok(seen.some(([token]) => token === 'Bearer secret-manager'));
+  const count = seen.length;
+  assert.equal((await call({ action: 'get-account-spending', customerId: '3333333333' }, cookie)).statusCode, 403);
+  assert.equal(seen.length, count);
+});
+
 test('API exige cookie válido; e-mail, host e origin localhost não autenticam', async t => {
   const cookie = setup(t);
   for (const headers of [{ 'x-auth-email': owner }, { host: 'localhost' }, { origin: 'http://localhost:5173' }, { cookie: 'vilasmkt_auth_server=%garbage' }]) assert.equal(isAuthenticatedRequest({ headers }), false);

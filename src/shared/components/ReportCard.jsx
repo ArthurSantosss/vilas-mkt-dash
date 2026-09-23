@@ -169,6 +169,29 @@ const OBJECTIVES = {
   },
 };
 
+function googleObjective(objective) {
+  const clicks = objective === 'clicks';
+  return {
+    label: clicks ? 'Cliques' : 'Conversões',
+    metricLabel: clicks ? 'Cliques' : 'Conversões',
+    metricLabelSingular: clicks ? 'clique' : 'conversão',
+    dailyKey: clicks ? 'clicks' : 'leads',
+    dailyTitle: clicks ? 'Cliques por dia' : 'Conversões por dia',
+    buildKpis: d => [
+      { label: 'Investimento', value: formatCurrency(d.spend, d.currency), color: '#22D3EE', icon: 'wallet' },
+      { label: clicks ? 'Cliques' : 'Conversões', value: formatNumber(clicks ? d.clicks : d.leads), color: '#38BDF8', icon: 'click' },
+      { label: clicks ? 'Custo / Clique' : 'Custo / Conversão', value: formatCurrency(clicks ? d.costPerClick : d.costPerLead, d.currency), color: '#F59E0B', icon: 'coins' },
+      { label: 'Impressões', value: formatNumber(d.impressions), color: '#A78BFA', icon: 'users' },
+      { label: 'CTR', value: formatPercent(d.ctr), color: '#34D399', icon: 'percent' },
+    ],
+    buildFunnel: d => [
+      { label: 'Impressões', value: d.impressions, widthPct: 100, color: '#0C4A6E' },
+      { label: 'Cliques', value: d.clicks, widthPct: 65, color: '#0369A1' },
+      { label: 'Conversões', value: d.leads, widthPct: 35, color: '#22D3EE' },
+    ],
+  };
+}
+
 function ReportKPI({ label, value, color = '#38BDF8', icon }) {
   return (
     <div style={{
@@ -330,7 +353,7 @@ const ReportCard = function ReportCard({
   width = 1200,
 }) {
   const d = data;
-  const config = OBJECTIVES[objective] || OBJECTIVES.messages;
+  const config = useMemo(() => data.platform === 'google' ? googleObjective(objective) : (OBJECTIVES[objective] || OBJECTIVES.messages), [data.platform, objective]);
   const kpis = config.buildKpis(d);
   const funnelStages = config.buildFunnel(d);
   const dailyData = useMemo(() => {
@@ -396,7 +419,7 @@ const ReportCard = function ReportCard({
             height: 32, width: 1, flexShrink: 0,
             background: 'linear-gradient(to bottom, transparent, rgba(56,189,248,0.4), transparent)',
           }} />
-          <MetaLogo src={metaLogoSrc} />
+          {data.platform === 'google' ? <span style={{ color: '#fff', fontSize: 23, fontWeight: 700 }}>Google Ads</span> : <MetaLogo src={metaLogoSrc} />}
         </div>
 
         {showClientLogo && (
@@ -505,7 +528,7 @@ const ReportCard = function ReportCard({
                   fontVariantNumeric: 'tabular-nums',
                 }}>
                   <span style={{ width: 10, height: 1.5, background: '#A78BFA', display: 'inline-block' }} />
-                  MÉDIA {formatCompact(Math.round(dailyAvg))}
+                  MÉDIA {data.platform === 'google' ? formatNumber(Number(dailyAvg.toFixed(2))) : formatCompact(Math.round(dailyAvg))}
                 </div>
               )}
             </div>

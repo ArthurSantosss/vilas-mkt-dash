@@ -3,6 +3,7 @@
 import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { getConfiguredAuth, isAuthenticatedRequest } from './_auth.js';
+import { googleAdsError, describeGoogleAdsError, canRetryGoogleAdsAccess } from './_google-ads-errors.js';
 
 const GOOGLE_ADS_API_VERSION = 'v25';
 const GOOGLE_ADS_API_BASE = `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}`;
@@ -249,7 +250,7 @@ async function googleAdsGet(path, accessToken, loginCustomerId) {
 
   const payload = await response.json();
   if (!response.ok) {
-    throw new Error(payload.error?.message || `Google Ads API ${response.status}`);
+    throw googleAdsError(payload, response);
   }
 
   return payload;
@@ -265,7 +266,7 @@ export async function googleAdsSearch(customerId, query, accessToken, loginCusto
       body: JSON.stringify({ query, ...(pageToken ? { pageToken } : {}) }),
     });
     const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error?.message || `Google Ads API ${response.status}`);
+    if (!response.ok) throw googleAdsError(payload, response);
     results.push(...(payload.results || []));
     pageToken = payload.nextPageToken;
     if (pageToken && seen.has(pageToken)) throw new Error('Paginação repetida retornada pelo Google Ads.');
@@ -280,7 +281,7 @@ async function googleAdsMutate(customerId, resource, operations, accessToken, lo
     body: JSON.stringify({ operations, partialFailure: false, validateOnly: false }),
   });
   const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error?.message || `Google Ads API ${response.status}`);
+  if (!response.ok) throw googleAdsError(payload, response);
   return payload;
 }
 
@@ -354,13 +355,16 @@ function isServableClient(row) {
 
 function upsertLeafAccount(map, account) {
   const existing = map.get(account.accountId);
+  const accessRoutes = [...new Set([...(existing?.accessRoutes || []), existing?.loginCustomerId ?? null, account.loginCustomerId ?? null])];
   if (!existing) {
-    map.set(account.accountId, account);
+    map.set(account.accountId, { ...account, accessRoutes: [account.loginCustomerId ?? null] });
     return;
   }
 
   if (existing.loginCustomerId && !account.loginCustomerId) {
-    map.set(account.accountId, account);
+    map.set(account.accountId, { ...account, accessRoutes });
+  } else {
+    map.set(account.accountId, { ...existing, accessRoutes });
   }
 }
 
@@ -393,15 +397,17 @@ export async function listReachableAccounts(accessToken) {
           upsertLeafAccount(accountMap, { id: row.customerId, accountId: row.customerId, name: row.name, currency: row.currency, timeZone: row.timeZone, loginCustomerId: seedId, source: 'manager', isManager: false });
         }
       } catch (error) {
-        warnings.push({ customerId: currentId, rootCustomerId: seedId, message: error.message });
+        warnings.push({ customerId: currentId, rootCustomerId: seedId, ...describeGoogleAdsError(error) });
       }
     }
   }
   return { accounts: [...accountMap.values()], warnings };
 }
 
-export async function fetchAccountOverview(accessToken, customerId, period, loginCustomerId, timeZone = 'UTC') {
+export async function fetchAccountOverview(accessToken, customerId, period, loginCustomerId, timeZone = 'UTC', campaignIds = []) {
   const dateFilter = normalizePeriodToDateFilter(period, timeZone);
+  if (!Array.isArray(campaignIds) || campaignIds.length > 500 || campaignIds.some(id => !/^\d+$/.test(String(id)))) throw httpError(400, 'Filtro de campanhas inválido.');
+  const campaignFilter = campaignIds.length ? ` AND campaign.id IN (${campaignIds.join(',')})` : '';
   const normalizedCustomerId = String(customerId).replace(/-/g, '');
 
   const [campaignPayload, dailyPayload] = await Promise.all([
@@ -425,7 +431,7 @@ export async function fetchAccountOverview(accessToken, customerId, period, logi
           metrics.conversions,
           metrics.conversions_value
         FROM campaign
-        WHERE ${dateFilter}
+        WHERE ${dateFilter}${campaignFilter}
         ORDER BY metrics.cost_micros DESC
       `,
       accessToken,
@@ -442,7 +448,7 @@ export async function fetchAccountOverview(accessToken, customerId, period, logi
           metrics.conversions,
           metrics.conversions_value
         FROM campaign
-        WHERE ${dateFilter}
+        WHERE ${dateFilter}${campaignFilter}
         ORDER BY segments.date
       `,
       accessToken,
@@ -571,7 +577,7 @@ async function handleOAuthExchange(req, res, body) {
     const discovery = await listReachableAccounts(tokens.access_token);
     connection.accounts = mergeDiscovery(connection.accounts, discovery);
     connection.warnings = discovery.warnings;
-  } catch (error) { connection.warnings = [{ message: error.message }]; }
+  } catch (error) { connection.warnings = [describeGoogleAdsError(error)]; }
   await writeConnection(connection, true);
   return json(res, 200, publicSnapshot(await readConnections()));
 }
@@ -585,7 +591,7 @@ async function handleListAccounts(_req, res) {
       connection.accounts = mergeDiscovery(connection.accounts, discovery);
       connection.warnings = discovery.warnings;
       connection.updated_at = new Date().toISOString();
-    } catch (error) { connection.warnings = [{ message: error.message }]; }
+    } catch (error) { connection.warnings = [describeGoogleAdsError(error)]; }
     await writeConnection(connection, true);
   }
   return json(res, 200, publicSnapshot(await readConnections()));
@@ -610,9 +616,48 @@ async function resolveAccountRoute(body) {
 }
 
 async function handleGetAccountOverview(_req, res, body) {
-  const { customerId, route, accessToken } = await resolveAccountRoute(body);
-  const payload = await fetchAccountOverview(accessToken, customerId, body.period, route.loginCustomerId, route.timeZone);
-  return json(res, 200, { success: true, customerId, ...payload });
+  const payload = await readWithAuthorizedRoutes(body, (token, account) => fetchAccountOverview(token, account.accountId, body.period, account.loginCustomerId, account.timeZone, body.campaignIds || []));
+  return json(res, 200, { success: true, customerId: body.customerId, ...payload });
+}
+
+// Read-only fallback. Mutations intentionally retain their explicit account route.
+async function readWithAuthorizedRoutes(body, read) {
+  const customerId = String(body.customerId || '').replace(/-/g, '');
+  if (!/^\d{10}$/.test(customerId)) throw httpError(400, 'customerId inválido.');
+  const connections = await readConnections();
+  const preferredId = body.connectionId || publicSnapshot(connections).accounts.find(a => a.accountId === customerId)?.connectionId;
+  const candidates = connections.flatMap(connection => (connection.accounts || [])
+    .filter(account => account.accountId === customerId)
+    .flatMap(account => (account.accessRoutes || [account.loginCustomerId]).map(loginCustomerId => ({ connection, account: { ...account, loginCustomerId } }))));
+  candidates.sort((a, b) => Number(b.connection.id === preferredId) - Number(a.connection.id === preferredId));
+  if (!candidates.length) throw httpError(403, 'Conta não disponível. Sincronize as contas em Configurações.');
+  let lastError;
+  const tokens = new Map();
+  for (const { connection, account } of candidates) {
+    try {
+      if (!tokens.has(connection.id)) tokens.set(connection.id, await refreshAccessToken(connection.refresh_token));
+      return await read(tokens.get(connection.id), account);
+    } catch (error) {
+      lastError = error;
+      if (!canRetryGoogleAdsAccess(error) && !error.message.includes('invalid_grant')) throw error;
+    }
+  }
+  throw lastError;
+}
+
+export async function fetchAccountSpending(accessToken, account) {
+  const totals = await Promise.all(['month', '7d'].map(period => googleAdsSearch(account.accountId,
+    `SELECT metrics.cost_micros FROM customer WHERE ${normalizePeriodToDateFilter(period, account.timeZone)}`,
+    accessToken, account.loginCustomerId)));
+  const amount = payload => payload.results.reduce((sum, row) => sum + microsToUnit(row.metrics?.costMicros), 0);
+  return { spentThisMonth: amount(totals[0]), avgDailySpend7d: amount(totals[1]) / 7,
+    currentBalance: null, creditLimit: null, estimatedDaysRemaining: null, amountDue: null,
+    hasReliableBalance: false, balanceSource: 'unavailable', currency: account.currency, timeZone: account.timeZone };
+}
+
+async function handleAccountSpending(_req, res, body) {
+  const payload = await readWithAuthorizedRoutes(body, fetchAccountSpending);
+  return json(res, 200, { success: true, ...payload });
 }
 
 async function handleUpdateCampaignStatus(_req, res, body) {
@@ -653,12 +698,13 @@ export default async function handler(req, res) {
       case 'list-accounts': return await handleListAccounts(req, res);
       case 'status': return json(res, 200, publicSnapshot(await readConnections()));
       case 'get-account-overview': return await handleGetAccountOverview(req, res, body);
+      case 'get-account-spending': return await handleAccountSpending(req, res, body);
       case 'update-campaign-status': return await handleUpdateCampaignStatus(req, res, body);
       case 'update-campaign-budget': return await handleUpdateCampaignBudget(req, res, body);
       case 'disconnect': return await handleDisconnect(req, res, body);
       default: return json(res, 400, { error: 'Ação desconhecida.' });
     }
   } catch (error) {
-    return json(res, error.status || 400, { error: error.message || 'Erro ao processar Google Ads.' });
+    return json(res, error.status || 400, { error: error.message || 'Erro ao processar Google Ads.', diagnostic: error.diagnostic });
   }
 }

@@ -22,6 +22,7 @@ import {
 import { analyzeCampaign as analyzeLocal } from '../../services/campaignAnalysis';
 
 import PeriodSelector from '../../shared/components/PeriodSelector';
+import PlatformFilter from '../../shared/components/PlatformFilter';
 import ScrollReveal from '../../shared/components/ScrollReveal';
 
 const PIE_COLORS = ['#18D8E4', '#14C8D4', '#0FA5AE', '#0D929B', '#0B8089', '#097078', '#076068', '#065259', '#05454C', '#043A40'];
@@ -712,23 +713,17 @@ export default function DetailedView() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-text-primary tracking-tight">Visão Detalhada</h1>
-              <p className="text-sm text-text-secondary">Análise profunda e insights por conta</p>
             </div>
           </div>
         </div>
 
-        <div className="relative mt-4 flex gap-2" role="group" aria-label="Plataforma de anúncios">
-          {[['meta', 'Meta Ads'], ['google', 'Google Ads']].map(([value, label]) => (
-            <button key={value} aria-pressed={platform === value}
-              onClick={() => { setPlatform(value); setSelectedAgency('all'); handleSelectAccount(''); }}
-              className={`px-4 py-2 rounded-lg text-sm border ${platform === value ? 'border-primary bg-primary/15 text-primary-light' : 'border-border text-text-secondary'}`}>
-              {label}
-            </button>
-          ))}
-        </div>
-
         {/* Selectors */}
         <div className="relative mt-5 grid grid-cols-1 min-[560px]:grid-cols-2 sm:flex sm:flex-wrap items-end justify-center gap-3 sm:gap-5">
+          <PlatformFilter
+            value={platform}
+            onChange={value => { setPlatform(value); setSelectedAgency('all'); handleSelectAccount(''); }}
+          />
+
           <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px] z-50">
             <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Período</label>
             <PeriodSelector selectedPeriod={currentPeriod} onPeriodChange={handlePeriodChange} className="w-full" />

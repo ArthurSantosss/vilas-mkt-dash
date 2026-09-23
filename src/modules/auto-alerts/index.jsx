@@ -244,8 +244,8 @@ export default function AutoAlerts() {
   }, [balances]);
 
   const severityConfig = {
-    danger: { bg: 'bg-red-500/10', border: 'border-red-500/20', text: 'text-red-400', badge: 'bg-red-500/15 text-red-400 border-red-500/30' },
-    warning: { bg: 'bg-amber-500/10', border: 'border-amber-500/20', text: 'text-amber-400', badge: 'bg-amber-500/15 text-amber-400 border-amber-500/30' },
+    danger: { bg: 'bg-danger/10', border: 'border-danger/20', text: 'text-danger', badge: 'bg-danger/15 text-danger border-danger/30' },
+    warning: { bg: 'bg-warning/10', border: 'border-warning/20', text: 'text-warning', badge: 'bg-warning/15 text-warning border-warning/30' },
     info: { bg: 'bg-primary/10', border: 'border-primary/20', text: 'text-primary-light', badge: 'bg-primary/15 text-primary-light border-primary/30' },
   };
 
@@ -272,29 +272,26 @@ export default function AutoAlerts() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-text-primary tracking-tight">Avisos Automáticos</h1>
-              <p className="text-sm text-text-secondary">
-                Monitoramento em tempo real na tela e lembretes enviados pelo servidor
-              </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
             {/* Summary badges */}
             {visibleAlerts.length === 0 ? (
-              <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-success/10 text-success border border-success/20">
                 <CheckCircle2 size={14} />
                 Tudo certo
               </span>
             ) : (
               <>
                 {dangerCount > 0 && (
-                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-red-500/10 text-red-400 border border-red-500/20">
+                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-danger/10 text-danger border border-danger/20">
                     <AlertTriangle size={14} />
                     {dangerCount} crítico{dangerCount !== 1 ? 's' : ''}
                   </span>
                 )}
                 {warningCount > 0 && (
-                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-warning/10 text-warning border border-warning/20">
                     <AlertTriangle size={14} />
                     {warningCount} aviso{warningCount !== 1 ? 's' : ''}
                   </span>
@@ -339,7 +336,7 @@ export default function AutoAlerts() {
               {/* Balance Critical */}
               <div className="space-y-2">
                 <label className="flex items-center gap-2 text-xs font-medium text-text-secondary">
-                  <div className="w-2 h-2 rounded-full bg-red-400" />
+                  <div className="w-2 h-2 rounded-full bg-danger" />
                   Saldo Crítico (R$)
                 </label>
                 <p className="text-[11px] text-text-secondary/60">Alerta vermelho quando saldo abaixo</p>
@@ -359,7 +356,7 @@ export default function AutoAlerts() {
               {/* Balance Warning */}
               <div className="space-y-2">
                 <label className="flex items-center gap-2 text-xs font-medium text-text-secondary">
-                  <div className="w-2 h-2 rounded-full bg-amber-400" />
+                  <div className="w-2 h-2 rounded-full bg-warning" />
                   Saldo em Atenção (R$)
                 </label>
                 <p className="text-[11px] text-text-secondary/60">Alerta amarelo quando saldo abaixo</p>
@@ -411,7 +408,7 @@ export default function AutoAlerts() {
       <div className="bg-surface/50 rounded-2xl border border-border/50 overflow-hidden">
         <div className="px-6 py-4 border-b border-border/50 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <AlertTriangle size={18} className="text-amber-400" />
+            <AlertTriangle size={18} className="text-warning" />
             <div>
               <h2 className="text-lg font-bold text-text-primary">Alertas Ativos</h2>
               <p className="text-xs text-text-secondary">
@@ -434,7 +431,7 @@ export default function AutoAlerts() {
 
         {visibleAlerts.length === 0 ? (
           <div className="px-6 py-12 text-center">
-            <CheckCircle2 size={32} className="mx-auto text-emerald-400/30 mb-3" />
+            <CheckCircle2 size={32} className="mx-auto text-success/30 mb-3" />
             <p className="text-sm text-text-secondary">Todas as contas estão dentro dos limites</p>
             <p className="text-xs text-text-secondary/60 mt-1">
               {accounts.length} contas monitoradas automaticamente
@@ -495,8 +492,8 @@ export default function AutoAlerts() {
         <div className="p-6 space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {[
-              { icon: CreditCard, color: 'text-red-400', bg: 'bg-red-500/10', label: 'Erro no Pagamento', desc: 'Conta com cartão desativada ou saldo zerado em Pix/Boleto' },
-              { icon: DollarSign, color: 'text-amber-400', bg: 'bg-amber-500/10', label: 'Saldo Baixo', desc: `Crítico < R$ ${thresholds.balance_critical} • Atenção < R$ ${thresholds.balance_warning}` },
+              { icon: CreditCard, color: 'text-danger', bg: 'bg-danger/10', label: 'Erro no Pagamento', desc: 'Conta com cartão desativada ou saldo zerado em Pix/Boleto' },
+              { icon: DollarSign, color: 'text-warning', bg: 'bg-warning/10', label: 'Saldo Baixo', desc: `Crítico < R$ ${thresholds.balance_critical} • Atenção < R$ ${thresholds.balance_warning}` },
               { icon: TrendingDown, color: 'text-orange-400', bg: 'bg-orange-500/10', label: 'Custo Alto por Lead', desc: `Alerta quando CPL > R$ ${thresholds.high_cost_lead}` },
               { icon: MessageSquareX, color: 'text-purple-400', bg: 'bg-purple-500/10', label: 'Sem Mensagens', desc: 'Conta gastando sem gerar nenhuma conversa' },
             ].map(check => (

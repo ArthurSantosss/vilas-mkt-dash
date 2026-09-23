@@ -26,6 +26,7 @@ function normalizeGoogleAccount(rawAccount, overview) {
     clientName: rawAccount.name,
     accountId: rawAccount.accountId,
     currency: rawAccount.currency || 'BRL',
+    timeZone: rawAccount.timeZone || 'UTC',
     loginCustomerId: rawAccount.loginCustomerId || null,
     connectionId: rawAccount.connectionId,
     userEmail: rawAccount.userEmail || null,
@@ -177,6 +178,8 @@ export function GoogleAdsProvider({ children }) {
         accountId: rawAccount?.accountId || null,
         name: rawAccount?.name || rawAccount?.accountId || 'Conta desconhecida',
         message: query.error.message,
+        userEmail: rawAccount?.userEmail,
+        diagnostic: query.error.diagnostic,
       };
     })
     .filter(Boolean), [accountQueries, rawAccounts]);
@@ -208,6 +211,8 @@ export function GoogleAdsProvider({ children }) {
   }, [queryClient]);
 
   const value = useMemo(() => ({
+    rawAccounts,
+    connectionWarnings: connection?.warnings || [],
     accounts,
     activeAccounts,
     campaigns,
@@ -221,6 +226,8 @@ export function GoogleAdsProvider({ children }) {
     disabledAccounts,
     refreshData,
   }), [
+    rawAccounts,
+    connection,
     accounts,
     activeAccounts,
     campaigns,

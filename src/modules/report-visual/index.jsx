@@ -1,5 +1,9 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { supabase } from '../../services/supabase';
+import { useGoogleAds } from '../../contexts/GoogleAdsContext';
+import PlatformFilter from '../../shared/components/PlatformFilter';
+import { fetchGoogleReport } from '../../services/googleReports';
+import { googleVisualData } from '../../shared/utils/googleReports';
 import { useMetaAds } from '../../contexts/MetaAdsContext';
 import { useAgency } from '../../contexts/AgencyContext';
 import { formatCurrency } from '../../shared/utils/format';
@@ -650,13 +654,20 @@ function getExportCacheKey(reportData) {
 }
 
 export default function ReportVisual() {
-  const { accounts, campaigns, selectedPeriod, setSelectedPeriod } = useMetaAds();
+  const [platform, setPlatform] = useState('meta');
+  return <ReportVisualContent key={platform} platform={platform} onPlatformChange={setPlatform} />;
+}
+function ReportVisualContent({ platform, onPlatformChange }) {
+  const meta = useMetaAds();
+  const google = useGoogleAds();
+  const { accounts, campaigns, selectedPeriod, setSelectedPeriod } = platform === 'google' ? google : meta;
+  const objectiveOptions = platform === 'google' ? [{ id: 'conversions', label: 'Conversões' }, { id: 'clicks', label: 'Cliques' }] : OBJECTIVE_OPTIONS;
   const { agencies, accountAgencies } = useAgency();
   const [selectedAccount, setSelectedAccount] = useState('');
 
   const [clientLogos, setClientLogos] = useState(() => readClientLogos());
-  const [selectedAgency, setSelectedAgency] = useState('');
-  const [selectedObjective, setSelectedObjective] = useState('messages');
+  const [selectedAgency, setSelectedAgency] = useState('__all__');
+  const [selectedObjective, setSelectedObjective] = useState(platform === 'google' ? 'conversions' : 'messages');
   const [selectedCampaignIds, setSelectedCampaignIds] = useState([]);
   const [reportData, setReportData] = useState(null);
   const [generating, setGenerating] = useState(false);
@@ -826,6 +837,24 @@ export default function ReportVisual() {
     exportCacheRef.current = { key: '', dataUrl: '', blob: null };
 
     try {
+      if (platform === 'google') {
+        const account = accounts.find(a => a.id === selectedAccount);
+        const { current, previous, period } = await fetchGoogleReport(account, selectedPeriod, selectedCampaignIds);
+        const clientLogoUrl = clientLogos[selectedAccount] || clientLogos[account.accountId] || null;
+        const [agencyLogoB64, clientLogoB64] = await Promise.all([
+          toBase64FromSources(logoSources),
+          clientLogoUrl ? Promise.race([toRasterizedPngDataUrl(clientLogoUrl), new Promise(resolve => setTimeout(() => resolve(null), 15000))]) : null,
+        ]);
+        setReportData({
+          ...googleVisualData(current, previous, account, period, selectedObjective),
+          scopeLabel: hasCampaignFilter ? campaignScopeLabel : 'Conta inteira',
+          selectedCampaignNames: selectedCampaigns.map(c => c.name),
+          filteredCampaignCount: selectedCampaignIds.length,
+          agencyLogoB64, metaLogoB64: null, clientLogoUrl,
+          clientLogoExportSrc: getSafeExportLogoSrc(clientLogoUrl, clientLogoB64),
+        });
+        return;
+      }
       const prevPeriod = getPreviousPeriodRange(selectedPeriod);
       let spend = 0;
       let impressions = 0;
@@ -1020,6 +1049,7 @@ export default function ReportVisual() {
       setGenerating(false);
     }
   }, [
+    platform,
     selectedAccount,
     selectedPeriod,
     selectedObjective,
@@ -1265,12 +1295,12 @@ export default function ReportVisual() {
           </div>
           <div>
             <h1 className="text-xl lg:text-2xl font-bold text-text-primary tracking-tight">Relatório Visual</h1>
-            <p className="text-xs lg:text-sm text-text-secondary">Gere relatórios visuais em PNG para envio ao cliente</p>
           </div>
         </div>
 
         {/* Selectors */}
         <div className="relative mt-5 grid grid-cols-1 min-[560px]:grid-cols-2 sm:flex sm:flex-wrap items-end justify-center gap-3 sm:gap-5">
+          <PlatformFilter value={platform} onChange={onPlatformChange} />
           <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px] z-50">
             <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Período</label>
             <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} className="w-full" align="left" />
@@ -1288,6 +1318,7 @@ export default function ReportVisual() {
                 }}
                 className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
               >
+                <option value="__all__">Todas as agências</option>
                 {allowedAgencyList.map(ag => <option key={ag} value={ag}>{ag}</option>)}
               </select>
             </div>
@@ -1318,7 +1349,7 @@ export default function ReportVisual() {
               onChange={e => setSelectedObjective(e.target.value)}
               className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
             >
-              {OBJECTIVE_OPTIONS.map(opt => (
+              {objectiveOptions.map(opt => (
                 <option key={opt.id} value={opt.id}>{opt.label}</option>
               ))}
             </select>
@@ -1447,7 +1478,7 @@ export default function ReportVisual() {
             </button>
           )}
 
-          {selectedAccount && (
+          {selectedAccount && platform === 'meta' && (
             <button
               onClick={() => setShareModalOpen(true)}
               className="group relative inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl font-semibold text-sm

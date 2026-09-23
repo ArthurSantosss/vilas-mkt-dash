@@ -32,7 +32,9 @@ async function postGoogleAdsProxy(body) {
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload.error || `Falha no Google Ads (${response.status})`);
+    const error = new Error(payload.error || `Falha no Google Ads (${response.status})`);
+    error.diagnostic = payload.diagnostic;
+    throw error;
   }
 
   return payload;
@@ -176,8 +178,12 @@ export async function disconnectGoogleAds(connectionId) {
   applySnapshot(payload);
 }
 
-export async function fetchGoogleAdsAccountOverview(customerId, period, _loginCustomerId, connectionId) {
-  return postGoogleAdsProxy({ action: 'get-account-overview', customerId, period, connectionId });
+export async function fetchGoogleAdsAccountOverview(customerId, period, _loginCustomerId, connectionId, campaignIds = []) {
+  return postGoogleAdsProxy({ action: 'get-account-overview', customerId, period, connectionId, campaignIds });
+}
+
+export async function fetchGoogleAccountSpending(customerId, connectionId) {
+  return postGoogleAdsProxy({ action: 'get-account-spending', customerId, connectionId });
 }
 
 export async function updateGoogleCampaignStatus(customerId, campaignId, status, connectionId) {

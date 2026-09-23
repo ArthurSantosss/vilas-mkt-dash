@@ -8,6 +8,7 @@ import {
 } from '../services/metaApi';
 import { calculateMetaBalance } from '../shared/utils/metaBalance';
 import { getStoredMetaToken, META_TOKEN_INVALIDATED_EVENT } from '../services/metaTokenGuard';
+import { getMetaTokens, META_TOKENS_UPDATED_EVENT } from '../services/metaTokensApi';
 
 const MetaAdsContext = createContext();
 
@@ -17,6 +18,26 @@ export function MetaAdsProvider({ children }) {
   const [hasToken, setHasToken] = useState(
     () => !!getStoredMetaToken()
   );
+  // Tokens de usuário do sistema das BMs vivem no servidor: sem eles aqui, a expiração
+  // do token de perfil desligaria o painel inteiro, inclusive as contas que não dependem dele.
+  const [hasBmTokens, setHasBmTokens] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const sync = () => {
+      getMetaTokens()
+        .then((connections) => { if (!cancelled) setHasBmTokens(connections.length > 0); })
+        .catch(() => { if (!cancelled) setHasBmTokens(false); });
+    };
+    sync();
+    window.addEventListener(META_TOKENS_UPDATED_EVENT, sync);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(META_TOKENS_UPDATED_EVENT, sync);
+    };
+  }, []);
+
+  const canQueryMeta = hasToken || hasBmTokens;
 
   // Escutar mudanças no token (login oauth)
   useEffect(() => {
@@ -56,7 +77,7 @@ export function MetaAdsProvider({ children }) {
   } = useQuery({
     queryKey: ['meta', 'adAccounts'],
     queryFn: fetchAdAccounts,
-    enabled: hasToken,
+    enabled: canQueryMeta,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -89,7 +110,7 @@ export function MetaAdsProvider({ children }) {
 
         return { account, insights, dailyInsights, accountCampaigns, monthInsights };
       },
-      enabled: hasToken,
+      enabled: canQueryMeta,
       staleTime: 2 * 60 * 1000, // Dados expiram em 2 min
     })),
   });
@@ -220,9 +241,10 @@ export function MetaAdsProvider({ children }) {
     return { accounts: accs, balances: bals, campaigns: camps };
   }, [accountQueries, activeRawAccounts]);
 
-  const loading = !hasToken ? false : loadingAccounts || accountQueries.some(q => q.isLoading);
-  const error = !hasToken ? 'Nenhum token Meta encontrado. Conecte sua conta em Configurações.' : 
-                accountsError?.message || accountQueries.find(q => q.error)?.error?.message || null;
+  const loading = !canQueryMeta ? false : loadingAccounts || accountQueries.some(q => q.isLoading);
+  const error = !canQueryMeta
+    ? 'Nenhum token Meta encontrado. Conecte sua conta ou cadastre um token de BM em Configurações.'
+    : accountsError?.message || accountQueries.find(q => q.error)?.error?.message || null;
 
   const activeAccounts = useMemo(() => accounts.filter(a => a.status === 'active'), [accounts]);
 

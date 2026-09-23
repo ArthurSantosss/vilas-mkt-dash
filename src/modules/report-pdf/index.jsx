@@ -169,7 +169,6 @@ export default function ReportPdf() {
           </div>
           <div>
             <h1 className="text-xl lg:text-2xl font-bold text-text-primary tracking-tight">Relatório em PDF</h1>
-            <p className="text-xs lg:text-sm text-text-secondary">Documento completo e apresentável para enviar ao cliente</p>
           </div>
         </div>
 

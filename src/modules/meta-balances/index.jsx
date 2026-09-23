@@ -119,7 +119,7 @@ function useLocalStorageMap(key, defaultValue = {}) {
   return [map, update, merge];
 }
 
-function MonthlyGoalInput({ accountId, goals, setGoal }) {
+function MonthlyGoalInput({ accountId, goals, setGoal, currency }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const inputRef = useRef(null);
@@ -161,7 +161,7 @@ function MonthlyGoalInput({ accountId, goals, setGoal }) {
       onClick={() => { setDraft(String(value)); setEditing(true); }}
       className="flex items-center gap-1 text-text-primary hover:text-primary transition-colors"
     >
-      <span className="text-sm">{value > 0 ? formatCurrency(value) : 'Definir'}</span>
+      <span className="text-sm">{value > 0 ? formatCurrency(value, currency) : 'Definir'}</span>
       <Edit3 size={10} className="text-text-secondary" />
     </button>
   );
@@ -178,7 +178,7 @@ function SpendProgressBar({ balance, monthlyGoal }) {
 
   if (!monthlyGoal || monthlyGoal <= 0) {
     return (
-      <div className="text-xs text-text-secondary italic">Defina uma meta mensal para ver o progresso</div>
+      <div className="text-xs text-text-secondary"><p>Gasto no mês: {formatCurrency(currentMonthSpend, balance.currency)}</p><p className="italic mt-1">Defina uma meta mensal para ver o progresso</p></div>
     );
   }
 
@@ -195,26 +195,26 @@ function SpendProgressBar({ balance, monthlyGoal }) {
   return (
     <div>
       <div className="flex justify-between text-xs text-text-secondary mb-1">
-        <span>Gasto no mês: {formatCurrency(currentMonthSpend)}</span>
+        <span>Gasto no mês: {formatCurrency(currentMonthSpend, balance.currency)}</span>
         <span>{pct.toFixed(0)}%</span>
       </div>
       <div className="h-2 bg-border rounded-full overflow-hidden">
         <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
       </div>
       <div className="flex justify-between text-[10px] text-text-secondary mt-0.5">
-        <span>Meta: {formatCurrency(monthlyGoal)}</span>
+        <span>Meta: {formatCurrency(monthlyGoal, balance.currency)}</span>
         {isOver && <span className="text-danger font-medium">Projeção: {projectedPct.toFixed(0)}%</span>}
       </div>
       <div className="flex justify-between text-[10px] mt-0.5">
         <span className="text-text-secondary">Restante</span>
         <span className={`font-medium ${remainingToGoal > 0 ? 'text-text-primary' : 'text-success'}`}>
-          {remainingToGoal > 0 ? formatCurrency(remainingToGoal) : 'Meta atingida'}
+          {remainingToGoal > 0 ? formatCurrency(remainingToGoal, balance.currency) : 'Meta atingida'}
         </span>
       </div>
       <div className="flex justify-between text-[10px] mt-1">
         <span className="text-text-secondary">Recomendado por dia</span>
         <span className={`font-medium ${recommendedDailySpend > 0 ? 'text-primary-light' : 'text-success'}`}>
-          {recommendedDailySpend > 0 ? formatCurrency(recommendedDailySpend) : 'Meta atingida'}
+          {recommendedDailySpend > 0 ? formatCurrency(recommendedDailySpend, balance.currency) : 'Meta atingida'}
         </span>
       </div>
     </div>
@@ -248,7 +248,7 @@ function BalanceCard({
   const isPaymentOverdue = daysUntilPayment !== null && daysUntilPayment < 0;
   const hasReliableBalance = balance.hasReliableBalance !== false;
   const shouldShowAvailableBalance = hasReliableBalance && !isCreditCard;
-  const shouldShowUnavailableBalance = !hasReliableBalance && !isCreditCard;
+  const shouldShowUnavailableBalance = !hasReliableBalance;
 
   const pct = shouldShowAvailableBalance && balance.creditLimit > 0 ? (balance.currentBalance / balance.creditLimit) * 100 : 0;
   const isUrgent = shouldShowAvailableBalance && balance.estimatedDaysRemaining > 0 && balance.estimatedDaysRemaining < 2;
@@ -284,7 +284,7 @@ function BalanceCard({
       </div>
 
       {/* Balance summary */}
-      {isCreditCard ? (
+      {isCreditCard && hasReliableBalance ? (
         <div className="mb-3 rounded-lg border border-border/60 bg-bg/20 px-3 py-2">
           <div className="flex justify-between gap-3 text-sm">
             <span className="text-text-secondary">Saldo disponível</span>
@@ -328,7 +328,7 @@ function BalanceCard({
       <div className="space-y-2 text-sm">
         <div className="flex justify-between items-center">
           <span className="text-text-secondary flex items-center gap-1"><Target size={12} /> Meta mensal</span>
-          <MonthlyGoalInput accountId={balance.accountId} goals={goals} setGoal={setGoal} />
+          <MonthlyGoalInput accountId={balance.accountId} goals={goals} setGoal={setGoal} currency={balance.currency} />
         </div>
       </div>
 
@@ -441,27 +441,46 @@ function BalanceCard({
 }
 
 export default function MetaBalances() {
-  const { balances, loading, error, refreshData } = useMetaAds();
+  const data = useMetaAds();
+  return <BalancesView data={data} platform="meta" />;
+}
+
+const GOOGLE_SORT_OPTIONS = [
+  { value: 'spend_desc', label: 'Maior gasto mensal' },
+  { value: 'name', label: 'Nome (A-Z)' },
+];
+
+/**
+ * Com `onPlatformChange`, a tela vira a aba unificada "Saldos" e ganha o seletor
+ * de plataforma no cabeçalho. Sem ele, segue como visão de uma plataforma só.
+ */
+export function BalancesView({ data, platform = 'meta', onPlatformChange }) {
+  const { balances, loading, error, refreshData } = data;
+  const isGoogle = platform === 'google';
+  const unified = typeof onPlatformChange === 'function';
+  const heading = unified ? 'Saldos' : (isGoogle ? 'Saldos Google Ads' : 'Saldos Meta Ads');
+  const preferenceKey = key => isGoogle ? `google_${key}` : key;
   const { agencies, accountAgencies } = useAgency();
-  const [sortBy, setSortBy] = useState('balance_asc');
+  const [sortBy, setSortBy] = useState(isGoogle ? 'spend_desc' : 'balance_asc');
   const [selectedAgency, setSelectedAgency] = useState('all');
-  const [goals, setGoal] = useLocalStorageMap('account_monthly_goals');
-  const [paymentMethods, setPaymentMethodLocal] = useLocalStorageMap('account_payment_methods');
+  const [goals, setGoal] = useLocalStorageMap(preferenceKey('account_monthly_goals'));
+  const [paymentMethods, setPaymentMethodLocal] = useLocalStorageMap(preferenceKey('account_payment_methods'));
 
   // Sync payment method to Supabase for cron usage
   const setPaymentMethod = useCallback((accountId, value) => {
     setPaymentMethodLocal(accountId, value);
+    if (isGoogle) return;
     supabase.from('account_configs')
       .upsert({ account_id: accountId, payment_method: value, updated_at: new Date().toISOString() }, { onConflict: 'account_id' })
       .then(({ error: err }) => { if (err) console.warn('[MetaBalances] Erro ao sincronizar payment method:', err); });
-  }, [setPaymentMethodLocal]);
-  const [lastPayments, setLastPayment, mergeLastPayments] = useLocalStorageMap('account_last_payments');
-  const [lastPaymentSources, setLastPaymentSource, mergeLastPaymentSources] = useLocalStorageMap('account_last_payment_sources');
-  const [billingFrequencies, setBillingFrequency] = useLocalStorageMap('account_billing_frequencies');
-  const [balanceSnapshots, , mergeBalanceSnapshots] = useLocalStorageMap('meta_balance_snapshots');
+  }, [setPaymentMethodLocal, isGoogle]);
+  const [lastPayments, setLastPayment, mergeLastPayments] = useLocalStorageMap(preferenceKey('account_last_payments'));
+  const [lastPaymentSources, setLastPaymentSource, mergeLastPaymentSources] = useLocalStorageMap(preferenceKey('account_last_payment_sources'));
+  const [billingFrequencies, setBillingFrequency] = useLocalStorageMap(preferenceKey('account_billing_frequencies'));
+  const [balanceSnapshots, , mergeBalanceSnapshots] = useLocalStorageMap(preferenceKey('meta_balance_snapshots'));
 
   useEffect(() => {
-    if (balances.length === 0) return;
+    if (isGoogle || balances.length === 0) return;
 
     const nextSnapshotUpdates = {};
     const nextPaymentUpdates = {};
@@ -500,7 +519,12 @@ export default function MetaBalances() {
       mergeLastPayments(nextPaymentUpdates);
       mergeLastPaymentSources(nextSourceUpdates);
     }
-  }, [balances, balanceSnapshots, paymentMethods, lastPayments, lastPaymentSources, mergeBalanceSnapshots, mergeLastPayments, mergeLastPaymentSources]);
+  }, [isGoogle, balances, balanceSnapshots, paymentMethods, lastPayments, lastPaymentSources, mergeBalanceSnapshots, mergeLastPayments, mergeLastPaymentSources]);
+
+  const availableSortOptions = isGoogle ? GOOGLE_SORT_OPTIONS : sortOptions;
+  const effectiveSortBy = availableSortOptions.some(option => option.value === sortBy)
+    ? sortBy
+    : availableSortOptions[0].value;
 
   const sorted = useMemo(() => {
     const filtered = selectedAgency === 'all'
@@ -511,14 +535,15 @@ export default function MetaBalances() {
       if (a.hasReliableBalance === b.hasReliableBalance) return 0;
       return a.hasReliableBalance ? -1 : 1;
     };
-    switch (sortBy) {
+    switch (effectiveSortBy) {
       case 'balance_asc': return list.sort((a, b) => compareReliableFirst(a, b) || a.currentBalance - b.currentBalance);
       case 'balance_desc': return list.sort((a, b) => compareReliableFirst(a, b) || b.currentBalance - a.currentBalance);
       case 'name': return list.sort((a, b) => a.clientName.localeCompare(b.clientName));
+      case 'spend_desc': return list.sort((a, b) => b.spentThisMonth - a.spentThisMonth);
       case 'days': return list.sort((a, b) => compareReliableFirst(a, b) || a.estimatedDaysRemaining - b.estimatedDaysRemaining);
       default: return list;
     }
-  }, [balances, sortBy, selectedAgency, accountAgencies]);
+  }, [balances, effectiveSortBy, selectedAgency, accountAgencies]);
 
   if (loading) {
     return (
@@ -529,8 +554,7 @@ export default function MetaBalances() {
               <Wallet size={24} className="text-meta" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-text-primary">Saldos Meta Ads</h1>
-              <p className="text-sm text-text-secondary">Saldo e crédito de todas as contas</p>
+              <h1 className="text-2xl font-bold text-text-primary">{heading}</h1>
             </div>
           </div>
           <button
@@ -548,7 +572,7 @@ export default function MetaBalances() {
     );
   }
 
-  if (error) {
+  if (error && balances.length === 0) {
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
@@ -557,8 +581,7 @@ export default function MetaBalances() {
               <Wallet size={24} className="text-meta" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-text-primary">Saldos Meta Ads</h1>
-              <p className="text-sm text-text-secondary">Saldo e crédito de todas as contas</p>
+              <h1 className="text-2xl font-bold text-text-primary">{heading}</h1>
             </div>
           </div>
           <button
@@ -591,13 +614,26 @@ export default function MetaBalances() {
               <Wallet size={22} className="text-white" />
             </div>
             <div>
-              <h1 className="text-xl lg:text-2xl font-bold text-text-primary tracking-tight">Saldos Meta Ads</h1>
-              <p className="text-xs lg:text-sm text-text-secondary">Saldo e crédito de todas as contas</p>
+              <h1 className="text-xl lg:text-2xl font-bold text-text-primary tracking-tight">{heading}</h1>
             </div>
           </div>
 
           {/* Filters & Actions */}
           <div className="grid grid-cols-1 min-[560px]:grid-cols-2 sm:flex sm:flex-wrap items-end gap-3 lg:gap-4 w-full lg:w-auto">
+            {unified && (
+              <div className="flex flex-col gap-1 col-span-1 sm:w-[160px]">
+                <label className="text-[10px] font-medium text-text-secondary uppercase tracking-wider">Plataforma</label>
+                <select
+                  value={platform}
+                  onChange={e => onPlatformChange(e.target.value)}
+                  className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-lg px-3 py-2 text-xs font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer h-[36px]"
+                >
+                  <option value="meta">Meta Ads</option>
+                  <option value="google">Google Ads</option>
+                </select>
+              </div>
+            )}
+
             {agencies.length > 0 && (
               <div className="flex flex-col gap-1 col-span-1 sm:w-[180px]">
                 <label className="text-[10px] font-medium text-text-secondary uppercase tracking-wider">Agência</label>
@@ -617,11 +653,11 @@ export default function MetaBalances() {
             <div className="flex flex-col gap-1 col-span-1 sm:w-[200px]">
               <label className="text-[10px] font-medium text-text-secondary flex items-center gap-1 uppercase tracking-wider"><ArrowUpDown size={10} /> Ordenar</label>
               <select
-                value={sortBy}
+                value={effectiveSortBy}
                 onChange={e => setSortBy(e.target.value)}
                 className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-lg px-3 py-2 text-xs font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer h-[36px]"
               >
-                {sortOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                {availableSortOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </div>
 
@@ -642,6 +678,9 @@ export default function MetaBalances() {
         </div>
       </div>
 
+      {isGoogle && <p className="text-sm text-text-secondary">Os gastos são atualizados pelo Google. O saldo pré-pago não está disponível nesta integração; metas e datas de pagamento são definidas por você.</p>}
+      {error && <p role="alert" className="text-sm text-warning">{error}</p>}
+      {!balances.length && <p className="text-sm text-text-secondary">Nenhuma conta disponível. Confira as conexões em Configurações.</p>}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {sorted.map(balance => (
           <BalanceCard

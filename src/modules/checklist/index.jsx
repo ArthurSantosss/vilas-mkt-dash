@@ -61,7 +61,6 @@ export default function Checklist() {
           </div>
           <div>
             <h1 className="text-xl lg:text-2xl font-bold text-text-primary tracking-tight">Checklist</h1>
-            <p className="text-xs lg:text-sm text-text-secondary">Tarefas personalizadas por agência</p>
           </div>
         </div>
         {totalCount > 0 && (

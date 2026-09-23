@@ -1,4 +1,8 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import { useGoogleAds } from '../../contexts/GoogleAdsContext';
+import PlatformFilter from '../../shared/components/PlatformFilter';
+import { fetchGoogleReport } from '../../services/googleReports';
+import { googleTextData } from '../../shared/utils/googleReports';
 import { useMetaAds } from '../../contexts/MetaAdsContext';
 import { useAgency } from '../../contexts/AgencyContext';
 import { FileText, Copy, Check, Loader2, Sparkles } from 'lucide-react';
@@ -25,10 +29,16 @@ function formatPeriodLabel(period) {
 }
 
 export default function ReportText() {
-  const { accounts, selectedPeriod, setSelectedPeriod } = useMetaAds();
+  const [platform, setPlatform] = useState('meta');
+  return <ReportTextContent key={platform} platform={platform} onPlatformChange={setPlatform} />;
+}
+function ReportTextContent({ platform, onPlatformChange }) {
+  const meta = useMetaAds();
+  const google = useGoogleAds();
+  const { accounts, selectedPeriod, setSelectedPeriod } = platform === 'google' ? google : meta;
   const { agencies, accountAgencies } = useAgency();
   const [selectedAccount, setSelectedAccount] = useState('');
-  const [selectedAgency, setSelectedAgency] = useState('');
+  const [selectedAgency, setSelectedAgency] = useState('__all__');
   const [reportMode, setReportMode] = useState('all'); // 'all' | 'per_campaign'
   const [reportData, setReportData] = useState(null);
   const [generating, setGenerating] = useState(false);
@@ -82,6 +92,22 @@ export default function ReportText() {
     setReportData(null);
 
     try {
+      if (platform === 'google') {
+        const account = accounts.find(a => a.id === selectedAccount);
+        const { current, previous, period } = await fetchGoogleReport(account, selectedPeriod);
+        const make = (metrics, name) => googleTextData(metrics, name, period, account.currency);
+        if (reportMode === 'per_campaign') {
+          const prev = new Map(previous.campaigns.map(c => [c.id, c]));
+          const reports = current.campaigns.filter(c => c.metrics.spend > 0).map(c => ({
+            ...make(c.metrics, normalizeCampaignName(c.name)),
+            _prev: prev.has(c.id) ? make(prev.get(c.id).metrics, c.name) : null,
+          }));
+          setReportData(reports.length ? { mode: 'per_campaign', reports, agencyName: signatureAgency } : { error: 'Nenhuma campanha com investimento no período.' });
+        } else {
+          setReportData({ mode: 'all', report: make(current.totals, account.clientName), prevReport: make(previous.totals, ''), agencyName: signatureAgency });
+        }
+        return;
+      }
       const periodDates = formatPeriodLabel(selectedPeriod);
       const agencyName = signatureAgency;
 
@@ -145,7 +171,7 @@ export default function ReportText() {
     } finally {
       setGenerating(false);
     }
-  }, [selectedAccount, selectedPeriod, reportMode, accounts, normalizeCampaignName, signatureAgency]);
+  }, [platform, selectedAccount, selectedPeriod, reportMode, accounts, normalizeCampaignName, signatureAgency]);
 
   // Build report text(s)
   const reportTexts = useMemo(() => {
@@ -207,12 +233,13 @@ export default function ReportText() {
           </div>
           <div>
             <h1 className="text-xl lg:text-2xl font-bold text-text-primary tracking-tight">Relatório em Texto</h1>
-            <p className="text-xs lg:text-sm text-text-secondary">Gere relatórios prontos para envio ao cliente</p>
           </div>
         </div>
 
         {/* Selectors */}
         <div className="relative mt-5 grid grid-cols-1 min-[560px]:grid-cols-2 sm:flex sm:flex-wrap items-end justify-center gap-3 sm:gap-5">
+          <PlatformFilter value={platform} onChange={onPlatformChange} />
+
           <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px] z-50">
             <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Período</label>
             <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} className="w-full" align="left" />
@@ -226,6 +253,7 @@ export default function ReportText() {
                 onChange={e => { setSelectedAgency(e.target.value); setSelectedAccount(''); }}
                 className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
               >
+                <option value="__all__">Todas as agências</option>
                 {allowedAgencyList.map(ag => <option key={ag} value={ag}>{ag}</option>)}
               </select>
             </div>

@@ -6,36 +6,55 @@ import {
 } from './metaTokenGuard';
 
 const IS_DEV = import.meta.env.DEV;
-// Em produção, todas as requisições passam pelo proxy backend (token Meta fica server-side).
-// Em desenvolvimento, vai direto à Graph API (sem precisar de servidor Vercel local).
-const USE_PROXY = !IS_DEV;
+// Tudo passa pelo proxy: é ele que escolhe entre os tokens de usuário do sistema das BMs
+// (guardados no servidor) e o token do perfil. Em dev o plugin do Vite serve /api.
 const PROXY_PATH = '/api/meta-proxy';
-const META_DIRECT_BASE = 'https://graph.facebook.com/v22.0';
 
 const getAccessToken = () => {
-    return getStoredMetaToken();
+    const stored = getStoredMetaToken();
+    if (stored) return stored;
+    if (IS_DEV) {
+        const fallbackToken = import.meta.env.VITE_META_ACCESS_TOKEN;
+        if (fallbackToken && fallbackToken.trim()) return fallbackToken.trim();
+    }
+    return null;
 };
 
-// Constrói URL + headers de acordo com modo (proxy ou direto). Token OAuth do user
-// vai via header `x-meta-token` em modo proxy, para não vazar em logs do servidor.
+// O proxy precisa saber a qual conta de anúncio a requisição pertence para escolher o
+// token certo. Caminhos como /{campanha}/adsets não carregam essa informação, então
+// registramos o vínculo conforme a árvore é percorrida a partir da conta.
+const entityAccountIndex = new Map();
+const ENTITY_INDEX_LIMIT = 5000;
+
+function rememberEntityAccount(entityId, accountId) {
+    if (!entityId || !accountId) return;
+    if (entityAccountIndex.size >= ENTITY_INDEX_LIMIT) entityAccountIndex.clear();
+    entityAccountIndex.set(String(entityId), accountId);
+}
+
+function rememberEntities(entities, accountId) {
+    if (!accountId) return;
+    for (const entity of entities || []) rememberEntityAccount(entity?.id, accountId);
+}
+
+function resolveAccountForPath(path) {
+    const nodeId = String(path || '').split('/')[1];
+    if (!nodeId) return null;
+    if (/^act_\d+$/.test(nodeId)) return nodeId;
+    return entityAccountIndex.get(nodeId) || null;
+}
+
+// Constrói URL + headers. O token do perfil vai via header `x-meta-token`, para não
+// vazar em logs do servidor; `x-meta-account` diz ao proxy qual token da BM usar.
 function buildRequest(path, params = {}, method = 'GET', body = null, { skipClientToken = false } = {}) {
     const token = skipClientToken ? null : getAccessToken();
     const headers = { Accept: 'application/json' };
-    let url;
 
-    if (USE_PROXY) {
-        url = new URL(window.location.origin + PROXY_PATH);
-        url.searchParams.append('path', path);
-        if (token) headers['x-meta-token'] = token;
-    } else {
-        url = new URL(`${META_DIRECT_BASE}${path}`);
-        if (token) {
-            url.searchParams.append('access_token', token);
-        } else if (IS_DEV) {
-            const fallbackToken = import.meta.env.VITE_META_ACCESS_TOKEN;
-            if (fallbackToken) url.searchParams.append('access_token', fallbackToken);
-        }
-    }
+    const url = new URL(window.location.origin + PROXY_PATH);
+    url.searchParams.append('path', path);
+    if (token) headers['x-meta-token'] = token;
+    const accountHint = resolveAccountForPath(path);
+    if (accountHint) headers['x-meta-account'] = accountHint;
 
     for (const [key, value] of Object.entries(params)) {
         if (value !== undefined && value !== null) {
@@ -85,7 +104,7 @@ async function runRequest(path, params, method, body) {
     let tokenWasInvalidated = false;
     if (!attempt.response.ok && isInvalidMetaTokenError(attempt.data)) {
         tokenWasInvalidated = clearInvalidMetaToken();
-        if (tokenWasInvalidated && USE_PROXY) {
+        if (tokenWasInvalidated) {
             try {
                 attempt = await executeRequest(path, params, method, body, { skipClientToken: true });
             } catch {
@@ -127,6 +146,13 @@ export const fetchAdAccounts = async () => {
     });
     return data.data || [];
 };
+
+/** Vínculo conta → campanha já conhecido pelo painel, para o proxy escolher o token. */
+export function registerCampaignAccounts(campaigns) {
+    for (const campaign of campaigns || []) {
+        rememberEntityAccount(campaign?.id, campaign?.accountId);
+    }
+}
 
 /**
  * Formata um período no formato do date_preset da Meta ou retorna undefined
@@ -207,7 +233,9 @@ export const fetchCampaignsWithInsights = async (accountId, period = '7d') => {
         limit: 50
     });
 
-    return data.data || [];
+    const campaigns = data.data || [];
+    rememberEntities(campaigns, accountId);
+    return campaigns;
 };
 
 /**
@@ -246,7 +274,9 @@ export const fetchAdSetsForCampaign = async (campaignId, period = '7d') => {
         limit: 50
     });
 
-    return data.data || [];
+    const adSets = data.data || [];
+    rememberEntities(adSets, resolveAccountForPath(`/${campaignId}`));
+    return adSets;
 };
 
 /**
@@ -291,7 +321,9 @@ export const fetchAdsForAdSet = async (adSetId, period = '7d') => {
         limit: 50
     });
 
-    return data.data || [];
+    const ads = data.data || [];
+    rememberEntities(ads, resolveAccountForPath(`/${adSetId}`));
+    return ads;
 };
 
 /**
@@ -315,7 +347,9 @@ export const fetchAdsWithInsights = async (accountId, period = '7d', limit = 60)
         limit,
     });
 
-    return data.data || [];
+    const ads = data.data || [];
+    rememberEntities(ads, accountId);
+    return ads;
 };
 
 /**
