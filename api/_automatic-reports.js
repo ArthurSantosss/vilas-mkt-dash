@@ -4,6 +4,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { getSupabase } from './_supabase-server.js';
 import { getConfiguredAuth } from './_auth.js';
 import {
+  collectRegistryAccounts, normalizeAdAccountId, readMetaConnectionsSafe, resolveConnectionForAccount,
+} from './_meta-tokens.js';
+import {
   AUTOMATIC_REPORTS_KEY, REPORT_RULES,
   matchReportAgency, validateReportPeriod,
 } from '../src/shared/constants/automaticReports.js';
@@ -56,9 +59,12 @@ export function getReportWebhook(ruleId, env = process.env) {
 }
 
 export async function getReportSetup(store, env = process.env) {
-  const token = env.META_ACCESS_TOKEN || env.VITE_META_ACCESS_TOKEN || await store.get('meta_provider_token');
+  const [savedToken, connections] = await Promise.all([
+    store.get('meta_provider_token'), readMetaConnectionsSafe(),
+  ]);
+  const token = env.META_ACCESS_TOKEN || env.VITE_META_ACCESS_TOKEN || savedToken;
   return {
-    meta: Boolean(token),
+    meta: Boolean(token || connections.length),
     slack: Object.fromEntries(REPORT_RULES.map(rule => [rule.id, Boolean(getReportWebhook(rule.id, env))])),
   };
 }
@@ -74,12 +80,21 @@ async function metaRows(path, params, token, fetchImpl) {
     const res = await fetchImpl(url, {
       headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(20000),
     });
+    const payload = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const error = new Error(`Falha ao consultar dados do Meta Ads (HTTP ${res.status}).`);
+      const metaError = payload?.error || {};
+      const code = Number(metaError.code);
+      const subcode = Number(metaError.error_subcode);
+      const message = String(metaError.message || '');
+      const retryableCodes = new Set([3, 10, 102, 190, 200, 803]);
+      const retryableSubcodes = new Set([458, 459, 460, 463, 464, 466, 467, 492]);
+      const error = new Error(message || `Falha ao consultar dados do Meta Ads (HTTP ${res.status}).`);
       error.status = res.status;
+      error.metaCode = code || null;
+      error.retryableToken = res.status === 401 || retryableCodes.has(code) || retryableSubcodes.has(subcode)
+        || /access token|session|permission|unsupported get request/i.test(message);
       throw error;
     }
-    const payload = await res.json();
     if (payload.error || !Array.isArray(payload.data)) throw new Error('Resposta inválida do Meta Ads.');
     rows.push(...payload.data);
     if (!payload.paging?.next) return rows;
@@ -90,24 +105,53 @@ async function metaRows(path, params, token, fetchImpl) {
   throw new Error('A consulta excedeu o limite de páginas do Meta Ads.');
 }
 
-export async function collectAgencyReports(rule, { store, period, clientToken, now = new Date(), fetchImpl = fetch, env = process.env }) {
-  const selectedPeriod = validateReportPeriod(period, now);
-  const savedToken = await store.get('meta_provider_token');
-  const tokens = [...new Set([clientToken, savedToken, env.META_ACCESS_TOKEN, env.VITE_META_ACCESS_TOKEN]
-    .filter(token => typeof token === 'string' && token.trim()).map(token => token.trim()))];
-  if (!tokens.length) throw new Error('Conecte sua conta Meta em Configurações para gerar os relatórios.');
-  let accounts;
-  let token;
-  for (const candidate of tokens) {
+async function metaRowsWithFallback(path, params, tokens, fetchImpl) {
+  let lastError;
+  for (const token of tokens) {
     try {
-      accounts = await metaRows('me/adaccounts', { fields: 'id,account_id,name' }, candidate, fetchImpl);
-      token = candidate;
-      break;
+      return { rows: await metaRows(path, params, token, fetchImpl), token };
     } catch (error) {
-      if (error.status !== 401) throw error;
+      lastError = error;
+      if (!error.retryableToken) throw error;
     }
   }
-  if (!token) throw new Error('A conexão com a Meta expirou. Reconecte sua conta em Configurações e tente novamente.');
+  const error = new Error('Nenhuma conexão Meta válida conseguiu acessar esta conta. Reconecte a conta ou revise os tokens das Business Managers em Configurações.');
+  error.cause = lastError;
+  throw error;
+}
+
+export async function collectAgencyReports(rule, {
+  store, period, clientToken, connections: suppliedConnections,
+  now = new Date(), fetchImpl = fetch, env = process.env,
+}) {
+  const selectedPeriod = validateReportPeriod(period, now);
+  const [savedToken, connections] = await Promise.all([
+    store.get('meta_provider_token'),
+    suppliedConnections === undefined ? readMetaConnectionsSafe() : suppliedConnections,
+  ]);
+  const profileTokens = [...new Set([clientToken, savedToken, env.META_ACCESS_TOKEN, env.VITE_META_ACCESS_TOKEN]
+    .filter(token => typeof token === 'string' && token.trim()).map(token => token.trim()))];
+  const registryTokens = connections.map(connection => connection.token).filter(Boolean);
+  if (!profileTokens.length && !registryTokens.length) throw new Error('Conecte sua conta Meta em Configurações para gerar os relatórios.');
+
+  const accountMap = new Map();
+  for (const account of collectRegistryAccounts(connections)) {
+    const id = normalizeAdAccountId(account.id);
+    if (id) accountMap.set(id, { ...account, id });
+  }
+  for (const candidate of profileTokens) {
+    try {
+      const accounts = await metaRows('me/adaccounts', { fields: 'id,account_id,name' }, candidate, fetchImpl);
+      for (const account of accounts) {
+        const id = normalizeAdAccountId(account.id || account.account_id);
+        if (id && !accountMap.has(id)) accountMap.set(id, { ...account, id });
+      }
+    } catch (error) {
+      if (!error.retryableToken) throw error;
+    }
+  }
+  if (!accountMap.size) throw new Error('Nenhuma conexão Meta válida encontrou contas de anúncio. Reconecte sua conta ou revise os tokens em Configurações.');
+  const accounts = [...accountMap.values()];
   const agencyMap = await store.agencies();
   const selected = accounts.filter(account => matchReportAgency(agencyMap[account.id] || agencyMap[account.account_id]) === rule.id)
     .sort((a, b) => a.id.localeCompare(b.id));
@@ -121,9 +165,13 @@ export async function collectAgencyReports(rule, { store, period, clientToken, n
   const errors = [];
   for (let i = 0; i < selected.length; i += 4) {
     const batch = await Promise.allSettled(selected.slice(i, i + 4).map(async account => {
-      const current = (await metaRows(`${account.id}/insights`, {
+      const matchedConnection = resolveConnectionForAccount(connections, account.id);
+      const accountTokens = [...new Set([
+        matchedConnection?.token, ...profileTokens, ...registryTokens,
+      ].filter(Boolean))];
+      const current = (await metaRowsWithFallback(`${account.id}/insights`, {
         fields: FIELDS, time_range: JSON.stringify(selectedPeriod),
-      }, token, fetchImpl))[0];
+      }, accountTokens, fetchImpl)).rows[0];
       if (!current || !(Number(current.spend) > 0 || Number(current.impressions) > 0)) return null;
       const metrics = buildReportFromInsights(current, account.name, {
         start: dateLabel(selectedPeriod.since), end: dateLabel(selectedPeriod.until),
@@ -131,18 +179,18 @@ export async function collectAgencyReports(rule, { store, period, clientToken, n
       let text = '';
       let daily = [];
       if (rule.format === 'text' || rule.includeText) {
-        const previous = (await metaRows(`${account.id}/insights`, {
+        const previous = (await metaRowsWithFallback(`${account.id}/insights`, {
           fields: FIELDS, time_range: JSON.stringify(previousPeriod),
-        }, token, fetchImpl))[0];
+        }, accountTokens, fetchImpl)).rows[0];
         text = buildReportText(metrics, {
           showCampaignName: false, agencyName: rule.label,
           prev: previous ? buildReportFromInsights(previous, account.name, {}) : null,
         });
       }
       if (rule.format === 'visual') {
-        const rows = await metaRows(`${account.id}/insights`, {
+        const rows = (await metaRowsWithFallback(`${account.id}/insights`, {
           fields: 'spend,actions,impressions,inline_link_clicks', time_range: JSON.stringify(selectedPeriod), time_increment: 1,
-        }, token, fetchImpl);
+        }, accountTokens, fetchImpl)).rows;
         const byDate = new Map(rows.map(row => [row.date_start, row]));
         daily = Array.from({ length: days }, (_, day) => {
           const date = new Date(`${selectedPeriod.since}T12:00:00Z`);

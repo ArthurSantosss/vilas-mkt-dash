@@ -39,7 +39,7 @@ function networkFixture({ failureId, slackStatus = 200, slackTimeout = false, va
     }
     assert.equal(url.hostname, 'graph.facebook.com');
     if (!validTokens.includes(options.headers.Authorization.replace(/^Bearer /, ''))) {
-      return { ok: false, status: 401 };
+      return { ok: false, status: 401, json: async () => ({ error: { code: 190, message: 'Invalid OAuth access token.' } }) };
     }
     assert.equal(url.searchParams.has('access_token'), false);
     reads.push(url);
@@ -107,6 +107,39 @@ test('usa o token conectado no painel e recupera quando um token expira', async 
     store: storeFixture(), period, now: monday,
     clientToken: 'expired-token', env: { META_ACCESS_TOKEN: 'also-expired' }, fetchImpl: fallback.fetchImpl,
   }), /Reconecte sua conta/);
+});
+
+test('relatórios usam primeiro o token da Business Manager que cobre cada conta', async () => {
+  const reads = [];
+  const fetchImpl = async (input, options) => {
+    const url = new URL(input);
+    const token = options.headers.Authorization.replace(/^Bearer /, '');
+    reads.push({ path: url.pathname, token });
+    if (url.pathname.endsWith('/me/adaccounts')) {
+      return { ok: false, status: 400, json: async () => ({ error: { code: 190, message: 'Token expirado' } }) };
+    }
+    if (token !== 'bm-vilas-token') {
+      return { ok: false, status: 401, json: async () => ({ error: { code: 190, message: 'Token inválido' } }) };
+    }
+    const { since } = JSON.parse(url.searchParams.get('time_range'));
+    return { ok: true, status: 200, json: async () => ({ data: [{
+      spend: '120', impressions: '5000', reach: '3500', inline_link_clicks: '80', ctr: '1.6', cpm: '24', frequency: '1.4',
+      actions: [{ action_type: 'onsite_conversion.messaging_conversation_started_7d', value: '12' }], date_start: since,
+    }] }) };
+  };
+  const connections = [{
+    token: 'bm-vilas-token',
+    accounts: [{ id: 'act_4', account_id: '4', name: 'Cliente Vilas' }],
+  }];
+  const result = await collectAgencyReports(rules.vilasmkt, {
+    store: storeFixture(), period, now: monday, clientToken: 'expired-profile-token',
+    connections, env: {}, fetchImpl,
+  });
+  assert.equal(result.reports.length, 1);
+  assert.equal(result.reports[0].accountId, 'act_4');
+  const insightReads = reads.filter(item => item.path.includes('/act_4/insights'));
+  assert.ok(insightReads.length >= 3);
+  assert.equal(insightReads.every(item => item.token === 'bm-vilas-token'), true);
 });
 
 test('prévia filtra agência e veiculação, inclusive conta pausada, sem enviar ao Slack', async () => {
