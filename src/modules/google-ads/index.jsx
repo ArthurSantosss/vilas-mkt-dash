@@ -5,6 +5,7 @@ import { dispatchLocalStorageMapUpdated } from '../../shared/utils/cloudBackup';
 import { formatCurrency, formatNumber, formatPercent, getCostColor } from '../../shared/utils/format';
 import { formatGoogleCustomerId, updateGoogleCampaignStatus, updateGoogleCampaignBudget } from '../../services/googleAdsApi';
 import GoogleAdsIssues from '../../shared/components/GoogleAdsIssues';
+import GoogleAccountFunds from '../../shared/components/GoogleAccountFunds';
 import PeriodSelector from '../../shared/components/PeriodSelector';
 import { GoogleAdsIcon } from '../../shared/components/PlatformIcons';
 
@@ -17,6 +18,7 @@ const ALL_COLUMNS = [
   { key: 'name', label: 'Conta / Cliente', align: 'left' },
   { key: 'budget', label: 'Orçamento', align: 'center' },
   { key: 'spend', label: 'Gasto', align: 'right' },
+  { key: 'balance', label: 'Saldo / fundos', align: 'right' },
   { key: 'impressions', label: 'Impressões', align: 'right' },
   { key: 'clicks', label: 'Cliques', align: 'right' },
   { key: 'cpc', label: 'CPC', align: 'right' },
@@ -28,6 +30,15 @@ const ALL_COLUMNS = [
 ];
 const DEFAULT_COLUMN_ORDER = ALL_COLUMNS.map(c => c.key);
 const COLUMN_ORDER_KEY = 'google_ads_column_order';
+
+function readGoogleGoals() {
+  try {
+    const value = JSON.parse(localStorage.getItem('google_account_monthly_goals'));
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
 
 function normalizeColumnOrder(savedOrder) {
   const validKeys = new Set(DEFAULT_COLUMN_ORDER);
@@ -204,6 +215,16 @@ function formatChannelType(channelType) {
 export default function GoogleAdsOverview() {
   const { accounts, campaigns, selectedPeriod, setSelectedPeriod, loading, error, accountErrors, connectionWarnings, hasConnection, refreshData } = useGoogleAds();
   const { agencies, accountAgencies } = useAgency();
+  const [monthlyGoals, setMonthlyGoals] = useState(() => readGoogleGoals());
+  useEffect(() => {
+    const sync = () => setMonthlyGoals(readGoogleGoals());
+    window.addEventListener('storage', sync);
+    window.addEventListener('local-storage-map-updated', sync);
+    return () => {
+      window.removeEventListener('storage', sync);
+      window.removeEventListener('local-storage-map-updated', sync);
+    };
+  }, []);
   const [selectedAccount, setSelectedAccount] = useState('all');
   const [selectedAgency, setSelectedAgency] = useState('all');
   const [expandedAccount, setExpandedAccount] = useState(null);
@@ -647,6 +668,10 @@ export default function GoogleAdsOverview() {
 
                   <div className="mt-4 grid grid-cols-2 gap-2.5">
                     <div className="rounded-xl border border-border/50 bg-bg/40 p-3">
+                      <span className="block text-[10px] uppercase tracking-wider text-text-secondary mb-2">Saldo / fundos</span>
+                      <GoogleAccountFunds account={account} monthlyGoal={monthlyGoals[account.accountId]} />
+                    </div>
+                    <div className="rounded-xl border border-border/50 bg-bg/40 p-3">
                       <span className="block text-[10px] uppercase tracking-wider text-text-secondary">Gasto</span>
                       <span className="mt-1 block text-base font-bold text-text-primary">{formatCurrency(account.metrics?.spend || 0)}</span>
                     </div>
@@ -815,6 +840,11 @@ export default function GoogleAdsOverview() {
                               )}
                             </td>
                           );
+                        }
+                        if (col.key === 'balance') {
+                          return <td key={col.key} className="px-3 py-3 text-right">
+                            <GoogleAccountFunds account={account} monthlyGoal={monthlyGoals[account.accountId]} />
+                          </td>;
                         }
                         const cellClass = col.key === 'spend' ? 'text-right text-text-primary' :
                           col.key === 'conversions' ? 'text-right font-medium text-text-primary' :
