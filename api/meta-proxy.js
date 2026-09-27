@@ -147,30 +147,66 @@ export default async function handler(req, res) {
             const merged = new Map();
             const errors = [];
 
-            for (const account of collectRegistryAccounts(connections)) {
+            // Ordem de consulta do saldo: token da BM ao vivo → token de perfil ao vivo.
+            // A lista salva no registro é uma foto antiga: nunca serve de fonte de saldo.
+            const failedConnections = [];
+            const liveResults = await Promise.all(connections.map(async (connection) => {
+                try {
+                    const { response, data } = await callMeta(connection.token);
+                    if (response.ok) return data.data || [];
+                    errors.push(`${connection.label || 'Token de BM'}: ${data?.error?.message || 'falha ao ler as contas'}`);
+                } catch (err) {
+                    errors.push(`${connection.label || 'Token de BM'}: ${err.message}`);
+                }
+                failedConnections.push(connection);
+                return null;
+            }));
+            const liveRegistryAccounts = collectRegistryAccounts(connections.map((connection, index) => ({
+                ...connection,
+                accounts: liveResults[index] || [],
+            })));
+            for (const account of liveRegistryAccounts) {
                 const id = normalizeAdAccountId(account.id);
                 if (id) merged.set(id, account);
             }
 
             const fallbackToken = clientToken || serverToken;
+            let profileError = fallbackToken ? null : 'Nenhum token de perfil disponível.';
             if (fallbackToken) {
                 try {
                     const { response, data } = await callMeta(fallbackToken);
                     if (response.ok) {
                         for (const account of data.data || []) {
                             const id = normalizeAdAccountId(account.id);
-                            // Dados do registro têm prioridade: vieram do token que de fato consulta a conta.
                             if (id && !merged.has(id)) merged.set(id, account);
                         }
                     } else {
                         if (isInvalidTokenError(data) && fallbackToken === clientToken) {
                             res.setHeader('x-meta-token-invalid', '1');
                         }
-                        errors.push(data?.error?.message || 'Falha ao ler as contas do token de perfil.');
+                        profileError = data?.error?.message || 'Falha ao ler as contas do token de perfil.';
+                        errors.push(profileError);
                     }
                 } catch (err) {
+                    profileError = err.message;
                     errors.push(err.message);
                 }
+            }
+
+            // Conta que nenhum token conseguiu consultar agora: segue listada, sem nenhum
+            // dado financeiro, e marcada com o erro para a tela não inventar saldo.
+            for (const account of collectRegistryAccounts(failedConnections)) {
+                const id = normalizeAdAccountId(account.id);
+                if (!id || merged.has(id)) continue;
+                merged.set(id, {
+                    id,
+                    account_id: account.account_id || id.replace('act_', ''),
+                    name: account.name,
+                    currency: account.currency,
+                    // Só para a conta continuar listada; nenhum valor financeiro vem da foto.
+                    account_status: account.account_status,
+                    balance_error: `Não foi possível consultar o saldo: token da BM recusado${profileError ? ' e token de perfil indisponível' : ' e o token de perfil não acessa esta conta'}.`,
+                });
             }
 
             res.setHeader('Cache-Control', 'no-store');

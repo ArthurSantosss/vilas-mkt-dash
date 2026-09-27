@@ -8,6 +8,7 @@ import {
   resolveConnectionForAccount,
 } from '../api/_meta-tokens.js';
 import { setAuthCookie } from '../api/_auth.js';
+import { calculateMetaBalance } from '../src/shared/utils/metaBalance.js';
 
 const owner = 'owner@example.test';
 
@@ -106,6 +107,9 @@ test('collectRegistryAccounts não repete conta presente em duas BMs', () => {
 test('/me/adaccounts une as contas das BMs com as que só o token de perfil enxerga', async t => {
   const cookie = setup(t);
   registryMock(t, [connection('vilas', 'BM Vilas', 'token-vilas', ['act_111'])], async (url) => {
+    if (url.searchParams.get('access_token') === 'token-vilas') {
+      return response({ data: [{ id: 'act_111', name: 'Conta act_111' }] });
+    }
     assert.equal(url.searchParams.get('access_token'), 'perfil');
     // A GDM não aceita token de usuário do sistema: essa conta só existe no perfil.
     return response({ data: [{ id: 'act_999', name: 'Conta GDM' }, { id: 'act_111', name: 'Duplicada' }] });
@@ -115,8 +119,71 @@ test('/me/adaccounts une as contas das BMs com as que só o token de perfil enxe
 
   assert.equal(res.statusCode, 200);
   assert.deepEqual(res.body.data.map(a => a.id).sort(), ['act_111', 'act_999']);
-  // A conta coberta pela BM mantém os dados vindos do registro.
+  // A conta coberta pela BM mantém os dados vindos do token da BM.
   assert.equal(res.body.data.find(a => a.id === 'act_111').name, 'Conta act_111');
+});
+
+test('/me/adaccounts traz saldo ao vivo do token da BM, não a foto salva no registro', async t => {
+  const cookie = setup(t);
+  const stale = connection('vilas', 'BM Vilas', 'token-vilas', ['act_111']);
+  stale.accounts[0].funding_source_details = { display_string: 'Saldo disponível (R$1.000,00 BRL)' };
+  registryMock(t, [stale], async (url) => {
+    if (url.searchParams.get('access_token') === 'token-vilas') {
+      return response({ data: [{ id: 'act_111', name: 'Conta act_111', funding_source_details: { display_string: 'Saldo disponível (R$500,00 BRL)' } }] });
+    }
+    return response({ data: [] });
+  });
+
+  const res = await callProxy({ path: '/me/adaccounts' }, cookie, { 'x-meta-token': 'perfil' });
+
+  assert.equal(res.body.data[0].funding_source_details.display_string, 'Saldo disponível (R$500,00 BRL)');
+  assert.equal(res.body.warnings, undefined);
+});
+
+test('/me/adaccounts cai para o token de perfil quando o token da BM falha', async t => {
+  const cookie = setup(t);
+  const stale = connection('vilas', 'BM Vilas', 'token-vilas', ['act_111']);
+  stale.accounts[0].balance = '99999';
+  registryMock(t, [stale], async (url) => {
+    if (url.searchParams.get('access_token') === 'token-vilas') {
+      return response({ error: { message: 'Token expirado', code: 190 } }, 400);
+    }
+    return response({ data: [{ id: 'act_111', name: 'Conta act_111', balance: '-5000' }] });
+  });
+
+  const res = await callProxy({ path: '/me/adaccounts' }, cookie, { 'x-meta-token': 'perfil' });
+
+  assert.equal(res.body.data[0].balance, '-5000');
+  assert.equal(res.body.data[0].balance_error, undefined);
+  assert.match(res.body.warnings[0], /BM Vilas: Token expirado/);
+});
+
+test('/me/adaccounts nunca devolve saldo da foto quando nenhum token consulta a conta', async t => {
+  const cookie = setup(t);
+  const stale = connection('vilas', 'BM Vilas', 'token-vilas', ['act_111'], {});
+  Object.assign(stale.accounts[0], {
+    account_status: 1, balance: '99999', amount_spent: '1', spend_cap: '2',
+    funding_source_details: { display_string: 'Saldo disponível (R$1.000,00 BRL)' },
+  });
+  registryMock(t, [stale], async (url) => {
+    if (url.searchParams.get('access_token') === 'token-vilas') {
+      return response({ error: { message: 'Token expirado', code: 190 } }, 400);
+    }
+    return response({ data: [] });
+  });
+
+  const res = await callProxy({ path: '/me/adaccounts' }, cookie, { 'x-meta-token': 'perfil' });
+  const [account] = res.body.data;
+
+  assert.equal(account.id, 'act_111');
+  assert.equal(account.account_status, 1);
+  assert.match(account.balance_error, /Não foi possível consultar o saldo/);
+  for (const field of ['balance', 'amount_spent', 'spend_cap', 'funding_source_details', 'is_prepay_account']) {
+    assert.equal(account[field], undefined, field);
+  }
+  assert.deepEqual(calculateMetaBalance(account).hasReliableBalance, false);
+  assert.equal(calculateMetaBalance(account).currentBalance, 0);
+  assert.equal(calculateMetaBalance(account).balanceSource, 'error');
 });
 
 test('conta coberta pela BM usa o token da BM; conta de fora cai no token de perfil', async t => {

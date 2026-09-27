@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { googleReportPeriods, googleTextData, googleVisualData } from '../src/shared/utils/googleReports.js';
 import { buildReportText } from '../src/shared/utils/reportText.js';
 import { googleAdsError } from '../api/_google-ads-errors.js';
-import { fetchAccountSpending, fetchAccountOverview } from '../api/google-ads-proxy.js';
+import { fetchAccountSpending, fetchAccountOverview, pickActiveAccountBudget } from '../api/google-ads-proxy.js';
 
 test('relatório Google usa datas no fuso da conta e comparação do mesmo tamanho', () => {
   const result = googleReportPeriods('month', 'America/Bahia', new Date('2026-03-01T01:00:00Z'));
@@ -40,15 +40,46 @@ test('saldos Google usa gastos reais e deixa saldo em caixa indisponível', asyn
   t.after(() => { globalThis.fetch = old; });
   const queries = [];
   globalThis.fetch = async (_url, options) => {
-    queries.push(JSON.parse(options.body).query);
-    return new Response(JSON.stringify({ results: [{ metrics: { costMicros: '70000000' } }] }));
+    const { query } = JSON.parse(options.body);
+    queries.push(query);
+    return new Response(JSON.stringify({ results: query.includes('FROM account_budget') ? [] : [{ metrics: { costMicros: '70000000' } }] }));
   };
   const data = await fetchAccountSpending('token', { accountId: '1234567890', timeZone: 'UTC', currency: 'BRL' });
   assert.equal(data.spentThisMonth, 70);
   assert.equal(data.avgDailySpend7d, 10);
   assert.equal(data.currentBalance, null);
   assert.equal(data.hasReliableBalance, false);
-  assert.ok(queries.every(q => q.includes('FROM customer')));
+  assert.equal(queries.filter(q => q.includes('FROM customer')).length, 2);
+});
+
+test('saldos Google usa o orçamento de conta aprovado quando existe', async t => {
+  const old = globalThis.fetch;
+  t.after(() => { globalThis.fetch = old; });
+  globalThis.fetch = async (_url, options) => {
+    const { query } = JSON.parse(options.body);
+    const results = query.includes('FROM account_budget')
+      ? [{ accountBudget: { adjustedSpendingLimitMicros: '1000000000', amountServedMicros: '250000000', approvedStartDateTime: '2020-01-01 00:00:00' } }]
+      : [{ metrics: { costMicros: '70000000' } }];
+    return new Response(JSON.stringify({ results }));
+  };
+  const data = await fetchAccountSpending('token', { accountId: '1234567890', timeZone: 'UTC', currency: 'BRL' });
+  assert.equal(data.currentBalance, 750);
+  assert.equal(data.creditLimit, 1000);
+  assert.equal(data.hasReliableBalance, true);
+  assert.equal(data.balanceSource, 'account_budget');
+  assert.equal(data.estimatedDaysRemaining, 75);
+});
+
+test('orçamento de conta ignora limite infinito, expirado e futuro', () => {
+  const now = '2026-09-27 12:00:00';
+  assert.equal(pickActiveAccountBudget([{ accountBudget: { adjustedSpendingLimitType: 'INFINITE', amountServedMicros: '1' } }], now), null);
+  assert.equal(pickActiveAccountBudget([{ accountBudget: { adjustedSpendingLimitMicros: '1', approvedEndDateTime: '2026-09-01 00:00:00' } }], now), null);
+  assert.equal(pickActiveAccountBudget([{ accountBudget: { adjustedSpendingLimitMicros: '1', approvedStartDateTime: '2026-10-01 00:00:00' } }], now), null);
+  const budget = pickActiveAccountBudget([
+    { accountBudget: { adjustedSpendingLimitMicros: '500000000', amountServedMicros: '600000000', approvedStartDateTime: '2026-01-01 00:00:00' } },
+    { accountBudget: { adjustedSpendingLimitMicros: '900000000', amountServedMicros: '0', approvedStartDateTime: '2025-01-01 00:00:00', approvedEndDateTime: '2026-01-01 00:00:00' } },
+  ], now);
+  assert.deepEqual(budget, { limit: 500, served: 600, remaining: 0 });
 });
 
 test('filtro de campanhas vale para totais e série diária e rejeita injeção', async t => {

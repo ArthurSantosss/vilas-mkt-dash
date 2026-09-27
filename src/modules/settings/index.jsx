@@ -812,6 +812,7 @@ export default function Settings() {
                           )}
                           {account.currency && <><span>•</span><span>{account.currency}</span></>}
                           {!isCreditCard && metaBalance.hasReliableBalance && <><span>•</span><span>Disponível: {metaBalance.currentBalance.toLocaleString('pt-BR', { style: 'currency', currency: account.currency || 'BRL' })}</span></>}
+                          {metaBalance.balanceError && <><span>•</span><span className="text-danger" title={metaBalance.balanceError}>Saldo: erro ao consultar</span></>}
                           {!isCreditCard && !metaBalance.hasReliableBalance && metaBalance.amountDue > 0 && <><span>•</span><span>Em cobrança: {metaBalance.amountDue.toLocaleString('pt-BR', { style: 'currency', currency: account.currency || 'BRL' })}</span></>}
                         </div>
                       </div>

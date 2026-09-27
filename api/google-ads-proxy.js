@@ -645,14 +645,55 @@ async function readWithAuthorizedRoutes(body, read) {
   throw lastError;
 }
 
+const ACCOUNT_BUDGET_QUERY = `SELECT account_budget.status, account_budget.adjusted_spending_limit_micros,
+  account_budget.adjusted_spending_limit_type, account_budget.amount_served_micros,
+  account_budget.approved_start_date_time, account_budget.approved_end_date_time
+  FROM account_budget WHERE account_budget.status = 'APPROVED'`;
+
+// Only accounts with an approved finite account budget (monthly invoicing / spending limit) expose
+// how much is left. Prepaid funds (Pix/boleto) are not available in the Google Ads API.
+export function pickActiveAccountBudget(results, nowText) {
+  const active = results.map(row => row.accountBudget).filter(budget => budget
+    && budget.adjustedSpendingLimitMicros !== undefined
+    && (!budget.approvedStartDateTime || budget.approvedStartDateTime <= nowText)
+    && (!budget.approvedEndDateTime || budget.approvedEndDateTime > nowText));
+  active.sort((a, b) => String(b.approvedStartDateTime || '').localeCompare(String(a.approvedStartDateTime || '')));
+  const budget = active[0];
+  if (!budget) return null;
+  const limit = microsToUnit(budget.adjustedSpendingLimitMicros);
+  const served = microsToUnit(budget.amountServedMicros);
+  return { limit, served, remaining: Math.max(0, limit - served) };
+}
+
+function accountNowText(timeZone, now = new Date()) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: timeZone || 'UTC', hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    .formatToParts(now).map(p => [p.type, p.value]));
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+}
+
 export async function fetchAccountSpending(accessToken, account) {
-  const totals = await Promise.all(['month', '7d'].map(period => googleAdsSearch(account.accountId,
-    `SELECT metrics.cost_micros FROM customer WHERE ${normalizePeriodToDateFilter(period, account.timeZone)}`,
-    accessToken, account.loginCustomerId)));
+  const [monthTotals, weekTotals, budgetPayload] = await Promise.all([
+    ...['month', '7d'].map(period => googleAdsSearch(account.accountId,
+      `SELECT metrics.cost_micros FROM customer WHERE ${normalizePeriodToDateFilter(period, account.timeZone)}`,
+      accessToken, account.loginCustomerId)),
+    googleAdsSearch(account.accountId, ACCOUNT_BUDGET_QUERY, accessToken, account.loginCustomerId).catch(error => {
+      console.warn('[google-ads] account_budget indisponível:', error.message);
+      return { results: [] };
+    }),
+  ]);
   const amount = payload => payload.results.reduce((sum, row) => sum + microsToUnit(row.metrics?.costMicros), 0);
-  return { spentThisMonth: amount(totals[0]), avgDailySpend7d: amount(totals[1]) / 7,
-    currentBalance: null, creditLimit: null, estimatedDaysRemaining: null, amountDue: null,
-    hasReliableBalance: false, balanceSource: 'unavailable', currency: account.currency, timeZone: account.timeZone };
+  const avgDailySpend7d = amount(weekTotals) / 7;
+  const budget = pickActiveAccountBudget(budgetPayload.results || [], accountNowText(account.timeZone));
+  const base = { spentThisMonth: amount(monthTotals), avgDailySpend7d, amountDue: null,
+    currency: account.currency, timeZone: account.timeZone };
+  if (!budget) {
+    return { ...base, currentBalance: null, creditLimit: null, estimatedDaysRemaining: null,
+      hasReliableBalance: false, balanceSource: 'unavailable' };
+  }
+  return { ...base, currentBalance: budget.remaining, creditLimit: budget.limit,
+    estimatedDaysRemaining: avgDailySpend7d > 0 ? budget.remaining / avgDailySpend7d : 0,
+    hasReliableBalance: true, balanceSource: 'account_budget' };
 }
 
 async function handleAccountSpending(_req, res, body) {

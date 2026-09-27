@@ -23,6 +23,15 @@ function parsePrepayBalanceFromString(str) {
 }
 
 export function calculateMetaBalance(account = {}) {
+  // Nenhum token conseguiu consultar a conta agora: sem saldo, só o erro.
+  if (account.balance_error) {
+    return {
+      rawBillingBalance: 0, spendCap: 0, amountSpent: 0, prepaidAvailable: 0, amountDue: 0,
+      remainingSpendCap: 0, currentBalance: 0, hasReliableBalance: false, balanceSource: 'error',
+      isPrepayAccount: false, fundingDisplayString: '', balanceError: account.balance_error,
+    };
+  }
+
   const rawBillingBalance = parseMoneyFromCents(account.balance);
   const spendCap = parseMoneyFromCents(account.spend_cap);
   const amountSpent = parseMoneyFromCents(account.amount_spent);

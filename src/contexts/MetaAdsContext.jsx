@@ -129,8 +129,20 @@ export function MetaAdsProvider({ children }) {
     const bals = [];
     let camps = [];
 
-    accountQueries.forEach(query => {
-      if (!query.data) return; // Se não carregou ainda, pula
+    const errorBalance = (account, message) => ({
+      platform: 'meta', accountId: account.id, clientName: account.name,
+      currentBalance: 0, creditLimit: 0, amountSpent: 0, rawBillingBalance: 0, amountDue: 0,
+      spentToday: 0, spentThisMonth: 0, avgDailySpend7d: 0, estimatedDaysRemaining: 0,
+      hasReliableBalance: false, balanceSource: 'error', isPrepayAccount: false, balanceError: message,
+    });
+
+    accountQueries.forEach((query, index) => {
+      if (!query.data) {
+        // Consulta da conta falhou: mostra o erro no lugar do saldo, nunca um número.
+        const account = activeRawAccounts[index];
+        if (query.error && account) bals.push(errorBalance(account, `Erro ao consultar a conta: ${query.error.message}`));
+        return; // Se não carregou ainda, pula
+      }
 
       const { account, insights, dailyInsights, accountCampaigns, monthInsights } = query.data;
       const actId = account.id;
@@ -198,7 +210,7 @@ export function MetaAdsProvider({ children }) {
 
       const {
         rawBillingBalance, spendCap, amountSpent, amountDue,
-        currentBalance, hasReliableBalance, balanceSource, isPrepayAccount,
+        currentBalance, hasReliableBalance, balanceSource, isPrepayAccount, balanceError,
       } = calculateMetaBalance(account);
 
       const todayMetric = dailyInsights.length > 0 ? dailyInsights[dailyInsights.length - 1] : null;
@@ -226,6 +238,7 @@ export function MetaAdsProvider({ children }) {
         hasReliableBalance,
         balanceSource,
         isPrepayAccount,
+        balanceError,
       };
 
       accs.push(formattedAccount);
@@ -238,8 +251,14 @@ export function MetaAdsProvider({ children }) {
     accs.sort((a, b) => accountOrder.indexOf(a.id) - accountOrder.indexOf(b.id));
     bals.sort((a, b) => accountOrder.indexOf(a.accountId) - accountOrder.indexOf(b.accountId));
 
-    return { accounts: accs, balances: bals, campaigns: camps };
-  }, [accountQueries, activeRawAccounts]);
+    // Falha ao recarregar a lista de contas: o React Query mantém a resposta anterior,
+    // então nenhum saldo dela pode ser exibido como atual.
+    const safeBals = accountsError
+      ? bals.map(balance => errorBalance({ id: balance.accountId, name: balance.clientName }, `Erro ao consultar o saldo: ${accountsError.message}`))
+      : bals;
+
+    return { accounts: accs, balances: safeBals, campaigns: camps };
+  }, [accountQueries, activeRawAccounts, accountsError]);
 
   const loading = !canQueryMeta ? false : loadingAccounts || accountQueries.some(q => q.isLoading);
   const error = !canQueryMeta

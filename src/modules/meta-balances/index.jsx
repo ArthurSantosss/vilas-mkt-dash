@@ -236,7 +236,9 @@ function BalanceCard({
 }) {
   const monthlyGoal = goals[balance.accountId] || 0;
   const selectedPaymentMethod = getAccountPaymentMethod(paymentMethods, balance.accountId) || 'credit_card';
-  const isCreditCard = isCreditCardPaymentMethod(selectedPaymentMethod);
+  // Orçamento de conta Google é faturado, então o restante aparece mesmo com cartão selecionado.
+  const isAccountBudget = balance.balanceSource === 'account_budget';
+  const isCreditCard = !isAccountBudget && isCreditCardPaymentMethod(selectedPaymentMethod);
   const ignoresLastPayment = isCreditCard;
   const lastPaymentDate = lastPayments[balance.accountId] || '';
   const lastPaymentSource = lastPaymentSources[balance.accountId] || (lastPaymentDate ? 'manual' : '');
@@ -294,7 +296,9 @@ function BalanceCard({
       ) : shouldShowAvailableBalance ? (
         <div className="mb-3">
           <div className="flex justify-between text-sm mb-1">
-            <span className="text-text-secondary">Saldo</span>
+            <span className="text-text-secondary" title={isAccountBudget ? 'Limite aprovado do orçamento da conta menos o valor já veiculado.' : undefined}>
+              {isAccountBudget ? 'Restante do orçamento da conta' : 'Saldo'}
+            </span>
             <span className={`font-bold ${isZero ? 'text-danger' : isCritical ? 'text-warning' : isWarning ? 'text-orange-500' : 'text-success'}`}>
               {formatCurrency(balance.currentBalance)}
             </span>
@@ -314,8 +318,13 @@ function BalanceCard({
         <div className="mb-3 rounded-lg border border-border/60 bg-bg/20 px-3 py-2">
           <div className="flex justify-between gap-3 text-sm">
             <span className="text-text-secondary">Saldo disponível</span>
-            <span className="font-medium text-text-secondary">Não disponível via API</span>
+            {balance.balanceError
+              ? <span className="font-medium text-danger">Erro ao consultar</span>
+              : <span className="font-medium text-text-secondary">Não disponível via API</span>}
           </div>
+          {balance.balanceError && (
+            <p role="alert" className="text-[11px] text-danger/80 mt-1">{balance.balanceError}</p>
+          )}
           {balance.amountDue > 0 && (
             <p className="text-[11px] text-text-secondary mt-1">
               Em cobrança: {formatCurrency(balance.amountDue)}
@@ -678,7 +687,7 @@ export function BalancesView({ data, platform = 'meta', onPlatformChange }) {
         </div>
       </div>
 
-      {isGoogle && <p className="text-sm text-text-secondary">Os gastos são atualizados pelo Google. O saldo pré-pago não está disponível nesta integração; metas e datas de pagamento são definidas por você.</p>}
+      {isGoogle && <p className="text-sm text-text-secondary">Os gastos são atualizados pelo Google. Contas com orçamento de conta aprovado (faturamento mensal) mostram o restante do limite; saldo pré-pago (Pix/boleto) não é exposto pela API do Google. Metas e datas de pagamento são definidas por você.</p>}
       {error && <p role="alert" className="text-sm text-warning">{error}</p>}
       {!balances.length && <p className="text-sm text-text-secondary">Nenhuma conta disponível. Confira as conexões em Configurações.</p>}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
