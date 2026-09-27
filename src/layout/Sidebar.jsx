@@ -2,13 +2,12 @@ import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Calendar, Wallet,
-  SearchCheck, Settings, FileText, Image, Lightbulb,
-  Bell, Scale, Menu, X, Sparkles
+  SearchCheck, Settings, FileText, Lightbulb,
+  Bell, Scale, Menu, X, Sparkles, Send
 } from 'lucide-react';
 import { useAlerts } from '../contexts/AlertsContext';
 import { MetaIcon, GoogleAdsIcon } from '../shared/components/PlatformIcons';
 
-// Marcas em monocromático: herdam a cor do item (ativo, hover, padrão).
 const MetaNavIcon = (props) => <MetaIcon {...props} mono />;
 const GoogleAdsNavIcon = (props) => <GoogleAdsIcon {...props} mono />;
 
@@ -18,10 +17,8 @@ const navItems = [
   { path: '/google-ads', label: 'Google Ads', icon: GoogleAdsNavIcon },
   { path: '/saldos', label: 'Saldos', icon: Wallet },
   { path: '/visao-detalhada', label: 'Visão Detalhada', icon: SearchCheck },
-  { path: '/relatorio-texto', label: 'Relatório Texto', icon: FileText },
-  { path: '/relatorio-visual', label: 'Relatório Visual', icon: Image },
-  { path: '/envio-relatorios', label: 'Enviar Relatórios', icon: FileText },
-  { path: '/avisos', label: 'Avisos Automáticos', icon: Bell },
+  { path: '/relatorios', label: 'Relatórios', icon: FileText },
+  { path: '/envio-relatorios', label: 'Enviar Relatórios', icon: Send },
   { path: '/configuracoes', label: 'Configurações', icon: Settings },
 ];
 

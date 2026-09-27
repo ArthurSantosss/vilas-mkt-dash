@@ -1,5 +1,8 @@
 /* global process */
 
+import { normalizeAdAccountId, readMetaConnectionsSafe, resolveConnectionForAccount } from './_meta-tokens.js';
+import { createReportStore } from './_automatic-reports.js';
+
 const META_API_BASE = 'https://graph.facebook.com/v22.0';
 
 const LEAD_ACTION_TYPES = [
@@ -91,8 +94,65 @@ async function metaGet(path, params, token) {
   const res = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
   const text = await res.text();
   const data = text ? JSON.parse(text) : {};
-  if (!res.ok) throw new Error(data.error?.message || `Meta API ${res.status}`);
+  if (!res.ok) {
+    const error = new Error(data.error?.message || `Meta API ${res.status}`);
+    error.metaError = data.error || null;
+    throw error;
+  }
   return data;
+}
+
+// Token sem validade ou sem acesso à conta: vale tentar o próximo candidato.
+function isRetryableTokenError(error) {
+  const metaError = error?.metaError || {};
+  const code = Number(metaError.code);
+  const subcode = Number(metaError.error_subcode);
+  if ([3, 10, 102, 190, 200, 803].includes(code)) return true;
+  if ([458, 459, 460, 463, 464, 466, 467, 492].includes(subcode)) return true;
+  return /access token|session|permission|unsupported get request/i.test(String(error?.message || ''));
+}
+
+async function readSavedProfileToken() {
+  try {
+    return await createReportStore().get('meta_provider_token');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Mesma ordem do painel: token da BM que cobre a conta → token de perfil salvo →
+ * token de perfil do ambiente → demais tokens de BM. Devolve o primeiro que
+ * consegue ler a conta (e o nome dela, já que a consulta é a mesma).
+ */
+async function resolveWorkingToken(accountId) {
+  const [connections, savedToken] = await Promise.all([readMetaConnectionsSafe(), readSavedProfileToken()]);
+  const matched = resolveConnectionForAccount(connections, accountId);
+  const candidates = [...new Set([
+    matched?.token,
+    savedToken,
+    process.env.META_ACCESS_TOKEN,
+    process.env.VITE_META_ACCESS_TOKEN,
+    ...connections.map(connection => connection.token),
+  ].filter(token => typeof token === 'string' && token.trim()).map(token => token.trim()))];
+
+  if (!candidates.length) {
+    throw new Error('Nenhum token Meta configurado no servidor.');
+  }
+
+  let lastError;
+  for (const token of candidates) {
+    try {
+      const account = await metaGet(`/${accountId}`, { fields: 'name' }, token);
+      return { token, accountName: account?.name || null };
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableTokenError(error)) throw error;
+    }
+  }
+  const error = new Error('Nenhuma conexão Meta válida conseguiu acessar esta conta. Reconecte a conta ou revise os tokens das Business Managers em Configurações.');
+  error.cause = lastError;
+  throw error;
 }
 
 async function fetchAccountInsights(accountId, range, token) {
@@ -102,15 +162,6 @@ async function fetchAccountInsights(accountId, range, token) {
     time_range: timeRangeParam(range),
   }, token);
   return data.data?.[0] || null;
-}
-
-async function fetchAccountName(accountId, token) {
-  try {
-    const data = await metaGet(`/${accountId}`, { fields: 'name' }, token);
-    return data?.name || null;
-  } catch {
-    return null;
-  }
 }
 
 async function fetchCampaignsWithInsights(accountId, range, token) {
@@ -235,16 +286,17 @@ export default async function handler(req, res) {
     period = periodRaw || '7d';
   }
 
-  const metaToken = process.env.META_ACCESS_TOKEN || process.env.VITE_META_ACCESS_TOKEN;
   const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 
-  if (!metaToken) return res.status(500).json({ error: 'META_ACCESS_TOKEN not configured' });
   if (!supabaseUrl || !supabaseAnonKey) return res.status(500).json({ error: 'Supabase env missing' });
 
   try {
     const share = await fetchShare(shareId, supabaseUrl, supabaseAnonKey);
     if (!share) return res.status(404).json({ error: 'Relatório não encontrado' });
+
+    const accountId = normalizeAdAccountId(share.account_id) || share.account_id;
+    const { token: metaToken, accountName: metaAccountName } = await resolveWorkingToken(accountId);
 
     const range = resolveRange(period);
     const prevRange = getPreviousRange(range);
@@ -260,8 +312,8 @@ export default async function handler(req, res) {
 
     if (campaignFilter) {
       const [curCampaigns, prevCampaigns] = await Promise.all([
-        fetchCampaignsWithInsights(share.account_id, range, metaToken),
-        fetchCampaignsWithInsights(share.account_id, prevRange, metaToken),
+        fetchCampaignsWithInsights(accountId, range, metaToken),
+        fetchCampaignsWithInsights(accountId, prevRange, metaToken),
       ]);
       const filteredCur = curCampaigns.filter(c => campaignFilter.has(c.id));
       const filteredPrev = prevCampaigns.filter(c => campaignFilter.has(c.id));
@@ -276,9 +328,9 @@ export default async function handler(req, res) {
       selectedCampaignNames = filteredCur.map(c => c.name);
     } else {
       const [insights, prevInsights, allCampaigns] = await Promise.all([
-        fetchAccountInsights(share.account_id, range, metaToken),
-        fetchAccountInsights(share.account_id, prevRange, metaToken),
-        fetchCampaignsWithInsights(share.account_id, range, metaToken),
+        fetchAccountInsights(accountId, range, metaToken),
+        fetchAccountInsights(accountId, prevRange, metaToken),
+        fetchCampaignsWithInsights(accountId, range, metaToken),
       ]);
 
       if (!insights) {
@@ -345,7 +397,7 @@ export default async function handler(req, res) {
       } catch { /* ignore — daily is optional */ }
     }
 
-    const accountName = share.client_label || (await fetchAccountName(share.account_id, metaToken)) || 'Conta';
+    const accountName = share.client_label || metaAccountName || 'Conta';
     const clientLogoUrl = await fetchClientLogo(share.account_id, supabaseUrl, supabaseAnonKey);
 
     return res.status(200).json({

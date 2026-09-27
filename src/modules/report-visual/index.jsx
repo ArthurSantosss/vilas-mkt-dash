@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { supabase } from '../../services/supabase';
 import { useGoogleAds } from '../../contexts/GoogleAdsContext';
 import PlatformFilter from '../../shared/components/PlatformFilter';
+import ReportFormatSelector from '../../shared/components/ReportFormatSelector';
 import { fetchGoogleReport } from '../../services/googleReports';
 import { googleVisualData } from '../../shared/utils/googleReports';
 import { useMetaAds } from '../../contexts/MetaAdsContext';
@@ -18,9 +19,10 @@ import {
 import { PRESETS } from '../../shared/utils/dateUtils';
 import { getAgencyLogoSources } from '../../shared/utils/agencyLogo';
 import { toPng } from 'html-to-image';
+import { FILTER_ROW, FILTER_FIELD, FILTER_LABEL, FILTER_CONTROL } from '../../shared/constants/filterStyles';
 
 const SHARE_BASE_URL = (import.meta.env.VITE_PUBLIC_SHARE_BASE_URL || '').trim();
-const META_LOGO_SOURCES = ['/meta-ads-logo.png', '/logometa.png'];
+const META_LOGO_SOURCES = ['/meta-logo.svg', '/logometa.png'];
 const GOOGLE_LOGO_SOURCES = ['/google-ads-logo.svg'];
 
 function getPlatformLogoSources(platform) {
@@ -1300,21 +1302,22 @@ function ReportVisualContent({ platform, onPlatformChange }) {
             <Image size={22} className="text-white" />
           </div>
           <div>
-            <h1 className="text-xl lg:text-2xl font-bold text-text-primary tracking-tight">Relatório Visual</h1>
+            <h1 className="text-xl lg:text-2xl font-bold text-text-primary tracking-tight">Relatórios</h1>
           </div>
         </div>
 
         {/* Selectors */}
-        <div className="relative mt-5 grid grid-cols-1 min-[560px]:grid-cols-2 sm:flex sm:flex-wrap items-end justify-center gap-3 sm:gap-5">
+        <div className={`relative mt-5 ${FILTER_ROW}`}>
+          <ReportFormatSelector />
           <PlatformFilter value={platform} onChange={onPlatformChange} />
-          <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px] z-50">
-            <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Período</label>
+          <div className={`${FILTER_FIELD} z-50`}>
+            <label className={FILTER_LABEL}>Período</label>
             <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} className="w-full" align="left" />
           </div>
 
           {hasAgencies ? (
-            <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px]">
-              <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Agência</label>
+            <div className={FILTER_FIELD}>
+              <label className={FILTER_LABEL}>Agência</label>
               <select
                 value={selectedAgency}
                 onChange={e => {
@@ -1322,7 +1325,7 @@ function ReportVisualContent({ platform, onPlatformChange }) {
                   setSelectedAccount('');
                   setSelectedCampaignIds([]);
                 }}
-                className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
+                className={FILTER_CONTROL}
               >
                 <option value="__all__">Todas as agências</option>
                 {allowedAgencyList.map(ag => <option key={ag} value={ag}>{ag}</option>)}
@@ -1330,30 +1333,30 @@ function ReportVisualContent({ platform, onPlatformChange }) {
             </div>
           ) : null}
 
-          <div className="flex flex-col gap-1.5 col-span-1 sm:w-[295px]">
-            <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Conta</label>
+          <div className={FILTER_FIELD}>
+            <label className={FILTER_LABEL}>Conta</label>
             <select
               value={selectedAccount}
               onChange={e => {
                 setSelectedAccount(e.target.value);
                 setSelectedCampaignIds([]);
               }}
-              className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
+              className={FILTER_CONTROL}
             >
               <option value="">Selecione uma conta</option>
               {filteredAccounts.map(a => <option key={a.id} value={a.id}>{a.clientName}</option>)}
             </select>
           </div>
 
-          <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px]">
-            <label className="text-xs font-medium text-text-secondary uppercase tracking-wider flex items-center gap-1.5">
+          <div className={FILTER_FIELD}>
+            <label className={FILTER_LABEL}>
               <Target size={12} className="text-primary-light" />
               Objetivo
             </label>
             <select
               value={selectedObjective}
               onChange={e => setSelectedObjective(e.target.value)}
-              className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
+              className={FILTER_CONTROL}
             >
               {objectiveOptions.map(opt => (
                 <option key={opt.id} value={opt.id}>{opt.label}</option>

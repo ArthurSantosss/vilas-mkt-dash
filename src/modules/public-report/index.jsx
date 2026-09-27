@@ -21,7 +21,7 @@ const LEAD_ACTION_TYPES = [
 
 const ENGAGEMENT_ACTION_TYPES = ['post_engagement', 'page_engagement'];
 const SHARE_BASE_URL = (import.meta.env.VITE_PUBLIC_SHARE_BASE_URL || '').trim();
-const META_LOGO_SOURCES = ['/meta-ads-logo.png', '/logometa.png'];
+const META_LOGO_SOURCES = ['/meta-logo.svg', '/logometa.png'];
 const GOOGLE_LOGO_SOURCES = ['/google-ads-logo.svg'];
 
 const OBJECTIVE_OPTIONS = [

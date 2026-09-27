@@ -30,8 +30,7 @@ const GoogleAdsOverview = lazy(() => import('./modules/google-ads'));
 const Balances = lazy(() => import('./modules/balances'));
 const DetailedView = lazy(() => import('./modules/detailed-view'));
 const Settings = lazy(() => import('./modules/settings'));
-const ReportText = lazy(() => import('./modules/report-text'));
-const ReportVisual = lazy(() => import('./modules/report-visual'));
+const Reports = lazy(() => import('./modules/reports'));
 const PublicReport = lazy(() => import('./modules/public-report'));
 const PublicReportEntry = lazy(() => import('./modules/public-report').then((module) => ({ default: module.PublicReportEntry })));
 
@@ -94,8 +93,9 @@ export default function App() {
               <Route path="saldos-meta" element={<Navigate to="/saldos" replace />} />
               <Route path="saldos-google" element={<Navigate to="/saldos" replace />} />
               <Route path="visao-detalhada" element={<DetailedView />} />
-              <Route path="relatorio-texto" element={<ReportText />} />
-              <Route path="relatorio-visual" element={<ReportVisual />} />
+              <Route path="relatorios" element={<Reports />} />
+              <Route path="relatorio-texto" element={<Navigate to="/relatorios?formato=texto" replace />} />
+              <Route path="relatorio-visual" element={<Navigate to="/relatorios?formato=visual" replace />} />
               <Route path="relatorio-pdf" element={<Navigate to="/" replace />} />
 
               <Route path="avisos" element={<AutoAlerts />} />

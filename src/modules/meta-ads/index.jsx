@@ -10,6 +10,7 @@ import { Power, ChevronDown, ChevronRight, Loader2, RefreshCw, Settings2, Wallet
 import { updateCampaignStatus, updateCampaignBudget, fetchAdSetsForCampaign, updateAdSetBudget, updateAdSetStatus, updateAdStatus, fetchAdsForAdSet } from '../../services/metaApi';
 import PeriodSelector from '../../shared/components/PeriodSelector';
 import { MetaIcon } from '../../shared/components/PlatformIcons';
+import { FILTER_FIELD, FILTER_LABEL, FILTER_CONTROL } from '../../shared/constants/filterStyles';
 
 const ALL_COLUMNS = [
   { key: 'name', label: 'Conta / Cliente', align: 'left' },
@@ -1004,7 +1005,7 @@ export default function MetaAdsOverview() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg bg-meta/10">
-              <MetaIcon className="w-6 h-6 text-meta" mono />
+              <MetaIcon className="w-6 h-6" />
             </div>
             <div>
               <h1 className="text-2xl font-bold text-text-primary">Meta Ads — Visão Geral</h1>
@@ -1031,7 +1032,7 @@ export default function MetaAdsOverview() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg bg-meta/10">
-              <MetaIcon className="w-6 h-6 text-meta" mono />
+              <MetaIcon className="w-6 h-6" />
             </div>
             <div>
               <h1 className="text-2xl font-bold text-text-primary">Meta Ads — Visão Geral</h1>
@@ -1063,8 +1064,8 @@ export default function MetaAdsOverview() {
 
         <div className="relative">
           <div className="flex items-center gap-3 mb-1">
-            <div className="flex items-center justify-center w-11 h-11 rounded-xl bg-gradient-to-br from-primary to-primary-light shadow-lg shadow-primary/20">
-              <MetaIcon className="w-6 h-6 text-white" mono />
+            <div className="flex items-center justify-center w-11 h-11">
+              <MetaIcon className="w-6 h-6" />
             </div>
             <div>
               <h1 className="text-lg sm:text-2xl font-bold text-text-primary tracking-tight">Meta Ads — Visão Geral</h1>
@@ -1074,19 +1075,19 @@ export default function MetaAdsOverview() {
 
         {/* Filters */}
         <div className="relative mt-7 flex flex-col sm:flex-row flex-wrap items-stretch sm:items-end justify-between gap-4 sm:gap-5">
-          <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-end gap-3 sm:gap-5 w-full sm:w-auto">
-            <div className="flex flex-col gap-1.5 w-full sm:w-[210px] z-50">
-              <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Período</label>
+          <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-end gap-3 sm:gap-4 w-full sm:flex-1 sm:min-w-0">
+            <div className={`${FILTER_FIELD} z-50`}>
+              <label className={FILTER_LABEL}>Período</label>
               <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} className="w-full" align="left" />
             </div>
 
             {agencies.length > 0 && (
-              <div className="flex flex-col gap-1.5 w-full sm:w-[210px]">
-                <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Agência</label>
+              <div className={FILTER_FIELD}>
+                <label className={FILTER_LABEL}>Agência</label>
                 <select
                   value={selectedAgency}
                   onChange={e => { setSelectedAgency(e.target.value); setSelectedAccount('all'); }}
-                  className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
+                  className={FILTER_CONTROL}
                 >
                   <option value="all">Todas as agências</option>
                   {agencies.map(ag => (
@@ -1096,12 +1097,12 @@ export default function MetaAdsOverview() {
               </div>
             )}
 
-            <div className="flex flex-col gap-1.5 w-full sm:w-[295px]">
-              <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Conta</label>
+            <div className={FILTER_FIELD}>
+              <label className={FILTER_LABEL}>Conta</label>
               <select
                 value={selectedAccount}
                 onChange={e => setSelectedAccount(e.target.value)}
-                className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
+                className={FILTER_CONTROL}
               >
                 <option value="all">Todas as contas</option>
                 {agencyFilteredAccounts.map(a => (
@@ -1115,14 +1116,14 @@ export default function MetaAdsOverview() {
           <div className="flex items-center gap-3 w-full sm:w-auto">
             <button
               onClick={() => setShowColumnSettings(!showColumnSettings)}
-              className={`flex items-center justify-center gap-2 flex-1 sm:flex-none px-4 py-2.5 rounded-xl text-sm font-medium transition-all shadow-sm border ${showColumnSettings ? 'bg-primary/20 text-primary-light border-primary/30' : 'bg-surface/60 border-border/50 text-text-secondary hover:text-text-primary hover:border-primary/30'}`}
+              className={`flex items-center justify-center gap-2 flex-1 sm:flex-none h-[42px] px-4 rounded-xl text-sm font-medium transition-all shadow-sm border ${showColumnSettings ? 'bg-primary/20 text-primary-light border-primary/30' : 'bg-surface/60 border-border/50 text-text-secondary hover:text-text-primary hover:border-primary/30'}`}
             >
               <Settings2 size={16} /> Colunas
             </button>
             <button
               onClick={refreshData}
               disabled={loading}
-              className="group relative inline-flex items-center justify-center gap-2.5 flex-1 sm:flex-none px-6 py-2.5 rounded-xl font-semibold text-sm
+              className="group relative inline-flex items-center justify-center gap-2.5 flex-1 sm:flex-none h-[42px] px-6 rounded-xl font-semibold text-sm
                 bg-gradient-to-r from-primary to-primary-light text-white shadow-lg shadow-primary/25
                 hover:shadow-xl hover:shadow-primary/30 hover:scale-[1.02] active:scale-[0.98]
                 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100

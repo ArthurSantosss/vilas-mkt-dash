@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, useId } from 'react';
+import { createPortal } from 'react-dom';
 import { Calendar as CalendarIcon, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   PRESETS,
@@ -18,6 +19,46 @@ const MONTHS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', '
 export default function PeriodSelector({ selectedPeriod, onPeriodChange, className = '', align = 'right' }) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef(null);
+  const popoverRef = useRef(null);
+  const triggerRef = useRef(null);
+  const popoverId = useId();
+  const [popoverPosition, setPopoverPosition] = useState({});
+
+  // Render outside clipping/stacking containers and keep the panel in the viewport.
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+    const positionPopover = () => {
+      if (window.innerWidth < 768) {
+        setPopoverPosition({});
+        return;
+      }
+      const anchor = containerRef.current?.getBoundingClientRect();
+      if (!anchor) return;
+      const margin = 8;
+      const width = Math.min(740, window.innerWidth - margin * 2);
+      const height = Math.min(popoverRef.current?.getBoundingClientRect().height || 480, window.innerHeight - margin * 2);
+      const preferredLeft = align === 'left' ? anchor.left : anchor.right - width;
+      const below = anchor.bottom + margin;
+      const top = below + height <= window.innerHeight - margin
+        ? below
+        : Math.max(margin, anchor.top - height - margin);
+      setPopoverPosition({
+        width,
+        left: Math.max(margin, Math.min(preferredLeft, window.innerWidth - width - margin)),
+        top,
+      });
+    };
+    positionPopover();
+    const observer = new ResizeObserver(positionPopover);
+    if (popoverRef.current) observer.observe(popoverRef.current);
+    window.addEventListener('resize', positionPopover);
+    window.addEventListener('scroll', positionPopover, true);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', positionPopover);
+      window.removeEventListener('scroll', positionPopover, true);
+    };
+  }, [isOpen, align]);
 
   const initialSelection = useMemo(() => {
     if (typeof selectedPeriod === 'object' && selectedPeriod?.type === 'custom') {
@@ -58,14 +99,25 @@ export default function PeriodSelector({ selectedPeriod, onPeriodChange, classNa
   }, [isOpen, initialSelection]);
 
   useEffect(() => {
+    if (!isOpen) return;
     const handleClickOutside = (e) => {
-      if (containerRef.current && !containerRef.current.contains(e.target)) {
+      if (containerRef.current && !containerRef.current.contains(e.target) && !popoverRef.current?.contains(e.target)) {
         setIsOpen(false);
       }
     };
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [isOpen]);
 
   const handleApply = () => {
     let finalSelection = { ...tempSelection };
@@ -214,42 +266,45 @@ export default function PeriodSelector({ selectedPeriod, onPeriodChange, classNa
     <div className={`relative z-50 ${className}`} ref={containerRef}>
       {/* Trigger Button */}
       <button
+        ref={triggerRef}
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={isOpen}
+        aria-controls={isOpen ? popoverId : undefined}
         onClick={() => setIsOpen(!isOpen)}
-        className="group w-full flex items-center justify-between gap-2.5 px-4 py-2.5 rounded-xl text-sm font-medium
-          bg-surface/60 backdrop-blur-md border border-border/50 text-text-primary
-          hover:border-primary/30 hover:shadow-[0_0_16px_rgba(15,165,174,0.1)]
-          focus:outline-none focus:ring-1 focus:ring-primary/40
-          transition-all duration-300 shadow-sm"
+        className="field-surface group w-full h-[42px] flex items-center justify-between gap-2.5 pl-5 pr-3 text-left"
       >
         <div className="flex items-center gap-2.5">
           <CalendarIcon size={15} className="text-primary-light/70 group-hover:text-primary-light transition-colors shrink-0" />
           <span className="whitespace-nowrap truncate">{currentLabel}</span>
         </div>
-        <ChevronDown size={13} className={`shrink-0 text-text-secondary transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+        <ChevronDown size={13} strokeWidth={2.5} className={`shrink-0 text-primary-light transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
       </button>
 
       {/* Popover */}
-      {isOpen && (
+      {isOpen && createPortal(
         <div
-          className={`fixed inset-0 z-[100] flex items-end sm:items-start sm:absolute sm:inset-auto sm:top-full sm:mt-2 ${
-            align === 'left' ? 'sm:justify-start sm:left-0' : 'sm:justify-end sm:right-0'
-          }`}
-          style={{ animation: 'fadeIn 200ms ease-out' }}
+          ref={popoverRef}
+          id={popoverId}
+          role="dialog"
+          aria-label="Selecionar período"
+          className="fixed inset-0 z-[1000] flex items-end md:inset-auto md:items-start"
+          style={popoverPosition}
         >
           {/* Mobile backdrop */}
-          <div className="fixed inset-0 bg-black/50 sm:hidden" onClick={() => setIsOpen(false)} />
+          <div className="fixed inset-0 bg-black/50 md:hidden" onClick={() => setIsOpen(false)} />
 
-          <div className="relative w-full sm:w-auto max-h-[85vh] sm:max-h-none overflow-y-auto flex flex-col rounded-t-2xl sm:rounded-2xl
+          <div className="relative w-full max-h-[85dvh] md:max-h-[calc(100dvh-16px)] overflow-y-auto flex flex-col rounded-t-2xl md:rounded-2xl
             bg-surface/95 backdrop-blur-xl border border-border/60
             shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5),0_0_0_1px_rgba(255,255,255,0.03)]">
 
-          <div className="flex flex-col sm:flex-row border-b border-border/40">
+          <div className="flex flex-col md:flex-row border-b border-border/40">
             {/* Presets — horizontal scroll on mobile, sidebar on desktop */}
-            <div className="sm:w-[170px] sm:border-r border-b sm:border-b-0 border-border/40 p-2 py-3">
+            <div className="md:w-[170px] md:border-r border-b md:border-b-0 border-border/40 p-2 py-3">
               <div className="px-3 pb-2 text-[10px] font-semibold text-text-secondary/50 uppercase tracking-widest">
                 Período
               </div>
-              <ul className="flex sm:flex-col gap-1 sm:gap-0.5 mt-1 overflow-x-auto sm:overflow-x-visible pb-1 sm:pb-0">
+              <ul className="flex md:flex-col gap-1 md:gap-0.5 mt-1 overflow-x-auto md:overflow-x-visible pb-1 md:pb-0">
                 {PRESETS.map(preset => {
                   const isActive = tempSelection.id === preset.id;
                   return (
@@ -272,17 +327,17 @@ export default function PeriodSelector({ selectedPeriod, onPeriodChange, classNa
             </div>
 
             {/* Calendars Area — single column on mobile, two on desktop */}
-            <div className="p-4 sm:p-5 flex flex-col sm:flex-row gap-4 sm:gap-8 relative sm:min-w-[540px]">
+            <div className="p-4 md:p-5 flex flex-col md:flex-row gap-4 md:gap-8 relative md:min-w-[540px]">
               {/* Nav Buttons */}
               <button
                 onClick={() => shiftMonth(-1)}
-                className="absolute left-3 sm:left-4 top-3 sm:top-4 p-1.5 rounded-lg bg-surface-hover/50 border border-border/30 text-text-secondary hover:text-primary-light hover:border-primary/30 hover:bg-primary/10 z-20 transition-all duration-200"
+                className="absolute left-3 md:left-4 top-3 md:top-4 p-1.5 rounded-lg bg-surface-hover/50 border border-border/30 text-text-secondary hover:text-primary-light hover:border-primary/30 hover:bg-primary/10 z-20 transition-all duration-200"
               >
                 <ChevronLeft size={16} />
               </button>
               <button
                 onClick={() => shiftMonth(1)}
-                className="absolute right-3 sm:right-4 top-3 sm:top-4 p-1.5 rounded-lg bg-surface-hover/50 border border-border/30 text-text-secondary hover:text-primary-light hover:border-primary/30 hover:bg-primary/10 z-20 transition-all duration-200"
+                className="absolute right-3 md:right-4 top-3 md:top-4 p-1.5 rounded-lg bg-surface-hover/50 border border-border/30 text-text-secondary hover:text-primary-light hover:border-primary/30 hover:bg-primary/10 z-20 transition-all duration-200"
               >
                 <ChevronRight size={16} />
               </button>
@@ -291,7 +346,7 @@ export default function PeriodSelector({ selectedPeriod, onPeriodChange, classNa
               <div className="flex-1 pt-2">
                 {renderCalendar(viewState.year, viewState.month)}
               </div>
-              <div className="hidden sm:block w-px bg-border/30 self-stretch my-2" />
+              <div className="hidden md:block w-px bg-border/30 self-stretch my-2" />
               <div className="flex-1">
                 {renderCalendar(rightYear, rightMonth)}
               </div>
@@ -299,14 +354,14 @@ export default function PeriodSelector({ selectedPeriod, onPeriodChange, classNa
           </div>
 
           {/* Footer */}
-          <div className="p-3.5 px-4 sm:px-5 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-t border-border/30 bg-bg/30">
+          <div className="p-3.5 px-4 md:px-5 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 border-t border-border/30 bg-bg/30">
             {/* Date Range Display */}
-            <div className="flex gap-2 items-center justify-center sm:justify-start">
-              <div className="border border-border/40 bg-surface/50 rounded-lg px-3 py-1.5 text-xs font-medium text-text-primary/80 min-w-[100px] sm:min-w-[120px] text-center">
+            <div className="flex gap-2 items-center justify-center md:justify-start">
+              <div className="border border-border/40 bg-surface/50 rounded-lg px-3 py-1.5 text-xs font-medium text-text-primary/80 min-w-[100px] md:min-w-[120px] text-center">
                 {tempSelection.startDate ? formatSelectedRangeForDisplay(tempSelection.startDate, tempSelection.endDate).split(' - ')[0] : '—'}
               </div>
               <span className="text-text-secondary/40 text-xs">→</span>
-              <div className="border border-border/40 bg-surface/50 rounded-lg px-3 py-1.5 text-xs font-medium text-text-primary/80 min-w-[100px] sm:min-w-[120px] text-center">
+              <div className="border border-border/40 bg-surface/50 rounded-lg px-3 py-1.5 text-xs font-medium text-text-primary/80 min-w-[100px] md:min-w-[120px] text-center">
                 {tempSelection.endDate ? formatSelectedRangeForDisplay(tempSelection.startDate, tempSelection.endDate).split(' - ')[1] : '—'}
               </div>
             </div>
@@ -336,7 +391,7 @@ export default function PeriodSelector({ selectedPeriod, onPeriodChange, classNa
           </div>
           </div>
         </div>
-      )}
+      , document.body)}
     </div>
   );
 }

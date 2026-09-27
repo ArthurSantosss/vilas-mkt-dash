@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { useClients } from '../../contexts/ClientsContext';
 import { formatCurrency, formatDate, getStatusColor, getStatusLabel } from '../../shared/utils/format';
 import { Users, Plus, X, Search, Filter } from 'lucide-react';
+import { FILTER_CONTROL } from '../../shared/constants/filterStyles';
 
 const nicheLabels = {
   previdenciario: 'Previdenciário', trabalhista: 'Trabalhista', tributario: 'Tributário',
@@ -59,21 +60,21 @@ export default function Clients() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
         <div className="relative w-full flex-1 sm:max-w-md">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary" />
           <input
             type="text" placeholder="Buscar por nome..." value={search} onChange={e => setSearch(e.target.value)}
-            className="w-full bg-surface border border-border rounded-lg pl-10 pr-4 py-2 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-primary"
+            className="h-[42px] w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl pl-10 pr-4 text-sm font-medium text-text-primary placeholder:text-text-secondary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm"
           />
         </div>
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-          className="w-full sm:w-auto bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary">
+          className={`${FILTER_CONTROL} sm:w-[220px]`}>
           <option value="all">Todos os status</option>
           {allStatuses.map(s => <option key={s} value={s}>{getStatusLabel(s)}</option>)}
         </select>
         <select value={nicheFilter} onChange={e => setNicheFilter(e.target.value)}
-          className="w-full sm:w-auto bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-primary">
+          className={`${FILTER_CONTROL} sm:w-[220px]`}>
           <option value="all">Todos os nichos</option>
           {allNiches.map(n => <option key={n} value={n}>{nicheLabels[n]}</option>)}
         </select>

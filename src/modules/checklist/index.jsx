@@ -3,6 +3,7 @@ import { useChecklist } from '../../contexts/ChecklistContext';
 import { useAgency } from '../../contexts/AgencyContext';
 import { formatTime } from '../../shared/utils/format';
 import { CheckSquare, Plus, Trash2, PartyPopper, Building2, ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
+import { FILTER_CONTROL } from '../../shared/constants/filterStyles';
 
 export default function Checklist() {
   const { tasksByAgency, addTask, toggleTask, deleteTask, clearAllTasks, completedCount, totalCount, progress, loading } = useChecklist();
@@ -103,12 +104,12 @@ export default function Checklist() {
             value={newTask}
             onChange={e => setNewTask(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleAddTask()}
-            className="flex-1 bg-bg border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-primary"
+            className="h-[42px] flex-1 bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-4 text-sm font-medium text-text-primary placeholder:text-text-secondary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm"
           />
           <select
             value={selectedAgency}
             onChange={e => setSelectedAgency(e.target.value)}
-            className="w-full sm:w-auto bg-bg border border-border rounded-lg px-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-primary"
+            className={`${FILTER_CONTROL} sm:w-[220px]`}
           >
             <option value="">Geral</option>
             {agencies.map(ag => (
@@ -118,7 +119,7 @@ export default function Checklist() {
           <button
             onClick={handleAddTask}
             disabled={!newTask.trim()}
-            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-primary to-primary-light text-black rounded-lg text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex h-[42px] items-center justify-center gap-2 px-4 bg-gradient-to-r from-primary to-primary-light text-black rounded-xl text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Plus size={16} /> Adicionar
           </button>

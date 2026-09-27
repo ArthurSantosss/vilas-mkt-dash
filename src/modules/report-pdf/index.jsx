@@ -7,6 +7,7 @@ import PeriodSelector from '../../shared/components/PeriodSelector';
 import { collectReportData, OBJECTIVES } from './collectReportData';
 import { generateExecutiveSummary } from './buildSummary';
 import ReportDocument from './pdf/ReportDocument';
+import { FILTER_ROW, FILTER_FIELD, FILTER_LABEL, FILTER_CONTROL } from '../../shared/constants/filterStyles';
 
 const OBJECTIVE_OPTIONS = Object.values(OBJECTIVES).map(({ id, label }) => ({ id, label }));
 
@@ -152,7 +153,7 @@ export default function ReportPdf() {
     document.body.removeChild(link);
   }, [result]);
 
-  const selectClass = 'w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer';
+  const selectClass = FILTER_CONTROL;
 
   return (
     <div className="space-y-6">
@@ -173,15 +174,15 @@ export default function ReportPdf() {
         </div>
 
         {/* Seletores */}
-        <div className="relative mt-5 grid grid-cols-1 min-[560px]:grid-cols-2 sm:flex sm:flex-wrap items-end justify-center gap-3 sm:gap-5">
-          <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px] z-50">
-            <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Período</label>
+        <div className={`relative mt-5 ${FILTER_ROW}`}>
+          <div className={`${FILTER_FIELD} z-50`}>
+            <label className={FILTER_LABEL}>Período</label>
             <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} className="w-full" align="left" />
           </div>
 
           {hasAgencies ? (
-            <div className="flex flex-col gap-1.5 col-span-1 sm:w-[190px]">
-              <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Agência</label>
+            <div className={FILTER_FIELD}>
+              <label className={FILTER_LABEL}>Agência</label>
               <select
                 value={selectedAgency}
                 onChange={(event) => { setSelectedAgency(event.target.value); setSelectedAccount(''); }}
@@ -192,8 +193,8 @@ export default function ReportPdf() {
             </div>
           ) : null}
 
-          <div className="flex flex-col gap-1.5 col-span-1 sm:w-[260px]">
-            <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Conta</label>
+          <div className={FILTER_FIELD}>
+            <label className={FILTER_LABEL}>Conta</label>
             <select
               value={selectedAccount}
               onChange={(event) => setSelectedAccount(event.target.value)}
@@ -206,8 +207,8 @@ export default function ReportPdf() {
             </select>
           </div>
 
-          <div className="flex flex-col gap-1.5 col-span-1 sm:w-[190px]">
-            <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Resultado principal</label>
+          <div className={FILTER_FIELD}>
+            <label className={FILTER_LABEL}>Resultado principal</label>
             <select
               value={selectedObjective}
               onChange={(event) => setSelectedObjective(event.target.value)}

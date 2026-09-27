@@ -6,6 +6,7 @@ import { isCreditCardPaymentMethod, getAccountPaymentMethod } from '../../shared
 import { billingFrequencyOptions, getNextPaymentDate, getDaysUntil, formatDateBR } from '../../shared/utils/nextPayment';
 import { supabase } from '../../services/supabase';
 import { Wallet, AlertTriangle, Clock, CreditCard, ArrowUpDown, RefreshCw, Edit3, Target, CalendarClock, Repeat } from 'lucide-react';
+import { FILTER_FIELD, FILTER_LABEL, FILTER_CONTROL } from '../../shared/constants/filterStyles';
 
 const sortOptions = [
   { value: 'balance_asc', label: 'Menor saldo primeiro' },
@@ -628,14 +629,14 @@ export function BalancesView({ data, platform = 'meta', onPlatformChange }) {
           </div>
 
           {/* Filters & Actions */}
-          <div className="grid grid-cols-1 min-[560px]:grid-cols-2 sm:flex sm:flex-wrap items-end gap-3 lg:gap-4 w-full lg:w-auto">
+          <div className="grid grid-cols-1 min-[560px]:grid-cols-2 sm:flex sm:flex-wrap items-end gap-3 sm:gap-4 w-full lg:w-auto">
             {unified && (
-              <div className="flex flex-col gap-1 col-span-1 sm:w-[160px]">
-                <label className="text-[10px] font-medium text-text-secondary uppercase tracking-wider">Plataforma</label>
+              <div className={FILTER_FIELD}>
+                <label className={FILTER_LABEL}>Plataforma</label>
                 <select
                   value={platform}
                   onChange={e => onPlatformChange(e.target.value)}
-                  className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-lg px-3 py-2 text-xs font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer h-[36px]"
+                  className={FILTER_CONTROL}
                 >
                   <option value="meta">Meta Ads</option>
                   <option value="google">Google Ads</option>
@@ -644,12 +645,12 @@ export function BalancesView({ data, platform = 'meta', onPlatformChange }) {
             )}
 
             {agencies.length > 0 && (
-              <div className="flex flex-col gap-1 col-span-1 sm:w-[180px]">
-                <label className="text-[10px] font-medium text-text-secondary uppercase tracking-wider">Agência</label>
+              <div className={FILTER_FIELD}>
+                <label className={FILTER_LABEL}>Agência</label>
                 <select
                   value={selectedAgency}
                   onChange={e => setSelectedAgency(e.target.value)}
-                  className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-lg px-3 py-2 text-xs font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer h-[36px]"
+                  className={FILTER_CONTROL}
                 >
                   <option value="all">Todas</option>
                   {agencies.map(ag => (
@@ -659,12 +660,12 @@ export function BalancesView({ data, platform = 'meta', onPlatformChange }) {
               </div>
             )}
 
-            <div className="flex flex-col gap-1 col-span-1 sm:w-[200px]">
-              <label className="text-[10px] font-medium text-text-secondary flex items-center gap-1 uppercase tracking-wider"><ArrowUpDown size={10} /> Ordenar</label>
+            <div className={FILTER_FIELD}>
+              <label className={FILTER_LABEL}><ArrowUpDown size={12} /> Ordenar</label>
               <select
                 value={effectiveSortBy}
                 onChange={e => setSortBy(e.target.value)}
-                className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-lg px-3 py-2 text-xs font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer h-[36px]"
+                className={FILTER_CONTROL}
               >
                 {availableSortOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
@@ -673,15 +674,15 @@ export function BalancesView({ data, platform = 'meta', onPlatformChange }) {
             <button
               onClick={refreshData}
               disabled={loading}
-              className="group relative inline-flex items-center justify-center gap-2 px-5 rounded-lg font-semibold text-xs
+              className="group relative inline-flex items-center justify-center gap-2 px-5 rounded-xl font-semibold text-sm
                 bg-gradient-to-r from-primary to-primary-light text-white shadow-lg shadow-primary/25
                 hover:shadow-xl hover:shadow-primary/30 hover:scale-[1.02] active:scale-[0.98]
                 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100
-                transition-all duration-300 ease-out h-[36px] col-span-1 min-[560px]:col-span-2 sm:col-span-1"
+                transition-all duration-300 ease-out h-[42px] col-span-1 min-[560px]:col-span-2 sm:col-span-1"
             >
               <RefreshCw size={14} className={loading ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'} />
               {loading ? 'Atualizando...' : 'Atualizar'}
-              <div className="absolute inset-0 rounded-lg bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+              <div className="absolute inset-0 rounded-xl bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
             </button>
           </div>
         </div>

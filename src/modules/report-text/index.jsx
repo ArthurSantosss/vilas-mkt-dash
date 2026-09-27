@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { useGoogleAds } from '../../contexts/GoogleAdsContext';
 import PlatformFilter from '../../shared/components/PlatformFilter';
+import ReportFormatSelector from '../../shared/components/ReportFormatSelector';
 import { fetchGoogleReport } from '../../services/googleReports';
 import { googleTextData } from '../../shared/utils/googleReports';
 import { useMetaAds } from '../../contexts/MetaAdsContext';
@@ -12,6 +13,7 @@ import { buildReportFromInsights, buildReportText } from '../../shared/utils/rep
 
 import { PRESETS } from '../../shared/utils/dateUtils';
 import { simplifyCampaignName } from '../../shared/utils/campaignName';
+import { FILTER_ROW, FILTER_FIELD, FILTER_LABEL, FILTER_CONTROL } from '../../shared/constants/filterStyles';
 
 // ── Format date range for display ──
 function formatPeriodLabel(period) {
@@ -232,26 +234,27 @@ function ReportTextContent({ platform, onPlatformChange }) {
             <FileText size={22} className="text-white" />
           </div>
           <div>
-            <h1 className="text-xl lg:text-2xl font-bold text-text-primary tracking-tight">Relatório em Texto</h1>
+            <h1 className="text-xl lg:text-2xl font-bold text-text-primary tracking-tight">Relatórios</h1>
           </div>
         </div>
 
         {/* Selectors */}
-        <div className="relative mt-5 grid grid-cols-1 min-[560px]:grid-cols-2 sm:flex sm:flex-wrap items-end justify-center gap-3 sm:gap-5">
+        <div className={`relative mt-5 ${FILTER_ROW}`}>
+          <ReportFormatSelector />
           <PlatformFilter value={platform} onChange={onPlatformChange} />
 
-          <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px] z-50">
-            <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Período</label>
+          <div className={`${FILTER_FIELD} z-50`}>
+            <label className={FILTER_LABEL}>Período</label>
             <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} className="w-full" align="left" />
           </div>
 
           {hasAgencies ? (
-            <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px]">
-              <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Agência</label>
+            <div className={FILTER_FIELD}>
+              <label className={FILTER_LABEL}>Agência</label>
               <select
                 value={selectedAgency}
                 onChange={e => { setSelectedAgency(e.target.value); setSelectedAccount(''); }}
-                className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
+                className={FILTER_CONTROL}
               >
                 <option value="__all__">Todas as agências</option>
                 {allowedAgencyList.map(ag => <option key={ag} value={ag}>{ag}</option>)}
@@ -259,12 +262,12 @@ function ReportTextContent({ platform, onPlatformChange }) {
             </div>
           ) : null}
 
-          <div className="flex flex-col gap-1.5 col-span-1 sm:w-[295px]">
-            <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Conta</label>
+          <div className={FILTER_FIELD}>
+            <label className={FILTER_LABEL}>Conta</label>
             <select
               value={selectedAccount}
               onChange={e => setSelectedAccount(e.target.value)}
-              className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
+              className={FILTER_CONTROL}
             >
               <option value="">Selecione uma conta</option>
               {filteredAccounts.map(a => <option key={a.id} value={a.id}>{a.clientName}</option>)}
@@ -272,12 +275,12 @@ function ReportTextContent({ platform, onPlatformChange }) {
           </div>
 
           {/* Modo */}
-          <div className="flex flex-col gap-1.5 col-span-1 sm:w-[210px]">
-            <label className="text-xs font-medium text-text-secondary uppercase tracking-wider">Modo</label>
+          <div className={FILTER_FIELD}>
+            <label className={FILTER_LABEL}>Modo</label>
             <select
               value={reportMode}
               onChange={e => setReportMode(e.target.value)}
-              className="w-full bg-surface/60 backdrop-blur-md border border-border/50 rounded-xl px-3 sm:px-4 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer"
+              className={FILTER_CONTROL}
             >
               <option value="all">Todas as campanhas</option>
               <option value="per_campaign">Por campanha</option>

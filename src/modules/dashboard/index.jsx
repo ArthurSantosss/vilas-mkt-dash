@@ -1,4 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import AlertsPanel from './AlertsPanel';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useMetaAds } from '../../contexts/MetaAdsContext';
 import { useGoogleAds } from '../../contexts/GoogleAdsContext';
 import { useAlerts } from '../../contexts/AlertsContext';
@@ -17,6 +20,7 @@ export default function Dashboard() {
     balances: metaBalances,
     campaigns: metaCampaigns,
     loading: metaLoading,
+    error: metaError,
     selectedPeriod: metaSelectedPeriod,
     setSelectedPeriod: setMetaSelectedPeriod,
     refreshData: refreshMetaData,
@@ -29,19 +33,48 @@ export default function Dashboard() {
     setSelectedPeriod: setGoogleSelectedPeriod,
     refreshData: refreshGoogleData,
   } = useGoogleAds();
-  const { alerts, markAsRead, markAllAsRead } = useAlerts();
+  const { alerts, thresholds } = useAlerts();
+  const queryClient = useQueryClient();
+  const refreshInFlight = useRef(false);
+  const [lastChecked, setLastChecked] = useState(null);
+  const [refreshError, setRefreshError] = useState(null);
   const [paymentMethods, setPaymentMethods] = useState(() => readSavedPaymentMethods());
   const [refreshing, setRefreshing] = useState(false);
   const selectedPeriod = metaSelectedPeriod;
 
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
+    if (refreshInFlight.current || !navigator.onLine) return;
+    refreshInFlight.current = true;
     setRefreshing(true);
-    await Promise.all([
-      refreshMetaData(),
-      refreshGoogleData(),
-    ]);
-    setRefreshing(false);
-  };
+    setRefreshError(null);
+    try {
+      await Promise.all([refreshMetaData(), refreshGoogleData()]);
+      const failed = queryClient.getQueryCache().findAll({ type: 'active' })
+        .some(query => ['meta', 'googleAds'].includes(query.queryKey[0]) && query.state.status === 'error');
+      if (failed) setRefreshError('Alguns dados não foram atualizados. Exibindo os últimos dados disponíveis.');
+      else setLastChecked(new Date());
+    } catch {
+      setRefreshError('Não foi possível atualizar os dados. Tentaremos novamente automaticamente.');
+    } finally {
+      refreshInFlight.current = false;
+      setRefreshing(false);
+    }
+  }, [refreshMetaData, refreshGoogleData, queryClient]);
+
+  useEffect(() => {
+    const refreshVisible = () => {
+      if (document.visibilityState === 'visible') void handleRefresh();
+    };
+    refreshVisible();
+    const interval = window.setInterval(refreshVisible, 60_000);
+    document.addEventListener('visibilitychange', refreshVisible);
+    window.addEventListener('online', refreshVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', refreshVisible);
+      window.removeEventListener('online', refreshVisible);
+    };
+  }, [handleRefresh]);
 
   const handlePeriodChange = (period) => {
     setMetaSelectedPeriod(period);
@@ -93,12 +126,12 @@ export default function Dashboard() {
   const readableBalances = useMemo(
     () => metaBalances.filter((balance) => (
       balance.hasReliableBalance !== false &&
-      !isCreditCardPaymentMethod(getAccountPaymentMethod(paymentMethods, balance.accountId) || 'credit_card')
+      !isCreditCardPaymentMethod(getAccountPaymentMethod(paymentMethods, balance.accountId) || '')
     )),
     [metaBalances, paymentMethods]
   );
 
-  const activeAlerts = useMemo(() => alerts.filter(alert => !alert.read), [alerts]);
+  const activeAlerts = alerts;
   const criticalAlerts = useMemo(
     () => activeAlerts.filter(alert => alert.type === 'critical').length,
     [activeAlerts]
@@ -149,8 +182,8 @@ export default function Dashboard() {
   );
 
   const lowBalanceCount = useMemo(
-    () => readableBalances.filter(balance => balance.currentBalance > 0 && balance.currentBalance < 150).length,
-    [readableBalances]
+    () => readableBalances.filter(balance => (balance.currentBalance <= 0 || balance.currentBalance < thresholds.balance_warning)).length,
+    [readableBalances, thresholds.balance_warning]
   );
 
   const healthRows = useMemo(() => ([
@@ -158,7 +191,7 @@ export default function Dashboard() {
       label: 'Campanhas ativas',
       value: formatNumber(activeCampaignCount),
       tone: 'text-text-primary',
-      helper: 'Meta Ads',
+      helper: 'Meta Ads e Google Ads',
     },
     {
       label: 'Campanhas com gasto',
@@ -182,9 +215,11 @@ export default function Dashboard() {
       label: 'Contas com saldo baixo',
       value: formatNumber(lowBalanceCount),
       tone: lowBalanceCount > 0 ? 'text-danger' : 'text-success',
-      helper: 'Meta abaixo de R$ 150',
+      helper: `Meta abaixo de ${formatCurrency(thresholds.balance_warning)}`,
     } : {
       label: 'Contas Meta ativas',
+      value: formatNumber(activeMetaAccounts.length),
+      tone: 'text-text-primary',
       helper: 'Contas com campanhas ativas',
     },
     {
@@ -193,11 +228,11 @@ export default function Dashboard() {
       tone: estimatedCoverageDays > 0 && estimatedCoverageDays < 4 ? 'text-warning' : 'text-text-primary',
       helper: 'Baseado na média diária das contas',
     },
-  ]), [activeCampaignCount, campaignsWithSpend, campaignsWithoutSpend, highFrequencyCount, lowBalanceCount, estimatedCoverageDays, metaBalances.length]);
+  ]), [activeCampaignCount, campaignsWithSpend, campaignsWithoutSpend, highFrequencyCount, lowBalanceCount, estimatedCoverageDays, metaBalances.length, activeMetaAccounts.length, thresholds.balance_warning]);
 
   const lowestBalances = useMemo(
     () => readableBalances
-      .filter(balance => balance.currentBalance > 0)
+      .filter(balance => Number.isFinite(balance.currentBalance))
       .sort((a, b) => a.currentBalance - b.currentBalance)
       .slice(0, 5),
     [readableBalances]
@@ -211,7 +246,7 @@ export default function Dashboard() {
         const leads = account.metrics?.messagingConversationsStarted || 0;
         const cpl = leads > 0 ? (account.metrics?.costPerMessage || spend / leads) : 0;
         const frequency = account.metrics?.frequency || 0;
-        const paymentMethod = getAccountPaymentMethod(paymentMethods, account.id, account.accountId) || 'credit_card';
+        const paymentMethod = getAccountPaymentMethod(paymentMethods, account.id, account.accountId) || '';
         const hasReliableBalance = Boolean(balance) &&
           balance.hasReliableBalance !== false &&
           !isCreditCardPaymentMethod(paymentMethod);
@@ -222,11 +257,11 @@ export default function Dashboard() {
         let statusLabel = 'Estável';
         let statusTone = 'success';
 
-        if (currentBalance !== null && currentBalance > 0 && currentBalance < 50) {
+        if (currentBalance !== null && (currentBalance <= 0 || currentBalance < thresholds.balance_critical)) {
           priority = 5;
           statusLabel = 'Saldo crítico';
           statusTone = 'danger';
-        } else if (currentBalance !== null && currentBalance >= 50 && currentBalance < 150) {
+        } else if (currentBalance !== null && currentBalance < thresholds.balance_warning) {
           priority = 4;
           statusLabel = 'Saldo em atenção';
           statusTone = 'warning';
@@ -261,10 +296,11 @@ export default function Dashboard() {
       })
       .sort((a, b) => b.priority - a.priority || b.spend - a.spend || a.cpl - b.cpl)
       .slice(0, 8);
-  }, [activeAccountsData, balanceByAccountId, paymentMethods]);
+  }, [activeAccountsData, balanceByAccountId, paymentMethods, thresholds]);
 
   return (
     <div className="space-y-6 pb-12">
+      {(metaError || refreshError) && <p role="alert" className="rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm text-warning">{refreshError || `Meta Ads: ${metaError}`}</p>}
       {googleError && <div role="alert" className="rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm text-warning">
         Google Ads: alguns dados não puderam ser atualizados. Os totais podem estar incompletos. {googleError} Confira as conexões em Configurações.
       </div>}
@@ -280,6 +316,7 @@ export default function Dashboard() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-text-primary tracking-tight">Dashboard</h1>
+              <p className="text-xs text-text-secondary mt-1" aria-live="polite">Atualização automática a cada minuto{lastChecked ? ` · Última verificação às ${lastChecked.toLocaleTimeString('pt-BR')}` : ''}</p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3 z-50 shrink-0">
@@ -287,7 +324,7 @@ export default function Dashboard() {
             <button
               onClick={handleRefresh}
               disabled={refreshing || metaLoading || googleLoading}
-              className="flex items-center justify-center px-4 py-2.5 rounded-xl bg-surface border border-border text-text-secondary hover:text-primary hover:border-primary/30 transition-all disabled:opacity-50"
+              className="flex h-[42px] items-center justify-center px-4 rounded-xl bg-surface/60 backdrop-blur-md border border-border/50 text-sm font-medium text-text-secondary hover:text-primary hover:border-primary/30 transition-all shadow-sm disabled:opacity-50"
               title="Atualizar dados"
             >
               <RefreshCw size={16} className={`mr-2 ${refreshing || metaLoading || googleLoading ? 'animate-spin' : ''}`} />
@@ -297,18 +334,25 @@ export default function Dashboard() {
         </div>
       </div>
 
+      <nav aria-label="Atalhos do dashboard" className="flex flex-wrap gap-x-6 gap-y-3 text-sm text-primary-light">
+        <a href="#avisos" className="hover:underline">Avisos ({alerts.length})</a>
+        <Link to="/saldos" className="hover:underline">Saldos e recargas</Link>
+        <Link to="/relatorios" className="hover:underline">Gerar relatório</Link>
+        <Link to="/visao-detalhada" className="hover:underline">Analisar desempenho</Link>
+      </nav>
+
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4">
         <ScrollReveal direction="up" delay={0}>
-          <DashCard icon={Users} label="Contas Ativas" value={formatNumber(activeAccountsData.length)} helper={`${activeMetaAccounts.length} Meta`} color="text-info" />
+          <DashCard icon={Users} label="Contas Ativas" value={formatNumber(activeAccountsData.length)} helper={`${activeMetaAccounts.length} Meta · ${activeGoogleAccounts.length} Google`} color="text-info" />
         </ScrollReveal>
         <ScrollReveal direction="up" delay={60}>
-          <DashCard icon={DollarSign} label="Investimento no Período" value={formatCurrency(periodSpend)} helper="Meta Ads no período selecionado" color="text-primary-light" />
+          <DashCard icon={DollarSign} label="Investimento no Período" value={formatCurrency(periodSpend)} helper="Meta Ads + Google Ads" color="text-primary-light" />
         </ScrollReveal>
         <ScrollReveal direction="up" delay={120}>
-          <DashCard icon={MessageCircle} label="Resultados no Período" value={formatNumber(periodResults)} helper="Conversas do Meta" color="text-success" />
+          <DashCard icon={MessageCircle} label="Resultados no Período" value={formatNumber(periodResults)} helper="Conversas Meta + conversões Google" color="text-success" />
         </ScrollReveal>
         <ScrollReveal direction="up" delay={180}>
-          <DashCard icon={Target} label="Custo Médio por Resultado" value={averageResultCost > 0 ? formatCurrency(averageResultCost) : '—'} helper="Custo médio por conversa" color={averageResultCost > 10 ? 'text-warning' : 'text-primary-light'} />
+          <DashCard icon={Target} label="Custo Médio por Resultado" value={averageResultCost > 0 ? formatCurrency(averageResultCost) : '—'} helper="Investimento ÷ resultados" color={averageResultCost > 10 ? 'text-warning' : 'text-primary-light'} />
         </ScrollReveal>
         <ScrollReveal direction="up" delay={240}>
           <DashCard
@@ -330,68 +374,7 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <ScrollReveal direction="left" delay={100} className="xl:col-span-2">
-          <div className="card-hover bg-surface rounded-2xl border border-border p-5 h-full">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h2 className="text-lg font-semibold text-text-primary flex items-center gap-2">
-                  <AlertCircle size={18} className="text-warning" />
-                  Prioridades de Hoje
-                </h2>
-                <p className="text-xs text-text-secondary mt-1">O que precisa de atenção antes de escalar ou manter investimento.</p>
-              </div>
-              {activeAlerts.length > 0 && (
-                <button
-                  onClick={markAllAsRead}
-                  className="text-xs text-text-secondary hover:text-primary transition-colors"
-                >
-                  Marcar tudo como lido
-                </button>
-              )}
-            </div>
-
-            <div className="space-y-3 max-h-[420px] overflow-y-auto">
-              {metaLoading || googleLoading ? (
-                <p className="text-text-secondary text-sm py-6 text-center">Carregando dados...</p>
-              ) : activeAlerts.length === 0 ? (
-                <div className="rounded-xl border border-success/20 bg-success/5 p-5 text-center">
-                  <p className="text-sm text-success font-medium">Nenhuma prioridade crítica no momento.</p>
-                  <p className="text-xs text-text-secondary mt-1">A operação está estável com os dados atuais.</p>
-                </div>
-              ) : (
-                activeAlerts.slice(0, 6).map(alert => (
-                  <div
-                    key={alert.id}
-                    onClick={() => markAsRead(alert.id)}
-                    className={`flex items-start gap-3 p-4 rounded-xl transition-colors cursor-pointer border ${
-                      alert.type === 'critical'
-                        ? 'bg-danger/5 border-danger/20'
-                        : alert.type === 'warning'
-                          ? 'bg-warning/5 border-warning/20'
-                          : 'bg-info/5 border-info/20'
-                    } ${alert.read ? 'opacity-60' : 'hover:bg-surface-hover'}`}
-                  >
-                    {alert.type === 'critical' && <AlertTriangle size={16} className="text-danger mt-0.5 shrink-0" />}
-                    {alert.type === 'warning' && <AlertCircle size={16} className="text-warning mt-0.5 shrink-0" />}
-                    {alert.type === 'info' && <Info size={16} className="text-info mt-0.5 shrink-0" />}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-semibold text-text-primary">{alert.accountName}</span>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-meta/10 text-meta border border-meta/20">Meta</span>
-                        {!alert.read && <span className="w-1.5 h-1.5 rounded-full bg-primary-light" />}
-                      </div>
-                      <p className="text-sm text-text-primary mt-1 leading-relaxed">{alert.message}</p>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            {activeAlerts.length > 6 && (
-              <p className="text-xs text-text-secondary mt-4">
-                +{activeAlerts.length - 6} alertas adicionais na fila.
-              </p>
-            )}
-          </div>
+          <AlertsPanel loading={metaLoading || refreshing} error={metaError || refreshError} />
         </ScrollReveal>
 
         <ScrollReveal direction="right" delay={180}>
@@ -423,7 +406,7 @@ export default function Dashboard() {
                   <p className="text-xs text-text-secondary">Nenhuma conta com saldo registrado.</p>
                 ) : (
                   lowestBalances.map(balance => {
-                    const tone = balance.currentBalance < 50 ? 'text-danger' : balance.currentBalance < 150 ? 'text-warning' : 'text-success';
+                    const tone = balance.currentBalance <= 0 || balance.currentBalance < thresholds.balance_critical ? 'text-danger' : balance.currentBalance < thresholds.balance_warning ? 'text-warning' : 'text-success';
                     return (
                       <div key={balance.accountId} className="flex items-center justify-between gap-3 rounded-lg px-3 py-2 bg-bg/20">
                         <div className="min-w-0">
@@ -492,7 +475,7 @@ export default function Dashboard() {
                       <td className={`px-3 py-3 text-right font-medium ${account.cpl > 10 ? 'text-warning' : 'text-primary-light'}`}>
                         {account.cpl > 0 ? formatCurrency(account.cpl) : '—'}
                       </td>
-                      <td className={`px-3 py-3 text-right font-medium ${account.currentBalance === null ? 'text-text-secondary' : account.currentBalance > 0 && account.currentBalance < 50 ? 'text-danger' : account.currentBalance < 150 ? 'text-warning' : 'text-success'}`}>
+                      <td className={`px-3 py-3 text-right font-medium ${account.currentBalance === null ? 'text-text-secondary' : account.currentBalance <= 0 || account.currentBalance < thresholds.balance_critical ? 'text-danger' : account.currentBalance < thresholds.balance_warning ? 'text-warning' : 'text-success'}`}>
                         {account.currentBalance === null ? '—' : formatCurrency(account.currentBalance)}
                       </td>
                       <td className="px-3 py-3 text-right text-text-secondary">
@@ -524,7 +507,7 @@ export default function Dashboard() {
                     <div><span className="text-text-secondary">Gasto:</span> <span className="text-text-primary font-medium">{formatCurrency(account.spend)}</span></div>
                     <div><span className="text-text-secondary">Resultados:</span> <span className="text-text-primary font-medium">{formatNumber(account.leads)}</span></div>
                     <div><span className="text-text-secondary">Custo:</span> <span className={`font-medium ${account.cpl > 10 ? 'text-warning' : 'text-primary-light'}`}>{account.cpl > 0 ? formatCurrency(account.cpl) : '—'}</span></div>
-                    <div><span className="text-text-secondary">Saldo:</span> <span className={`font-medium ${account.currentBalance === null ? 'text-text-secondary' : account.currentBalance > 0 && account.currentBalance < 50 ? 'text-danger' : account.currentBalance < 150 ? 'text-warning' : 'text-success'}`}>{account.currentBalance === null ? '—' : formatCurrency(account.currentBalance)}</span></div>
+                    <div><span className="text-text-secondary">Saldo:</span> <span className={`font-medium ${account.currentBalance === null ? 'text-text-secondary' : account.currentBalance <= 0 || account.currentBalance < thresholds.balance_critical ? 'text-danger' : account.currentBalance < thresholds.balance_warning ? 'text-warning' : 'text-success'}`}>{account.currentBalance === null ? '—' : formatCurrency(account.currentBalance)}</span></div>
                   </div>
                 </div>
               ))}

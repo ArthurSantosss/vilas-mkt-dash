@@ -1,188 +1,93 @@
-import { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { useQueries } from '@tanstack/react-query';
 import { useMetaAds } from './MetaAdsContext';
-import { isCreditCardPaymentMethod, readSavedPaymentMethods, getAccountPaymentMethod } from '../shared/utils/paymentMethod';
+import { useAgency } from './AgencyContext';
+import { fetchAccountDailyInsights } from '../services/metaApi';
+import { readSavedPaymentMethods } from '../shared/utils/paymentMethod';
+import { generateAutomaticAlerts } from '../shared/utils/automaticAlerts';
+import { AUTO_ALERTS_STORAGE_KEY, normalizeAutoAlertThresholds } from '../shared/constants/autoAlerts';
 
 const AlertsContext = createContext();
 
-/**
- * Generates real-time alerts based on live account/campaign data.
- */
-function generateAlerts(metaAccounts, metaBalances, metaCampaigns, paymentMethods) {
-  const alerts = [];
-  let id = 1;
-  const now = new Date().toISOString();
-
-  // ── 1. Low balance alerts (Meta) ──
-  metaBalances.forEach(b => {
-    const paymentMethod = getAccountPaymentMethod(paymentMethods, b.accountId) || 'credit_card';
-    if (isCreditCardPaymentMethod(paymentMethod)) return;
-    if (b.hasReliableBalance === false) return;
-    if (b.currentBalance > 0 && b.currentBalance < 50) {
-      alerts.push({
-        id: id++,
-        type: 'critical',
-        platform: 'meta',
-        accountName: b.clientName,
-        message: `Saldo muito baixo: ${fmtR$(b.currentBalance)}. Recarregue para evitar pausas.`,
-        timestamp: now,
-      });
-    } else if (b.currentBalance >= 50 && b.currentBalance < 150) {
-      alerts.push({
-        id: id++,
-        type: 'warning',
-        platform: 'meta',
-        accountName: b.clientName,
-        message: `Saldo em atenção: ${fmtR$(b.currentBalance)}. Estimativa de ${b.estimatedDaysRemaining > 0 ? b.estimatedDaysRemaining.toFixed(1) : '?'} dias restantes.`,
-        timestamp: now,
-      });
-    }
-  });
-
-  // ── 2. Active campaigns with zero spend (Meta) ──
-  metaCampaigns.forEach(c => {
-    if (c.status === 'active' && c.metrics && c.metrics.spend === 0) {
-      alerts.push({
-        id: id++,
-        type: 'warning',
-        platform: 'meta',
-        accountName: c.name,
-        message: `Campanha ativa sem gasto no período. Verifique saldo, orçamento ou aprovação.`,
-        timestamp: now,
-      });
-    }
-  });
-
-  // ── 3. High CPM (Meta — accounts above 2× average) ──
-  const metaActive = metaAccounts.filter(a => a.status === 'active' && a.metrics?.spend > 0);
-  if (metaActive.length > 1) {
-    const cpms = metaActive.map(a => a.metrics.cpm).filter(v => v > 0);
-    const avgCpm = cpms.length > 0 ? cpms.reduce((s, v) => s + v, 0) / cpms.length : 0;
-    metaActive.forEach(a => {
-      if (a.metrics.cpm > avgCpm * 2 && avgCpm > 0) {
-        alerts.push({
-          id: id++,
-          type: 'warning',
-          platform: 'meta',
-          accountName: a.clientName,
-          message: `CPM de ${fmtR$(a.metrics.cpm)} está ${(a.metrics.cpm / avgCpm).toFixed(1)}× acima da média (${fmtR$(avgCpm)}).`,
-          timestamp: now,
-        });
-      }
-    });
+function readThresholds() {
+  try {
+    return normalizeAutoAlertThresholds(JSON.parse(localStorage.getItem(AUTO_ALERTS_STORAGE_KEY)));
+  } catch {
+    return normalizeAutoAlertThresholds();
   }
-
-  // ── 4. High frequency campaigns (Meta, freq > 3) ──
-  metaCampaigns.forEach(c => {
-    const freq = c.metrics?.frequency || 0;
-    if (freq > 3 && c.metrics?.spend > 0) {
-      alerts.push({
-        id: id++,
-        type: 'warning',
-        platform: 'meta',
-        accountName: c.name,
-        message: `Frequência alta (${freq.toFixed(1)}). Público pode estar saturado — renove criativos ou amplie audiência.`,
-        timestamp: now,
-      });
-    }
-  });
-
-  // ── 5. Sharp spend drops (Meta — today vs yesterday, >60% drop) ──
-  metaAccounts.forEach(a => {
-    const daily = a.dailyMetrics;
-    if (daily && daily.length >= 2) {
-      const today = daily[daily.length - 1]?.spend || 0;
-      const yesterday = daily[daily.length - 2]?.spend || 0;
-      if (yesterday > 5 && today < yesterday * 0.4) {
-        const dropPct = ((1 - today / yesterday) * 100).toFixed(0);
-        alerts.push({
-          id: id++,
-          type: 'critical',
-          platform: 'meta',
-          accountName: a.clientName,
-          message: `Queda de ${dropPct}% no gasto vs. ontem (${fmtR$(today)} → ${fmtR$(yesterday)}). Verifique campanhas e saldo.`,
-          timestamp: now,
-        });
-      }
-    }
-  });
-
-  // ── 6. High cost per message (Meta, > R$10) ──
-  metaAccounts.forEach(a => {
-    const cpm = a.metrics?.costPerMessage || 0;
-    if (cpm > 10 && a.metrics?.messagingConversationsStarted > 0) {
-      alerts.push({
-        id: id++,
-        type: 'info',
-        platform: 'meta',
-        accountName: a.clientName,
-        message: `Custo por conversa elevado: ${fmtR$(cpm)}. Revise públicos e criativos para otimizar.`,
-        timestamp: now,
-      });
-    }
-  });
-
-  // Sort: critical first, then warning, then info
-  const priority = { critical: 0, warning: 1, info: 2 };
-  alerts.sort((a, b) => priority[a.type] - priority[b.type]);
-
-  return alerts;
-}
-
-function fmtR$(val) {
-  return `R$ ${val.toFixed(2).replace('.', ',')}`;
 }
 
 export function AlertsProvider({ children }) {
-  const { accounts: metaAccounts, balances: metaBalances, campaigns: metaCampaigns } = useMetaAds();
-
+  const { accounts, balances, campaigns } = useMetaAds();
+  const { accountAgencies } = useAgency();
   const [readIds, setReadIds] = useState(new Set());
-  const [paymentMethods, setPaymentMethods] = useState(() => readSavedPaymentMethods());
+  const [paymentMethods, setPaymentMethods] = useState(readSavedPaymentMethods);
+  const [thresholds, setThresholds] = useState(readThresholds);
+
+  // Alertas de hoje independem do período escolhido para analisar desempenho.
+  const dailyQueries = useQueries({
+    queries: accounts.map(account => ({
+      queryKey: ['meta', 'alertToday', account.id],
+      queryFn: () => fetchAccountDailyInsights(account.id, 'today'),
+      enabled: account.status === 'active',
+      staleTime: 60_000,
+    })),
+  });
+  const todayAccounts = accounts.map((account, index) => ({
+    ...account,
+    dailyMetrics: (dailyQueries[index]?.data || []).map(day => ({
+      date: day.date_start,
+      spend: Number(day.spend || 0),
+      messages: Number(day.actions?.find(action => action.action_type === 'onsite_conversion.messaging_conversation_started_7d')?.value || 0),
+    })),
+  }));
 
   useEffect(() => {
-    const syncPaymentMethods = () => setPaymentMethods(readSavedPaymentMethods());
-    const handleLocalStorageMapUpdated = (event) => {
-      if (event?.detail?.key === 'account_payment_methods') {
-        setPaymentMethods(event.detail.value || {});
-      }
+    const sync = () => {
+      setPaymentMethods(readSavedPaymentMethods());
+      setThresholds(readThresholds());
     };
-    window.addEventListener('storage', syncPaymentMethods);
-    window.addEventListener('focus', syncPaymentMethods);
-    window.addEventListener('local-storage-map-updated', handleLocalStorageMapUpdated);
+    window.addEventListener('storage', sync);
+    window.addEventListener('focus', sync);
+    window.addEventListener('local-storage-map-updated', sync);
     return () => {
-      window.removeEventListener('storage', syncPaymentMethods);
-      window.removeEventListener('focus', syncPaymentMethods);
-      window.removeEventListener('local-storage-map-updated', handleLocalStorageMapUpdated);
+      window.removeEventListener('storage', sync);
+      window.removeEventListener('focus', sync);
+      window.removeEventListener('local-storage-map-updated', sync);
     };
   }, []);
 
-  const generatedAlerts = useMemo(
-    () => generateAlerts(metaAccounts, metaBalances, metaCampaigns, paymentMethods),
-    [metaAccounts, metaBalances, metaCampaigns, paymentMethods]
-  );
-
-  const alerts = useMemo(
-    () => generatedAlerts.map(a => ({ ...a, read: readIds.has(a.id) })),
-    [generatedAlerts, readIds]
-  );
-
-  const unreadCount = useMemo(() => alerts.filter(a => !a.read).length, [alerts]);
-  const criticalCount = useMemo(() => alerts.filter(a => a.type === 'critical' && !a.read).length, [alerts]);
-
-  const markAsRead = useCallback((alertId) => {
-    setReadIds(prev => new Set([...prev, alertId]));
-  }, []);
-
-  const markAllAsRead = useCallback(() => {
-    setReadIds(new Set(generatedAlerts.map(a => a.id)));
-  }, [generatedAlerts]);
-
-  const value = useMemo(() => ({
-    alerts,
-    unreadCount,
-    criticalCount,
-    markAsRead,
-    markAllAsRead,
-  }), [alerts, unreadCount, criticalCount, markAsRead, markAllAsRead]);
+  const automaticAlerts = generateAutomaticAlerts({ accounts: todayAccounts, balances, accountAgencies, paymentMethodsMap: paymentMethods, thresholds })
+    .map(alert => ({ ...alert, category: alert.type, type: alert.severity === 'danger' ? 'critical' : alert.severity, platform: 'meta', href: ['payment_error', 'balance_low'].includes(alert.type) ? '/saldos' : '/meta-ads' }));
+  const campaignAlerts = campaigns.flatMap(campaign => {
+    const common = { platform: 'meta', accountId: campaign.accountId, accountName: campaign.name, agency: accountAgencies[campaign.accountId], type: 'warning', category: 'delivery', href: '/meta-ads', detail: 'No período selecionado' };
+    const alerts = [];
+    if (campaign.status === 'active' && campaign.metrics?.spend === 0) {
+      alerts.push({ ...common, id: `delivery-${campaign.id}`, message: 'Campanha ativa sem gasto. Verifique saldo, orçamento ou aprovação.' });
+    }
+    if (campaign.metrics?.frequency > 3 && campaign.metrics?.spend > 0) {
+      alerts.push({ ...common, id: `frequency-${campaign.id}`, message: `Frequência alta (${campaign.metrics.frequency.toFixed(1)}). Revise criativos e audiência.` });
+    }
+    return alerts;
+  });
+  const priority = { critical: 0, warning: 1, info: 2 };
+  const generatedAlerts = [...automaticAlerts, ...campaignAlerts].sort((a, b) => priority[a.type] - priority[b.type]);
+  // A leitura pertence à condição e à gravidade, nunca à posição na lista.
+  const alerts = generatedAlerts.map(alert => ({ ...alert, readKey: `${alert.id}:${alert.type}`, read: readIds.has(`${alert.id}:${alert.type}`) }));
+  const unreadCount = alerts.filter(alert => !alert.read).length;
+  const criticalCount = alerts.filter(alert => alert.type === 'critical' && !alert.read).length;
+  const markAsRead = useCallback(readKey => setReadIds(previous => new Set([...previous, readKey])), []);
+  const markAllAsRead = () => setReadIds(new Set(alerts.map(alert => alert.readKey)));
+  const loading = dailyQueries.some(query => query.isLoading);
+  const error = dailyQueries.some(query => query.isError) ? 'Alguns avisos de hoje não puderam ser atualizados.' : null;
+  const updateThreshold = (key, value) => {
+    if (!Number.isFinite(value) || value < 0) return;
+    const next = normalizeAutoAlertThresholds({ ...thresholds, [key]: value });
+    localStorage.setItem(AUTO_ALERTS_STORAGE_KEY, JSON.stringify(next));
+    setThresholds(next);
+    window.dispatchEvent(new CustomEvent('local-storage-map-updated', { detail: { key: AUTO_ALERTS_STORAGE_KEY, value: next } }));
+  };
+  const value = { updateThreshold, alerts, unreadCount, criticalCount, markAsRead, markAllAsRead, thresholds, loading, error };
   return <AlertsContext.Provider value={value}>{children}</AlertsContext.Provider>;
 }
 

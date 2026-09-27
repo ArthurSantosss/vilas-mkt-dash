@@ -6,6 +6,9 @@ import { getAgencyLogoSources, getAgencyLabel } from '../../shared/utils/agencyL
 import { toVisualReportData } from '../../shared/utils/visualReportData';
 import { uploadVisualReport } from '../../shared/utils/uploadVisualReport';
 import { getStoredMetaToken } from '../../services/metaTokenGuard';
+import PeriodSelector from '../../shared/components/PeriodSelector';
+import { PRESETS } from '../../shared/utils/dateUtils';
+import { FILTER_CONTROL, FILTER_LABEL } from '../../shared/constants/filterStyles';
 
 async function reportRequest(options) {
   const res = await fetch('/api/alerts/reports', options);
@@ -21,7 +24,7 @@ function VisualPreview({ report }) {
     <ReportCard
       data={toVisualReportData(report)}
       agencyLogoSrc={getAgencyLogoSources(report.agencyName, report.agency)}
-      platformLogoSrc={report.platform === 'google' ? '/google-ads-logo.svg' : '/meta-ads-logo.png'}
+      platformLogoSrc={report.platform === 'google' ? '/google-ads-logo.svg' : '/meta-logo.svg'}
       clientLogoSrc={logos[report.accountId] || logos[report.accountNumber]}
       agencyLabel={getAgencyLabel(report.agencyName, report.agency)}
       showAccountName={false}
@@ -34,6 +37,7 @@ function VisualPreview({ report }) {
 export default function AutomaticReports() {
   const [data, setData] = useState(null);
   const [period, setPeriod] = useState(() => getReportPeriod());
+  const [periodSelection, setPeriodSelection] = useState('7d');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -81,45 +85,48 @@ export default function AutomaticReports() {
   };
 
   const today = reportLocalDate(new Date());
-  const latestCompleteDay = getReportPeriod().until;
   const validPeriod = period.since && period.until && period.since <= period.until && period.until < today
     && (Date.parse(period.until) - Date.parse(period.since)) / 86400000 < 31;
   const currentReport = preview?.reports[previewIndex];
 
+  const handlePeriodChange = selection => {
+    const range = typeof selection === 'object'
+      ? selection
+      : PRESETS.find(preset => preset.id === selection)?.getRange();
+    if (!range) return;
+    setPeriodSelection(selection);
+    setPeriod({ since: range.startDate, until: range.endDate });
+    setPreview(null);
+  };
+
   return (
     <div className="space-y-6">
       {/* ═══ HEADER ═══ */}
-      <div className="relative rounded-2xl border border-border bg-gradient-to-br from-surface via-[#1a1d27] to-[#0f1117] p-4 sm:p-6">
+      <div className="relative z-10 rounded-2xl border border-border bg-gradient-to-br from-surface via-[#1a1d27] to-[#0f1117] p-4 sm:p-6">
         <div className="absolute inset-0 overflow-hidden rounded-2xl pointer-events-none">
           <div className="absolute -top-20 -right-20 h-60 w-60 rounded-full bg-primary/5 blur-3xl" />
           <div className="absolute -bottom-10 -left-10 h-40 w-40 rounded-full bg-primary-light/5 blur-3xl" />
         </div>
 
-        <div className="relative flex items-center gap-3">
-          <div className="flex items-center justify-center w-11 h-11 rounded-xl bg-gradient-to-br from-primary to-primary-light shadow-lg shadow-primary/20">
-            <Send size={22} className="text-white" />
+        <div className="relative flex flex-col md:flex-row md:items-end justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center justify-center w-11 h-11 rounded-xl bg-gradient-to-br from-primary to-primary-light shadow-lg shadow-primary/20">
+              <Send size={22} className="text-white" />
+            </div>
+            <div>
+              <h1 className="text-xl lg:text-2xl font-bold text-text-primary tracking-tight">Envio de relatórios</h1>
+            </div>
           </div>
-          <div>
-            <h1 className="text-xl lg:text-2xl font-bold text-text-primary tracking-tight">Envio de relatórios</h1>
-          </div>
-        </div>
-      </div>
 
-      <section className="bg-surface rounded-xl border border-border p-4 sm:p-6">
-        <h2 className="text-lg font-bold text-text-primary">Período da veiculação</h2>
-        <div className="flex flex-wrap gap-4 mt-4">
-          <label className="text-xs font-medium text-text-secondary uppercase tracking-wider sm:w-[210px]">De
-            <input type="date" value={period.since} max={period.until || today} onChange={event => { setPeriod(previous => ({ ...previous, since: event.target.value })); setPreview(null); }}
-              className="block mt-1.5 w-full rounded-xl border border-border/50 bg-surface/60 backdrop-blur-md px-3 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer" />
-          </label>
-          <label className="text-xs font-medium text-text-secondary uppercase tracking-wider sm:w-[210px]">Até
-            <input type="date" value={period.until} min={period.since} max={latestCompleteDay} onChange={event => { setPeriod(previous => ({ ...previous, until: event.target.value })); setPreview(null); }}
-              className="block mt-1.5 w-full rounded-xl border border-border/50 bg-surface/60 backdrop-blur-md px-3 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer" />
-          </label>
+          <div className="z-50 flex w-full flex-col gap-1.5 md:w-[260px]">
+            <label className={FILTER_LABEL}>Período da veiculação</label>
+            <PeriodSelector selectedPeriod={periodSelection} onPeriodChange={handlePeriodChange} className="w-full" />
+          </div>
         </div>
-        <p className="text-xs text-text-secondary mt-3">Até 31 dias completos. O dia de hoje ainda não está disponível.</p>
-        {!validPeriod && <p role="alert" className="text-sm text-warning mt-2">Selecione um período válido de 1 a 31 dias, encerrado antes de hoje.</p>}
-      </section>
+
+        <p className="relative mt-3 text-xs text-text-secondary md:text-right">Até 31 dias completos. O dia de hoje ainda não está disponível.</p>
+        {!validPeriod && <p role="alert" className="relative mt-2 text-sm text-warning md:text-right">Selecione um período válido de 1 a 31 dias, encerrado antes de hoje.</p>}
+      </div>
 
       {loading ? <p className="flex gap-2 text-sm text-text-secondary"><Loader2 size={18} className="animate-spin" /> Carregando agências...</p> : data && (
         <section className="grid gap-4 xl:grid-cols-3">
@@ -169,7 +176,7 @@ export default function AutomaticReports() {
         {preview.errors.map((item, index) => <p key={index} className="text-xs text-warning">{item.accountName}: {item.error}</p>)}
         {preview.reports.length === 0 ? <p className="text-sm text-text-secondary">Nenhum relatório disponível para este período.</p> : <>
           <label className="block text-xs font-medium text-text-secondary uppercase tracking-wider">Conta
-            <select value={previewIndex} onChange={event => setPreviewIndex(Number(event.target.value))} className="block w-full mt-2 rounded-xl border border-border/50 bg-surface/60 backdrop-blur-md px-3 py-2.5 text-sm font-medium text-text-primary hover:border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all shadow-sm cursor-pointer">
+            <select value={previewIndex} onChange={event => setPreviewIndex(Number(event.target.value))} className={`${FILTER_CONTROL} mt-1.5 block sm:max-w-[320px]`}>
               {preview.reports.map((report, index) => <option key={report.accountId} value={index}>{report.accountName}</option>)}
             </select>
           </label>

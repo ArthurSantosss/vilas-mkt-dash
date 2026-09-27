@@ -66,7 +66,7 @@ async function waitForCard(node) {
 export async function renderVisualReportPng(report) {
   const agencyLogoSources = getAgencyLogoSources(report.agencyName, report.agency);
   const agencyLogo = agencyLogoSources.length ? await asDataUrl(agencyLogoSources[0]) : null;
-  const platformLogo = await asDataUrl(report.platform === 'google' ? '/google-ads-logo.svg' : '/meta-ads-logo.png');
+  const platformLogo = await asDataUrl(report.platform === 'google' ? '/google-ads-logo.svg' : '/meta-logo.svg');
   const clientLogo = await clientLogoDataUrl(report);
   const host = document.createElement('div');
   host.style.cssText = 'position:fixed;left:-200vw;top:0;opacity:0;pointer-events:none;width:1200px;z-index:-1';
