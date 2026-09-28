@@ -11,6 +11,7 @@ Remover os indicadores agregados acima das contas Google Ads, diagnosticar a rec
 - [x] Leituras tentam caminhos alternativos já autorizados quando o caminho escolhido perde permissão.
 - [x] Saldos Google no mesmo componente visual da Meta, com gastos reais e preferências isoladas; saldo indisponível não vira zero nem orçamento disponível.
 - [x] Relatórios visual e texto com seletor de plataforma, conta e campanha; seleção não mistura dados entre plataformas.
+- [x] Trocar Meta/Google preserva a agência selecionada nos relatórios visual e texto.
 - [x] Google utiliza conversões/cliques e sua identificação visual, sem inventar alcance, mensagens ou engajamentos Meta.
 - [x] Exportação PNG e cópia de texto preservam o padrão existente.
 - [x] Testes, build e lint verificados; limites de validação e orientação documentados.
@@ -31,6 +32,7 @@ Consulta autenticada de status em produção identificou um aviso no perfil arth
 
 ### Validação
 
+- Correção de 2026-09-28: seleção de agência movida para fora do conteúdo remontado por plataforma em `src/modules/report-text/index.jsx` e `src/modules/report-visual/index.jsx`. Contas, campanhas e relatório continuam reinicializados para a plataforma de destino. Revisão do fluxo no código; sem validação interativa nesta correção. Os 52 testes existentes e o build passaram; lint sem erros, com os dois avisos preexistentes. Script `typecheck` continua inexistente.
 - 31 testes passaram, incluindo fallback entre perfis autorizados, rejeição de conta alheia, filtro de campanhas nas duas consultas, saldo nulo, fuso/período, conversões fracionadas e diagnóstico.
 - Build passou. Lint sem erros, com dois avisos preexistentes em ChangeLogContext e ClientsContext.
 - npm run typecheck: script inexistente no projeto.

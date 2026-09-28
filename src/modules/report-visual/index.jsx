@@ -663,6 +663,7 @@ function getExportCacheKey(reportData) {
 
 export default function ReportVisual() {
   const [platform, setPlatform] = useState('meta');
+  const [selectedAgency, setSelectedAgency] = useState('__all__');
   const meta = useMetaAds();
   const google = useGoogleAds();
 
@@ -675,9 +676,9 @@ export default function ReportVisual() {
     setPlatform(nextPlatform);
   };
 
-  return <ReportVisualContent key={platform} platform={platform} onPlatformChange={handlePlatformChange} />;
+  return <ReportVisualContent key={platform} platform={platform} onPlatformChange={handlePlatformChange} selectedAgency={selectedAgency} setSelectedAgency={setSelectedAgency} />;
 }
-function ReportVisualContent({ platform, onPlatformChange }) {
+function ReportVisualContent({ platform, onPlatformChange, selectedAgency, setSelectedAgency }) {
   const meta = useMetaAds();
   const google = useGoogleAds();
   const { accounts, campaigns, selectedPeriod, setSelectedPeriod } = platform === 'google' ? google : meta;
@@ -686,7 +687,6 @@ function ReportVisualContent({ platform, onPlatformChange }) {
   const [selectedAccount, setSelectedAccount] = useState('');
 
   const [clientLogos, setClientLogos] = useState(() => readClientLogos());
-  const [selectedAgency, setSelectedAgency] = useState('__all__');
   const [selectedObjective, setSelectedObjective] = useState(platform === 'google' ? 'conversions' : 'messages');
   const [selectedCampaignIds, setSelectedCampaignIds] = useState([]);
   const [reportData, setReportData] = useState(null);
@@ -711,7 +711,7 @@ function ReportVisualContent({ platform, onPlatformChange }) {
         setSelectedAgency('__all__');
       }
     }
-  }, [allowedAgencyList, selectedAgency, hasAgencies]);
+  }, [allowedAgencyList, selectedAgency, hasAgencies, setSelectedAgency]);
 
   useEffect(() => {
     const syncClientLogos = () => setClientLogos(readClientLogos());

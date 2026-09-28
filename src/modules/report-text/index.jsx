@@ -32,6 +32,7 @@ function formatPeriodLabel(period) {
 
 export default function ReportText() {
   const [platform, setPlatform] = useState('meta');
+  const [selectedAgency, setSelectedAgency] = useState('__all__');
   const meta = useMetaAds();
   const google = useGoogleAds();
 
@@ -44,15 +45,14 @@ export default function ReportText() {
     setPlatform(nextPlatform);
   };
 
-  return <ReportTextContent key={platform} platform={platform} onPlatformChange={handlePlatformChange} />;
+  return <ReportTextContent key={platform} platform={platform} onPlatformChange={handlePlatformChange} selectedAgency={selectedAgency} setSelectedAgency={setSelectedAgency} />;
 }
-function ReportTextContent({ platform, onPlatformChange }) {
+function ReportTextContent({ platform, onPlatformChange, selectedAgency, setSelectedAgency }) {
   const meta = useMetaAds();
   const google = useGoogleAds();
   const { accounts, campaigns, selectedPeriod, setSelectedPeriod } = platform === 'google' ? google : meta;
   const { agencies, accountAgencies } = useAgency();
   const [selectedAccount, setSelectedAccount] = useState('');
-  const [selectedAgency, setSelectedAgency] = useState('__all__');
   const [selectedCampaignIds, setSelectedCampaignIds] = useState([]);
   const [reportData, setReportData] = useState(null);
   const [generating, setGenerating] = useState(false);
@@ -71,7 +71,7 @@ function ReportTextContent({ platform, onPlatformChange }) {
         setSelectedAgency('__all__');
       }
     }
-  }, [allowedAgencyList, selectedAgency, hasAgencies]);
+  }, [allowedAgencyList, selectedAgency, hasAgencies, setSelectedAgency]);
 
   // Resolve the agency name used for the report signature
   const signatureAgency = useMemo(() => {
