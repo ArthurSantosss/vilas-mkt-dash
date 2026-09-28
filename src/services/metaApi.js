@@ -189,11 +189,15 @@ const applyPeriodParams = (params, period) => {
 /**
  * Busca os insights agregados de uma conta específica.
  */
-export const fetchAccountInsights = async (accountId, period = '7d') => {
+export const fetchAccountInsights = async (accountId, period = '7d', campaignIds = []) => {
     const params = applyPeriodParams({
         fields: 'spend,impressions,cpm,inline_link_clicks,cpc,actions,ctr,reach,frequency',
         level: 'account'
     }, period);
+
+    if (campaignIds.length > 0) {
+        params.filtering = JSON.stringify([{ field: 'campaign.id', operator: 'IN', value: campaignIds }]);
+    }
 
     const data = await fetchMeta(`/${accountId}/insights`, params);
 

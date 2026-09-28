@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import ReportCampaignFilter from '../../shared/components/ReportCampaignFilter';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useGoogleAds } from '../../contexts/GoogleAdsContext';
 import PlatformFilter from '../../shared/components/PlatformFilter';
 import ReportFormatSelector from '../../shared/components/ReportFormatSelector';
@@ -8,11 +9,10 @@ import { useMetaAds } from '../../contexts/MetaAdsContext';
 import { useAgency } from '../../contexts/AgencyContext';
 import { FileText, Copy, Check, Loader2, Sparkles } from 'lucide-react';
 import PeriodSelector from '../../shared/components/PeriodSelector';
-import { fetchAccountInsights, fetchCampaignsWithInsights, getPreviousPeriodRange } from '../../services/metaApi';
+import { fetchAccountInsights, getPreviousPeriodRange } from '../../services/metaApi';
 import { buildReportFromInsights, buildReportText } from '../../shared/utils/reportText';
 
 import { PRESETS } from '../../shared/utils/dateUtils';
-import { simplifyCampaignName } from '../../shared/utils/campaignName';
 import { FILTER_ROW, FILTER_FIELD, FILTER_LABEL, FILTER_CONTROL } from '../../shared/constants/filterStyles';
 
 // ── Format date range for display ──
@@ -32,16 +32,28 @@ function formatPeriodLabel(period) {
 
 export default function ReportText() {
   const [platform, setPlatform] = useState('meta');
-  return <ReportTextContent key={platform} platform={platform} onPlatformChange={setPlatform} />;
+  const meta = useMetaAds();
+  const google = useGoogleAds();
+
+  const handlePlatformChange = (nextPlatform) => {
+    if (nextPlatform === platform) return;
+    const current = platform === 'google' ? google : meta;
+    const next = nextPlatform === 'google' ? google : meta;
+    // Leva o período atual para a plataforma de destino antes de trocar a tela.
+    next.setSelectedPeriod(current.selectedPeriod);
+    setPlatform(nextPlatform);
+  };
+
+  return <ReportTextContent key={platform} platform={platform} onPlatformChange={handlePlatformChange} />;
 }
 function ReportTextContent({ platform, onPlatformChange }) {
   const meta = useMetaAds();
   const google = useGoogleAds();
-  const { accounts, selectedPeriod, setSelectedPeriod } = platform === 'google' ? google : meta;
+  const { accounts, campaigns, selectedPeriod, setSelectedPeriod } = platform === 'google' ? google : meta;
   const { agencies, accountAgencies } = useAgency();
   const [selectedAccount, setSelectedAccount] = useState('');
   const [selectedAgency, setSelectedAgency] = useState('__all__');
-  const [reportMode, setReportMode] = useState('all'); // 'all' | 'per_campaign'
+  const [selectedCampaignIds, setSelectedCampaignIds] = useState([]);
   const [reportData, setReportData] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [copiedKey, setCopiedKey] = useState('');
@@ -74,9 +86,15 @@ function ReportTextContent({ platform, onPlatformChange }) {
     return accounts.filter(a => accountAgencies[a.id] === selectedAgency);
   }, [accounts, selectedAgency, accountAgencies]);
 
-  const normalizeCampaignName = useCallback((name) => {
-    return simplifyCampaignName(name);
-  }, []);
+  const accountCampaigns = useMemo(() => campaigns
+    .filter(campaign => campaign.accountId === selectedAccount && (campaign.metrics?.spend || 0) > 0)
+    .sort((a, b) => (b.metrics?.spend || 0) - (a.metrics?.spend || 0) || a.name.localeCompare(b.name, 'pt-BR')),
+  [campaigns, selectedAccount]);
+
+  useEffect(() => {
+    const availableIds = new Set(accountCampaigns.map(campaign => campaign.id));
+    setSelectedCampaignIds(prev => prev.filter(id => availableIds.has(id)));
+  }, [accountCampaigns]);
 
   // Auto-seleciona a primeira conta apenas quando nenhuma está selecionada.
   // Evita roubar a seleção durante o recarregamento progressivo das contas
@@ -96,112 +114,50 @@ function ReportTextContent({ platform, onPlatformChange }) {
     try {
       if (platform === 'google') {
         const account = accounts.find(a => a.id === selectedAccount);
-        const { current, previous, period } = await fetchGoogleReport(account, selectedPeriod);
+        const { current, previous, period } = await fetchGoogleReport(account, selectedPeriod, selectedCampaignIds);
         const make = (metrics, name) => googleTextData(metrics, name, period, account.currency);
-        if (reportMode === 'per_campaign') {
-          const prev = new Map(previous.campaigns.map(c => [c.id, c]));
-          const reports = current.campaigns.filter(c => c.metrics.spend > 0).map(c => ({
-            ...make(c.metrics, normalizeCampaignName(c.name)),
-            _prev: prev.has(c.id) ? make(prev.get(c.id).metrics, c.name) : null,
-          }));
-          setReportData(reports.length ? { mode: 'per_campaign', reports, agencyName: signatureAgency } : { error: 'Nenhuma campanha com investimento no período.' });
-        } else {
-          setReportData({ mode: 'all', report: make(current.totals, account.clientName), prevReport: make(previous.totals, ''), agencyName: signatureAgency });
-        }
+        setReportData({ report: make(current.totals, account.clientName), prevReport: make(previous.totals, ''), agencyName: signatureAgency,
+          campaignNames: accountCampaigns.filter(c => selectedCampaignIds.includes(c.id)).map(c => c.name) });
         return;
       }
       const periodDates = formatPeriodLabel(selectedPeriod);
       const agencyName = signatureAgency;
 
-      if (reportMode === 'per_campaign') {
-        // GDM per-campaign
-        const previousPeriod = getPreviousPeriodRange(selectedPeriod);
-        const [campData, prevCampData] = await Promise.all([
-          fetchCampaignsWithInsights(selectedAccount, selectedPeriod),
-          fetchCampaignsWithInsights(selectedAccount, previousPeriod).catch(() => []),
-        ]);
-        if (!campData || campData.length === 0) {
-          setReportData({ error: 'Sem campanhas com dados para o período selecionado.' });
-          return;
-        }
-
-        // Mapa de período anterior por nome normalizado
-        const prevMap = new Map();
-        if (prevCampData && prevCampData.length > 0) {
-          for (const c of prevCampData) {
-            if (c.insights?.data?.[0]) {
-              const name = normalizeCampaignName(c.name);
-              prevMap.set(name.toLowerCase(), buildReportFromInsights(c.insights.data[0], name, periodDates));
-            }
-          }
-        }
-
-        const reports = campData
-          .filter(c => c.insights?.data?.[0])
-          .map(c => {
-            const name = normalizeCampaignName(c.name);
-            const report = buildReportFromInsights(c.insights.data[0], name, periodDates);
-            report._prev = prevMap.get(name.toLowerCase()) || null;
-            return report;
-          })
-          .filter(r => r.spend > 0);
-
-        if (reports.length === 0) {
-          setReportData({ error: 'Nenhuma campanha com dados de investimento no período.' });
-          return;
-        }
-        setReportData({ mode: 'per_campaign', reports, agencyName });
-      } else {
-        // GDM all campaigns (account-level)
-        const previousPeriod = getPreviousPeriodRange(selectedPeriod);
-        const [insights, prevInsights] = await Promise.all([
-          fetchAccountInsights(selectedAccount, selectedPeriod),
-          fetchAccountInsights(selectedAccount, previousPeriod).catch(() => null),
-        ]);
-        if (!insights) {
-          setReportData({ error: 'Sem dados para o período selecionado.' });
-          return;
-        }
-        const account = accounts.find(a => a.id === selectedAccount);
-        const report = buildReportFromInsights(insights, account?.clientName || 'Conta', periodDates);
-        const prevReport = prevInsights ? buildReportFromInsights(prevInsights, '', periodDates) : null;
-        setReportData({ mode: 'all', report, prevReport, agencyName });
+      const previousPeriod = getPreviousPeriodRange(selectedPeriod);
+      const [insights, prevInsights] = await Promise.all([
+        fetchAccountInsights(selectedAccount, selectedPeriod, selectedCampaignIds),
+        fetchAccountInsights(selectedAccount, previousPeriod, selectedCampaignIds).catch(() => null),
+      ]);
+      if (!insights) {
+        setReportData({ error: 'Sem dados para o período e campanhas selecionados.' });
+        return;
       }
+      const account = accounts.find(a => a.id === selectedAccount);
+      const report = buildReportFromInsights(insights, account?.clientName || 'Conta', periodDates);
+      const prevReport = prevInsights ? buildReportFromInsights(prevInsights, '', periodDates) : null;
+      setReportData({ report, prevReport, agencyName,
+        campaignNames: accountCampaigns.filter(c => selectedCampaignIds.includes(c.id)).map(c => c.name) });
     } catch (err) {
       console.error('Erro ao gerar relatório:', err);
       setReportData({ error: `Erro: ${err.message}` });
     } finally {
       setGenerating(false);
     }
-  }, [platform, selectedAccount, selectedPeriod, reportMode, accounts, normalizeCampaignName, signatureAgency]);
+  }, [platform, selectedAccount, selectedPeriod, selectedCampaignIds, accounts, accountCampaigns, signatureAgency]);
 
   // Build report text(s)
   const reportTexts = useMemo(() => {
     if (!reportData || reportData.error) return [];
 
-    if (reportData.mode === 'all') {
-      return [{
-        text: buildReportText(reportData.report, {
-          showCampaignName: false,
-          prev: reportData.prevReport,
-          agencyName: reportData.agencyName,
-        }),
-        label: 'Relatório geral da conta',
-      }];
-    }
-
-    if (reportData.mode === 'per_campaign') {
-      return reportData.reports.map(r => ({
-        text: buildReportText(r, {
-          showCampaignName: true,
-          prev: r._prev,
-          agencyName: reportData.agencyName,
-        }),
-        label: r.campaignName,
-      }));
-    }
-
-    return [];
+    return [{
+      text: buildReportText(reportData.report, {
+        showCampaignName: false,
+        campaignNames: reportData.campaignNames,
+        prev: reportData.prevReport,
+        agencyName: reportData.agencyName,
+      }),
+      label: reportData.campaignNames?.length ? 'Relatório das campanhas selecionadas' : 'Relatório geral da conta',
+    }];
   }, [reportData]);
 
   // Copy to clipboard
@@ -253,7 +209,7 @@ function ReportTextContent({ platform, onPlatformChange }) {
               <label className={FILTER_LABEL}>Agência</label>
               <select
                 value={selectedAgency}
-                onChange={e => { setSelectedAgency(e.target.value); setSelectedAccount(''); }}
+                onChange={e => { setSelectedAgency(e.target.value); setSelectedAccount(''); setSelectedCampaignIds([]); }}
                 className={FILTER_CONTROL}
               >
                 <option value="__all__">Todas as agências</option>
@@ -266,7 +222,7 @@ function ReportTextContent({ platform, onPlatformChange }) {
             <label className={FILTER_LABEL}>Conta</label>
             <select
               value={selectedAccount}
-              onChange={e => setSelectedAccount(e.target.value)}
+              onChange={e => { setSelectedAccount(e.target.value); setSelectedCampaignIds([]); }}
               className={FILTER_CONTROL}
             >
               <option value="">Selecione uma conta</option>
@@ -274,20 +230,15 @@ function ReportTextContent({ platform, onPlatformChange }) {
             </select>
           </div>
 
-          {/* Modo */}
-          <div className={FILTER_FIELD}>
-            <label className={FILTER_LABEL}>Modo</label>
-            <select
-              value={reportMode}
-              onChange={e => setReportMode(e.target.value)}
-              className={FILTER_CONTROL}
-            >
-              <option value="all">Todas as campanhas</option>
-              <option value="per_campaign">Por campanha</option>
-            </select>
-          </div>
-
         </div>
+
+        {selectedAccount && (
+          <ReportCampaignFilter
+            accountCampaigns={accountCampaigns}
+            selectedCampaignIds={selectedCampaignIds}
+            setSelectedCampaignIds={setSelectedCampaignIds}
+          />
+        )}
 
         {/* Action Row */}
         <div className="relative mt-6 flex items-center justify-center gap-4 flex-wrap">

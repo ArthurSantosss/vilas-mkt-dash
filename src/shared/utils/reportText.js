@@ -71,12 +71,13 @@ export function buildReportText(d, options = {}) {
     showCampaignName = true,
     prev = null,
     agencyName = '',
+    campaignNames = [],
   } = options;
 
   const signature = buildAgencySignature(agencyName);
 
-  const entitySubject = showCampaignName ? 'A campanha' : 'A conta';
-  const entityLine = (showCampaignName && d.campaignName) ? `📌 Campanha: ${d.campaignName}\n` : '';
+  const entitySubject = campaignNames.length ? 'As campanhas selecionadas' : showCampaignName ? 'A campanha' : 'A conta';
+  const entityLine = campaignNames.length ? `📌 Campanhas: ${campaignNames.join(', ')}\n` : (showCampaignName && d.campaignName) ? `📌 Campanha: ${d.campaignName}\n` : '';
   const insightPack = buildInsightPack(d, prev);
   const analysisBlock = insightPack.analysisLines.length > 0
     ? `\n${insightPack.analysisLines.map((line) => `- ${line}`).join('\n')}`
@@ -102,7 +103,7 @@ ${entityLine}
 📈 Leitura da semana:
 - Cada engajamento custou em média ${formatCurrency(d.costPerEngagement)}.
 - O CPM ficou em ${formatCurrency(d.cpm)} para cada mil impressões.
-- ${entitySubject} gerou ${formatNumber(d.clicks)} cliques no período.${analysisBlock}
+- ${entitySubject} ${campaignNames.length ? 'geraram' : 'gerou'} ${formatNumber(d.clicks)} cliques no período.${analysisBlock}
 
 📍 Próximos passos:
 - ${insightPack.nextStep}
@@ -111,7 +112,7 @@ Fico a disposição para qualquer dúvida!
 Obrigado e tenha uma excelente semana!${signature} 🚀`;
 }
 
-function buildGoogleReportText(d, { showCampaignName = true, prev = null, agencyName = '' } = {}) {
+function buildGoogleReportText(d, { showCampaignName = true, prev = null, agencyName = '', campaignNames = [] } = {}) {
   const money = value => formatCurrency(value || 0, d.currency);
   const comparison = prev && prev.conversions > 0
     ? `\n- As conversões variaram ${formatPercentValue((d.conversions - prev.conversions) / prev.conversions * 100)} em relação ao período anterior.` : '';
@@ -122,7 +123,7 @@ Segue relatório de desempenho 👇
 ⭐ Relatório de Desempenho — Google Ads ⭐
 
 📅 Período Analisado: ${d.periodStart} a ${d.periodEnd}
-${showCampaignName && d.campaignName ? `📌 Campanha: ${d.campaignName}\n` : ''}
+${campaignNames.length ? `📌 Campanhas: ${campaignNames.join(', ')}\n` : showCampaignName && d.campaignName ? `📌 Campanha: ${d.campaignName}\n` : ''}
 ➡️ Valor Investido: ${money(d.spend)}
 ➡️ Conversões: ${formatNumber(d.conversions || 0)}
 ➡️ Impressões: ${formatNumber(d.impressions || 0)}
@@ -133,7 +134,7 @@ ${showCampaignName && d.campaignName ? `📌 Campanha: ${d.campaignName}\n` : ''
 ➡️ Valor de conversões: ${money(d.conversionsValue)}
 
 📈 Leitura do período:
-- A conta gerou ${formatNumber(d.conversions || 0)} conversões e ${formatNumber(d.clicks || 0)} cliques.${comparison}
+- ${campaignNames.length ? 'As campanhas selecionadas geraram' : 'A conta gerou'} ${formatNumber(d.conversions || 0)} conversões e ${formatNumber(d.clicks || 0)} cliques.${comparison}
 
 📍 Próximos passos:
 - ${d.conversions > 0 ? 'Compare custo por conversão e qualidade dos resultados antes de ajustar os investimentos.' : 'Confira a configuração das conversões e a relevância dos anúncios antes de ampliar o investimento.'}
