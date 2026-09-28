@@ -12,6 +12,8 @@ import { Image, Download, Loader2, Sparkles, Copy, Check, CheckCircle2, Target, 
 import { useAuth } from '../../contexts/AuthContext';
 import PeriodSelector from '../../shared/components/PeriodSelector';
 import ReportCard from '../../shared/components/ReportCard';
+import CopyImageMenu from './CopyImageMenu';
+import { copyReportImage } from './copyReportImage';
 import {
   fetchAccountInsights, fetchCampaignsWithInsights,
   fetchCampaignDailyInsights, getPreviousPeriodRange
@@ -679,6 +681,7 @@ function ReportVisualContent({ platform, onPlatformChange }) {
   const [generating, setGenerating] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const reportRef = useRef(null);
+  const copyReportRef = useRef(null);
   const previewFrameRef = useRef(null);
   const exportCacheRef = useRef({ key: '', dataUrl: null });
   const exportImagesReadyRef = useRef(Promise.resolve());
@@ -1525,33 +1528,41 @@ function ReportVisualContent({ platform, onPlatformChange }) {
               ref={previewFrameRef}
               className="overflow-x-auto rounded-2xl border border-border/50 bg-[#0a1018] p-3 sm:p-4"
             >
-              <div
-                style={{
-                  width: `${1200 * previewScale}px`,
-                  height: `${750 * previewScale}px`,
-                  minWidth: previewScale < 1 ? `${1200 * previewScale}px` : 'auto',
-                  margin: '0 auto',
-                }}
+              <CopyImageMenu
+                key={getExportCacheKey(d)}
+                buildExportAsset={() => copyReportImage(copyReportRef.current, (src) => withTimeout(
+                  toRasterizedPngDataUrl(src), 20000, 'Não foi possível carregar uma logo. Tente novamente.'
+                ))}
               >
                 <div
                   style={{
-                    width: 1200,
-                    transform: `scale(${previewScale})`,
-                    transformOrigin: 'top center',
+                    width: `${1200 * previewScale}px`,
+                    height: `${750 * previewScale}px`,
+                    minWidth: previewScale < 1 ? `${1200 * previewScale}px` : 'auto',
+                    margin: '0 auto',
                   }}
                 >
-                  <ReportCard
-                    data={d}
-                    agencyLogoSrc={d.agencyLogoB64 ? [d.agencyLogoB64] : logoSources}
-                    platformLogoSrc={d.metaLogoB64 ? [d.metaLogoB64] : getPlatformLogoSources(d.platform)}
-                    clientLogoSrc={d.clientLogoUrl}
-                    agencyLabel={agencyLabel}
-                    showAccountName={false}
-                    objective={d.objective || selectedObjective}
-                    withBarChart
-                  />
+                  <div
+                    style={{
+                      width: 1200,
+                      transform: `scale(${previewScale})`,
+                      transformOrigin: 'top center',
+                    }}
+                  >
+                    <ReportCard
+                      innerRef={copyReportRef}
+                      data={d}
+                      agencyLogoSrc={d.agencyLogoB64 ? [d.agencyLogoB64] : logoSources}
+                      platformLogoSrc={d.metaLogoB64 ? [d.metaLogoB64] : getPlatformLogoSources(d.platform)}
+                      clientLogoSrc={d.clientLogoUrl}
+                      agencyLabel={agencyLabel}
+                      showAccountName={false}
+                      objective={d.objective || selectedObjective}
+                      withBarChart
+                    />
+                  </div>
                 </div>
-              </div>
+              </CopyImageMenu>
             </div>
           </div>
         </div>
