@@ -8,7 +8,6 @@ const RAW_VALUE_KEYS = new Set(['meta_provider_token']);
 
 export const CLOUD_SYNC_KEYS = [
   'meta_provider_token',
-  'account_monthly_goals',
   'account_payment_methods',
   'account_last_payments',
   'account_last_payment_sources',
@@ -26,7 +25,6 @@ export const CLOUD_SYNC_KEYS = [
   'google_ads_connection',
   'disabled_google_ads_accounts',
   'google_ads_column_order',
-  'google_account_monthly_goals',
   'google_account_payment_methods',
   'google_account_last_payments',
   'google_account_last_payment_sources',

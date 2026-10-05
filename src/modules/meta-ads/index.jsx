@@ -37,14 +37,6 @@ function normalizeColumnOrder(savedOrder) {
   return [...sanitized, ...missing];
 }
 
-function readSavedMonthlyGoals() {
-  try {
-    return JSON.parse(localStorage.getItem('account_monthly_goals') || '{}');
-  } catch {
-    return {};
-  }
-}
-
 function readSavedNotes() {
   try {
     return JSON.parse(localStorage.getItem('meta_ads_notes') || '{}');
@@ -365,113 +357,6 @@ const BudgetSourceBadge = React.memo(function BudgetSourceBadge({ type, label })
   );
 });
 
-// ── Balance Summary Cards ──
-const BalanceSummaryCards = React.memo(function BalanceSummaryCards({ balances, filteredAccountIds, monthlyGoals }) {
-  const relevantBalances = useMemo(() => {
-    const withGoals = balances.filter((b) => {
-      const goal = monthlyGoals?.[b.accountId] || 0;
-      return goal > 0;
-    });
-    if (!filteredAccountIds) return withGoals;
-    return withGoals.filter(b => filteredAccountIds.includes(b.accountId));
-  }, [balances, filteredAccountIds, monthlyGoals]);
-
-  const totalGoal = useMemo(() =>
-    relevantBalances.reduce((sum, b) => sum + (monthlyGoals?.[b.accountId] || 0), 0),
-    [relevantBalances, monthlyGoals]
-  );
-
-  const totalSpent = useMemo(() =>
-    relevantBalances.reduce((sum, b) => sum + (b.spentThisMonth || 0), 0),
-    [relevantBalances]
-  );
-
-  const totalRemaining = Math.max(0, totalGoal - totalSpent);
-
-  const totalAvgDaily = useMemo(() =>
-    relevantBalances.reduce((sum, b) => sum + (b.avgDailySpend7d || 0), 0),
-    [relevantBalances]
-  );
-
-  const estimatedDays = totalAvgDaily > 0 ? totalRemaining / totalAvgDaily : 0;
-
-  const urgentCount = relevantBalances.filter(b => {
-    const goal = monthlyGoals?.[b.accountId] || 0;
-    const spent = b.spentThisMonth || 0;
-    return goal > 0 && (spent / goal) >= 0.9;
-  }).length;
-
-  if (relevantBalances.length === 0) return null;
-
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-      {/* Gasto no Mês */}
-      <div className="bg-surface rounded-xl border border-border p-4 hover:bg-surface-hover transition-all">
-        <div className="flex items-center gap-2 mb-2">
-          <div className="p-1.5 rounded-lg bg-meta/10">
-            <Wallet size={16} className="text-meta" />
-          </div>
-          <span className="text-xs text-text-secondary font-medium">Gasto no Mês</span>
-        </div>
-        <p className="text-xl font-bold text-text-primary">{formatCurrency(totalSpent)}</p>
-        <p className="text-[11px] text-text-secondary mt-1">Meta total: {formatCurrency(totalGoal)}</p>
-      </div>
-
-      {/* Dias Estimados */}
-      <div className="bg-surface rounded-xl border border-border p-4 hover:bg-surface-hover transition-all">
-        <div className="flex items-center gap-2 mb-2">
-          <div className="p-1.5 rounded-lg bg-info/10">
-            <Clock size={16} className="text-info" />
-          </div>
-          <span className="text-xs text-text-secondary font-medium">Dias até Meta</span>
-        </div>
-        <p className={`text-xl font-bold ${estimatedDays < 3 ? 'text-danger' : estimatedDays < 7 ? 'text-warning' : 'text-text-primary'}`}>
-          {estimatedDays > 0 ? `${estimatedDays.toFixed(1)} dias` : '—'}
-        </p>
-        <p className="text-[11px] text-text-secondary mt-1">Baseado na média de gasto</p>
-      </div>
-
-      {/* Alertas */}
-      <div className={`bg-surface rounded-xl border p-4 hover:bg-surface-hover transition-all ${urgentCount > 0 ? 'border-danger/40' : 'border-border'}`}>
-        <div className="flex items-center gap-2 mb-2">
-          <div className={`p-1.5 rounded-lg ${urgentCount > 0 ? 'bg-danger/10' : 'bg-success/10'}`}>
-            <AlertTriangle size={16} className={urgentCount > 0 ? 'text-danger' : 'text-success'} />
-          </div>
-          <span className="text-xs text-text-secondary font-medium">Alertas de Meta</span>
-        </div>
-        <p className={`text-xl font-bold ${urgentCount > 0 ? 'text-danger' : 'text-success'}`}>
-          {urgentCount > 0 ? `${urgentCount} conta${urgentCount !== 1 ? 's' : ''}` : 'Tudo ok'}
-        </p>
-        <p className="text-[11px] text-text-secondary mt-1">{urgentCount > 0 ? 'Acima de 90% da meta' : 'Todas dentro da meta'}</p>
-      </div>
-    </div>
-  );
-});
-
-// ── Individual Account Balance Badges ──
-const AccountBalanceBadge = React.memo(function AccountBalanceBadge({ balance, monthlyGoal }) {
-  if (!balance) return null;
-
-  const hasGoal = monthlyGoal && monthlyGoal > 0;
-  const hasBalance = balance.hasReliableBalance !== false && balance.currentBalance > 0;
-
-  if (!hasGoal && !hasBalance) return null;
-
-  return (
-    <span className="inline-flex items-center gap-1.5 ml-2">
-      {/* Saldo disponível em conta */}
-      {hasBalance && (
-        <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full ${balance.currentBalance < 50 ? 'bg-danger/10 text-danger border border-danger/20' :
-          balance.currentBalance < 150 ? 'bg-warning/10 text-warning border border-warning/20' :
-            'bg-success/10 text-success border border-success/20'
-          }`} title={`Saldo em conta: ${formatCurrency(balance.currentBalance)}`}>
-          <Wallet size={10} />
-          {formatCurrency(balance.currentBalance)}
-        </span>
-      )}
-    </span>
-  );
-});
 
 // ── Helper: get total daily budget for an account's campaigns ──
 function getTotalBudget(accountCampaigns) {
@@ -514,7 +399,6 @@ export default function MetaAdsOverview() {
   const [togglingAdSets, setTogglingAdSets] = useState({});
   const [togglingAds, setTogglingAds] = useState({});
   const [savingBudgets, setSavingBudgets] = useState({});
-  const [monthlyGoals, setMonthlyGoals] = useState(() => readSavedMonthlyGoals());
   const [paymentMethods, setPaymentMethods] = useState(() => readSavedPaymentMethods());
   const [lastPayments, setLastPayments] = useState(() => readSavedLastPayments());
   const [billingFrequencies, setBillingFrequencies] = useState(() => readSavedBillingFrequencies());
@@ -533,7 +417,6 @@ export default function MetaAdsOverview() {
 
   useEffect(() => {
     const syncAll = () => {
-      setMonthlyGoals(readSavedMonthlyGoals());
       setPaymentMethods(readSavedPaymentMethods());
       setLastPayments(readSavedLastPayments());
       setBillingFrequencies(readSavedBillingFrequencies());
@@ -541,9 +424,7 @@ export default function MetaAdsOverview() {
       setNotes(readSavedNotes());
     };
     const handleLocalStorageMapUpdated = (event) => {
-      if (event?.detail?.key === 'account_monthly_goals') {
-        setMonthlyGoals(event.detail.value || {});
-      } else if (event?.detail?.key === 'account_payment_methods') {
+      if (event?.detail?.key === 'account_payment_methods') {
         setPaymentMethods(event.detail.value || {});
       } else if (event?.detail?.key === 'account_last_payments') {
         setLastPayments(event.detail.value || {});
@@ -677,7 +558,7 @@ export default function MetaAdsOverview() {
     return msg ? parseInt(msg.value, 10) : 0;
   };
 
-  const renderAccountCell = (col, account, { balance, monthlyGoal } = {}) => {
+  const renderAccountCell = (col, account, { balance } = {}) => {
     const m = account.metrics;
     const accountId = account.id || account.accountId;
     const paymentMethod = getAccountPaymentMethod(paymentMethods, account.id, account.accountId, accountId) || 'credit_card';
@@ -687,17 +568,15 @@ export default function MetaAdsOverview() {
       case 'spend': return formatCurrency(m?.spend || 0);
       case 'balance': {
         if (isCreditCard) {
-          const spentThisMonth = balance?.spentThisMonth || 0;
-          const remainingGoal = monthlyGoal > 0 ? Math.max(0, monthlyGoal - spentThisMonth) : null;
-          const availableCard = remainingGoal !== null ? remainingGoal : (balance?.remainingSpendCap > 0 ? balance.remainingSpendCap : null);
+          const availableCard = balance?.remainingSpendCap > 0 ? balance.remainingSpendCap : null;
 
           if (availableCard !== null) {
             const color = availableCard < 50 ? 'text-danger' : availableCard < 150 ? 'text-warning' : 'text-success';
             return (
-              <div className="flex flex-col items-end leading-tight" title={remainingGoal !== null ? 'Saldo baseado na Meta Mensal' : 'Saldo baseado no Limite de Gastos da Conta (Meta API)'}>
+              <div className="flex flex-col items-end leading-tight" title="Saldo baseado no Limite de Gastos da Conta (Meta API)">
                 <span className={`font-medium ${color}`}>{formatCurrency(availableCard)}</span>
                 <span className="flex items-center gap-1 text-[10px] text-text-secondary/80 mt-0.5">
-                  <CreditCard size={10} /> {remainingGoal !== null ? 'Meta' : 'Limite'}
+                  <CreditCard size={10} /> Limite
                 </span>
               </div>
             );
@@ -844,8 +723,6 @@ export default function MetaAdsOverview() {
     return [...visibleAccounts].sort((a, b) => getSpendValue(b) - getSpendValue(a));
   }, [agencyFilteredAccounts, getSpendValue, selectedAccount]);
 
-  // eslint-disable-next-line no-unused-vars -- kept for BalanceSummaryCards integration
-  const filteredAccountIds = useMemo(() => filteredAccounts.map(a => a.id), [filteredAccounts]);
 
   const getCampaignsForAccount = useCallback((accountId) => {
     return campaigns
@@ -1242,7 +1119,6 @@ export default function MetaAdsOverview() {
             const accountCampaigns = getCampaignsForAccount(account.id);
             const hasCampaigns = accountCampaigns.length > 0;
             const accountBalance = balances.find((b) => b.accountId === account.id || b.accountId === account.accountId);
-            const accountGoal = monthlyGoals[account.id] || monthlyGoals[account.accountId] || 0;
             const topCampaigns = accountCampaigns.slice(0, 3);
 
             return (
@@ -1301,9 +1177,9 @@ export default function MetaAdsOverview() {
                       </span>
                     </div>
                     <div className="rounded-xl border border-border/50 bg-bg/40 p-3">
-                      <span className="block text-[10px] uppercase tracking-wider text-text-secondary">Meta mensal</span>
+                      <span className="block text-[10px] uppercase tracking-wider text-text-secondary">CPC</span>
                       <span className="mt-1 block text-base font-bold text-text-primary">
-                        {accountGoal > 0 ? formatCurrency(accountGoal) : '—'}
+                        {account.metrics?.cpc > 0 ? formatCurrency(account.metrics.cpc) : '—'}
                       </span>
                     </div>
                   </div>
@@ -1452,7 +1328,6 @@ export default function MetaAdsOverview() {
                 const accountCampaigns = getCampaignsForAccount(account.id);
                 const hasCampaigns = accountCampaigns.length > 0;
                 const accountBalance = balances.find((b) => b.accountId === account.id || b.accountId === account.accountId);
-                const accountGoal = monthlyGoals[account.id] || monthlyGoals[account.accountId] || 0;
                 const totalBudget = getTotalBudget(accountCampaigns);
 
                 return (
@@ -1497,7 +1372,7 @@ export default function MetaAdsOverview() {
                               (col.key === 'balance' || col.key === 'available') ? 'text-right' :
                                 col.key === 'notes' ? 'text-left align-top' :
                                   'text-right text-text-secondary';
-                        return <td key={col.key} className={`px-3 py-3 ${cellClass}`}>{renderAccountCell(col, account, { balance: accountBalance, monthlyGoal: accountGoal, totalBudget })}</td>;
+                        return <td key={col.key} className={`px-3 py-3 ${cellClass}`}>{renderAccountCell(col, account, { balance: accountBalance })}</td>;
                       })}
                     </tr>
 

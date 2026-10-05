@@ -1,11 +1,11 @@
-import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useMetaAds } from '../../contexts/MetaAdsContext';
 import { useAgency } from '../../contexts/AgencyContext';
 import { formatCurrency } from '../../shared/utils/format';
 import { isCreditCardPaymentMethod, getAccountPaymentMethod } from '../../shared/utils/paymentMethod';
 import { billingFrequencyOptions, getNextPaymentDate, getDaysUntil, formatDateBR } from '../../shared/utils/nextPayment';
 import { supabase } from '../../services/supabase';
-import { Wallet, AlertTriangle, Clock, CreditCard, ArrowUpDown, RefreshCw, Edit3, Target, CalendarClock, Repeat } from 'lucide-react';
+import { Wallet, AlertTriangle, Clock, CreditCard, ArrowUpDown, RefreshCw, CalendarClock, Repeat } from 'lucide-react';
 import { FILTER_FIELD, FILTER_LABEL, FILTER_CONTROL } from '../../shared/constants/filterStyles';
 
 const sortOptions = [
@@ -120,112 +120,8 @@ function useLocalStorageMap(key, defaultValue = {}) {
   return [map, update, merge];
 }
 
-function MonthlyGoalInput({ accountId, goals, setGoal, currency }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
-  const inputRef = useRef(null);
-  const value = goals[accountId] || 0;
-
-  useEffect(() => {
-    if (editing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
-  }, [editing]);
-
-  const save = () => {
-    const parsed = parseFloat(draft);
-    if (!isNaN(parsed) && parsed >= 0) {
-      setGoal(accountId, parsed);
-    }
-    setEditing(false);
-  };
-
-  if (editing) {
-    return (
-      <input
-        ref={inputRef}
-        type="number"
-        min="0"
-        step="100"
-        value={draft}
-        onChange={e => setDraft(e.target.value)}
-        onBlur={save}
-        onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
-        className="w-24 bg-background border border-primary/40 rounded px-2 py-0.5 text-sm text-text-primary text-right focus:outline-none focus:border-primary"
-      />
-    );
-  }
-
-  return (
-    <button
-      onClick={() => { setDraft(String(value)); setEditing(true); }}
-      className="flex items-center gap-1 text-text-primary hover:text-primary transition-colors"
-    >
-      <span className="text-sm">{value > 0 ? formatCurrency(value, currency) : 'Definir'}</span>
-      <Edit3 size={10} className="text-text-secondary" />
-    </button>
-  );
-}
-
-
-function SpendProgressBar({ balance, monthlyGoal }) {
-  const now = new Date();
-  const dayOfMonth = now.getDate();
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const currentMonthSpend = balance.spentThisMonth || 0;
-  const estimatedMonthSpend = dayOfMonth > 0 ? (currentMonthSpend / dayOfMonth) * daysInMonth : 0;
-  const remainingDaysInMonth = Math.max(daysInMonth - dayOfMonth, 1);
-
-  if (!monthlyGoal || monthlyGoal <= 0) {
-    return (
-      <div className="text-xs text-text-secondary"><p>Gasto no mês: {formatCurrency(currentMonthSpend, balance.currency)}</p><p className="italic mt-1">Defina uma meta mensal para ver o progresso</p></div>
-    );
-  }
-
-  const pct = Math.min((currentMonthSpend / monthlyGoal) * 100, 100);
-  const projectedPct = Math.min((estimatedMonthSpend / monthlyGoal) * 100, 150);
-  const isOver = projectedPct > 100;
-  const remainingToGoal = Math.max(monthlyGoal - currentMonthSpend, 0);
-  const recommendedDailySpend = remainingToGoal > 0 ? remainingToGoal / remainingDaysInMonth : 0;
-
-  let barColor = 'bg-success';
-  if (pct > 90) barColor = 'bg-danger';
-  else if (pct > 70) barColor = 'bg-warning';
-
-  return (
-    <div>
-      <div className="flex justify-between text-xs text-text-secondary mb-1">
-        <span>Gasto no mês: {formatCurrency(currentMonthSpend, balance.currency)}</span>
-        <span>{pct.toFixed(0)}%</span>
-      </div>
-      <div className="h-2 bg-border rounded-full overflow-hidden">
-        <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
-      </div>
-      <div className="flex justify-between text-[10px] text-text-secondary mt-0.5">
-        <span>Meta: {formatCurrency(monthlyGoal, balance.currency)}</span>
-        {isOver && <span className="text-danger font-medium">Projeção: {projectedPct.toFixed(0)}%</span>}
-      </div>
-      <div className="flex justify-between text-[10px] mt-0.5">
-        <span className="text-text-secondary">Restante</span>
-        <span className={`font-medium ${remainingToGoal > 0 ? 'text-text-primary' : 'text-success'}`}>
-          {remainingToGoal > 0 ? formatCurrency(remainingToGoal, balance.currency) : 'Meta atingida'}
-        </span>
-      </div>
-      <div className="flex justify-between text-[10px] mt-1">
-        <span className="text-text-secondary">Recomendado por dia</span>
-        <span className={`font-medium ${recommendedDailySpend > 0 ? 'text-primary-light' : 'text-success'}`}>
-          {recommendedDailySpend > 0 ? formatCurrency(recommendedDailySpend, balance.currency) : 'Meta atingida'}
-        </span>
-      </div>
-    </div>
-  );
-}
-
 function BalanceCard({
   balance,
-  goals,
-  setGoal,
   paymentMethods,
   setPaymentMethod,
   lastPayments,
@@ -235,7 +131,6 @@ function BalanceCard({
   billingFrequencies,
   setBillingFrequency,
 }) {
-  const monthlyGoal = goals[balance.accountId] || 0;
   const selectedPaymentMethod = getAccountPaymentMethod(paymentMethods, balance.accountId) || 'credit_card';
   // Orçamento de conta Google é faturado, então o restante aparece mesmo com cartão selecionado.
   const isAccountBudget = balance.balanceSource === 'account_budget';
@@ -334,17 +229,12 @@ function BalanceCard({
         </div>
       ) : null}
 
-      {/* Spend metrics (both modes) */}
+      {/* Spend metrics */}
       <div className="space-y-2 text-sm">
         <div className="flex justify-between items-center">
-          <span className="text-text-secondary flex items-center gap-1"><Target size={12} /> Meta mensal</span>
-          <MonthlyGoalInput accountId={balance.accountId} goals={goals} setGoal={setGoal} currency={balance.currency} />
+          <span className="text-text-secondary">Gasto no mês</span>
+          <span className="font-medium text-text-primary">{formatCurrency(balance.spentThisMonth || 0, balance.currency)}</span>
         </div>
-      </div>
-
-      {/* Monthly goal progress bar (both modes) */}
-      <div className="mt-3">
-        <SpendProgressBar balance={balance} monthlyGoal={monthlyGoal} />
       </div>
 
       {/* Extra fields: days remaining, payment method, last payment */}
@@ -473,7 +363,6 @@ export function BalancesView({ data, platform = 'meta', onPlatformChange }) {
   const { agencies, accountAgencies } = useAgency();
   const [sortBy, setSortBy] = useState(isGoogle ? 'spend_desc' : 'balance_asc');
   const [selectedAgency, setSelectedAgency] = useState('all');
-  const [goals, setGoal] = useLocalStorageMap(preferenceKey('account_monthly_goals'));
   const [paymentMethods, setPaymentMethodLocal] = useLocalStorageMap(preferenceKey('account_payment_methods'));
 
   // Sync payment method to Supabase for cron usage
@@ -688,7 +577,7 @@ export function BalancesView({ data, platform = 'meta', onPlatformChange }) {
         </div>
       </div>
 
-      {isGoogle && <p className="text-sm text-text-secondary">Os gastos são atualizados pelo Google. Contas com orçamento de conta aprovado (faturamento mensal) mostram o restante do limite; saldo pré-pago (Pix/boleto) não é exposto pela API do Google. Metas e datas de pagamento são definidas por você.</p>}
+      {isGoogle && <p className="text-sm text-text-secondary">Os gastos são atualizados pelo Google. Contas com orçamento de conta aprovado (faturamento mensal) mostram o restante do limite; saldo pré-pago (Pix/boleto) não é exposto pela API do Google. Datas de pagamento são definidas por você.</p>}
       {error && <p role="alert" className="text-sm text-warning">{error}</p>}
       {!balances.length && <p className="text-sm text-text-secondary">Nenhuma conta disponível. Confira as conexões em Configurações.</p>}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -696,8 +585,6 @@ export function BalancesView({ data, platform = 'meta', onPlatformChange }) {
           <BalanceCard
             key={balance.accountId}
             balance={balance}
-            goals={goals}
-            setGoal={setGoal}
             paymentMethods={paymentMethods}
             setPaymentMethod={setPaymentMethod}
             lastPayments={lastPayments}
