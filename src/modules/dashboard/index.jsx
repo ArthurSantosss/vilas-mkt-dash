@@ -21,8 +21,8 @@ export default function Dashboard() {
     campaigns: metaCampaigns,
     loading: metaLoading,
     error: metaError,
-    selectedPeriod: metaSelectedPeriod,
-    setSelectedPeriod: setMetaSelectedPeriod,
+    selectedPeriod,
+    setSelectedPeriod,
     refreshData: refreshMetaData,
   } = useMetaAds();
   const {
@@ -30,7 +30,6 @@ export default function Dashboard() {
     campaigns: googleCampaigns,
     loading: googleLoading,
     error: googleError,
-    setSelectedPeriod: setGoogleSelectedPeriod,
     refreshData: refreshGoogleData,
   } = useGoogleAds();
   const { alerts, thresholds } = useAlerts();
@@ -40,7 +39,6 @@ export default function Dashboard() {
   const [refreshError, setRefreshError] = useState(null);
   const [paymentMethods, setPaymentMethods] = useState(() => readSavedPaymentMethods());
   const [refreshing, setRefreshing] = useState(false);
-  const selectedPeriod = metaSelectedPeriod;
 
   const handleRefresh = useCallback(async () => {
     if (refreshInFlight.current || !navigator.onLine) return;
@@ -75,11 +73,6 @@ export default function Dashboard() {
       window.removeEventListener('online', refreshVisible);
     };
   }, [handleRefresh]);
-
-  const handlePeriodChange = (period) => {
-    setMetaSelectedPeriod(period);
-    setGoogleSelectedPeriod(period);
-  };
 
   useEffect(() => {
     const syncPaymentMethods = () => setPaymentMethods(readSavedPaymentMethods());
@@ -320,7 +313,7 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3 z-50 shrink-0">
-            <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={handlePeriodChange} />
+            <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} />
             <button
               onClick={handleRefresh}
               disabled={refreshing || metaLoading || googleLoading}

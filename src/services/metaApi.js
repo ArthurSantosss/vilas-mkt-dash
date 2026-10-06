@@ -3,7 +3,9 @@ import {
     clearInvalidMetaToken,
     getStoredMetaToken,
     isInvalidMetaTokenError,
-} from './metaTokenGuard';
+} from './metaTokenGuard.js';
+import { resolveMetaPeriodTarget, getMetaInsightsField, getPreviousPeriodRange } from '../shared/utils/metaPeriods.js';
+export { resolveMetaPeriodTarget, getMetaInsightsField, getPreviousPeriodRange };
 
 const IS_DEV = import.meta.env.DEV;
 // Tudo passa pelo proxy: é ele que escolhe entre os tokens de usuário do sistema das BMs
@@ -155,33 +157,25 @@ export function registerCampaignAccounts(campaigns) {
 }
 
 /**
- * Formata um período no formato do date_preset da Meta ou retorna undefined
- * se for um formato customizado usando time_range.
- */
-const getPresetFromPeriod = (period) => {
-    // Se o periodo for objeto customizado, não retornamos date_preset
-    if (typeof period === 'object' && period.type === 'custom') return undefined;
-
-    switch (period) {
-        case 'today': return 'today';
-        case 'yesterday': return 'yesterday';
-        case '7d': return 'last_7d';
-        case '30d': return 'last_30d';
-        case 'month': return 'this_month';
-        default: return 'last_7d';
-    }
-};
-
-/**
  * Adiciona data_preset ou time_range aos parâmetros dependendo do período
  */
 const applyPeriodParams = (params, period) => {
     const p = { ...params };
-    const preset = getPresetFromPeriod(period);
-    if (preset) {
-        p.date_preset = preset;
-    } else if (typeof period === 'object' && period.type === 'custom' && period.startDate && period.endDate) {
-        p.time_range = JSON.stringify({ since: period.startDate, until: period.endDate });
+    const target = resolveMetaPeriodTarget(period);
+    if (target.type === 'preset') {
+        p.date_preset = target.preset;
+    } else if (target.type === 'time_range') {
+        p.time_range = JSON.stringify({ since: target.since, until: target.until });
+    }
+    return p;
+};
+const applyPeriodParams = (params, period) => {
+    const p = { ...params };
+    const target = resolveMetaPeriodTarget(period);
+    if (target.type === 'preset') {
+        p.date_preset = target.preset;
+    } else if (target.type === 'time_range') {
+        p.time_range = JSON.stringify({ since: target.since, until: target.until });
     }
     return p;
 };
@@ -223,14 +217,7 @@ export const fetchAccountDailyInsights = async (accountId, period = '7d') => {
  * Busca as campanhas de uma conta e seus insights.
  */
 export const fetchCampaignsWithInsights = async (accountId, period = '7d') => {
-    const preset = getPresetFromPeriod(period);
-
-    let insightsField = 'insights';
-    if (preset) {
-        insightsField = `insights.date_preset(${preset})`;
-    } else if (typeof period === 'object' && period.type === 'custom' && period.startDate && period.endDate) {
-        insightsField = `insights.time_range({'since':'${period.startDate}','until':'${period.endDate}'})`;
-    }
+    const insightsField = getMetaInsightsField(period);
 
     const data = await fetchMeta(`/${accountId}/campaigns`, {
         fields: `id,name,status,objective,budget_remaining,daily_budget,lifetime_budget,adsets{status,daily_budget},${insightsField}{spend,impressions,cpm,inline_link_clicks,cpc,actions,ctr,purchase_roas,reach,frequency}`,
@@ -264,14 +251,7 @@ export const updateCampaignBudget = async (campaignId, newBudget) => {
  * Busca os conjuntos de anúncio (ad sets) de uma campanha com insights.
  */
 export const fetchAdSetsForCampaign = async (campaignId, period = '7d') => {
-    const preset = getPresetFromPeriod(period);
-
-    let insightsField = 'insights';
-    if (preset) {
-        insightsField = `insights.date_preset(${preset})`;
-    } else if (typeof period === 'object' && period.type === 'custom' && period.startDate && period.endDate) {
-        insightsField = `insights.time_range({'since':'${period.startDate}','until':'${period.endDate}'})`;
-    }
+    const insightsField = getMetaInsightsField(period);
 
     const data = await fetchMeta(`/${campaignId}/adsets`, {
         fields: `id,name,status,daily_budget,lifetime_budget,budget_remaining,optimization_goal,${insightsField}{spend,impressions,cpm,inline_link_clicks,cpc,actions,ctr,reach,frequency}`,
@@ -311,14 +291,7 @@ export const updateAdStatus = async (adId, newStatus) => {
  * Busca os anúncios de um conjunto de anúncios (ad set) com insights.
  */
 export const fetchAdsForAdSet = async (adSetId, period = '7d') => {
-    const preset = getPresetFromPeriod(period);
-
-    let insightsField = 'insights';
-    if (preset) {
-        insightsField = `insights.date_preset(${preset})`;
-    } else if (typeof period === 'object' && period.type === 'custom' && period.startDate && period.endDate) {
-        insightsField = `insights.time_range({'since':'${period.startDate}','until':'${period.endDate}'})`;
-    }
+    const insightsField = getMetaInsightsField(period);
 
     const data = await fetchMeta(`/${adSetId}/ads`, {
         fields: `id,name,status,creative{title,body,thumbnail_url},${insightsField}{spend,impressions,cpm,inline_link_clicks,cpc,actions,ctr,reach,frequency}`,
@@ -337,14 +310,7 @@ export const fetchAdsForAdSet = async (adSetId, period = '7d') => {
  * `image_url` traz a imagem em resolução cheia; `thumbnail_url` é o fallback.
  */
 export const fetchAdsWithInsights = async (accountId, period = '7d', limit = 60) => {
-    const preset = getPresetFromPeriod(period);
-
-    let insightsField = 'insights';
-    if (preset) {
-        insightsField = `insights.date_preset(${preset})`;
-    } else if (typeof period === 'object' && period.type === 'custom' && period.startDate && period.endDate) {
-        insightsField = `insights.time_range({'since':'${period.startDate}','until':'${period.endDate}'})`;
-    }
+    const insightsField = getMetaInsightsField(period);
 
     const data = await fetchMeta(`/${accountId}/ads`, {
         fields: `id,name,status,campaign{name},creative{title,body,thumbnail_url,image_url},${insightsField}{spend,impressions,inline_link_clicks,ctr,cpc,actions,reach}`,

@@ -1,3 +1,4 @@
+import { useAnalysisPeriod } from './AnalysisPeriodContext';
 import { createContext, useContext, useState, useMemo, useEffect, useCallback } from 'react';
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
 import {
@@ -14,7 +15,7 @@ const MetaAdsContext = createContext();
 
 export function MetaAdsProvider({ children }) {
   const queryClient = useQueryClient();
-  const [selectedPeriod, setSelectedPeriod] = useState('today');
+  const { selectedPeriod, setSelectedPeriod } = useAnalysisPeriod();
   const [hasToken, setHasToken] = useState(
     () => !!getStoredMetaToken()
   );
@@ -300,6 +301,7 @@ export function MetaAdsProvider({ children }) {
     balances,
     campaigns,
     selectedPeriod,
+    setSelectedPeriod,
     todayTotals,
     loading,
     error,

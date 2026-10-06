@@ -446,6 +446,12 @@ export default function MetaAdsOverview() {
     };
   }, []);
 
+  // Limpar cache de conjuntos e anúncios quando o período mudar para recarregar sob o novo período
+  useEffect(() => {
+    setAdSets({});
+    setAds({});
+  }, [selectedPeriod]);
+
   const getSpendValue = useCallback((item) => {
     return Number(item?.metrics?.spend || 0);
   }, []);

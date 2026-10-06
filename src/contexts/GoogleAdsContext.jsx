@@ -1,3 +1,4 @@
+import { useAnalysisPeriod } from './AnalysisPeriodContext';
 import { createContext, useContext, useState, useMemo, useEffect, useCallback } from 'react';
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
 import {
@@ -80,7 +81,7 @@ function normalizeGoogleCampaigns(rawAccount, overview) {
 
 export function GoogleAdsProvider({ children }) {
   const queryClient = useQueryClient();
-  const [selectedPeriod, setSelectedPeriod] = useState('today');
+  const { selectedPeriod, setSelectedPeriod } = useAnalysisPeriod();
   const [connection, setConnection] = useState(loadStoredGoogleAdsConnection);
   const [disabledAccounts, setDisabledAccounts] = useState(loadDisabledGoogleAdsAccounts);
   const hasConnection = Boolean(connection);
@@ -233,6 +234,7 @@ export function GoogleAdsProvider({ children }) {
     activeAccounts,
     campaigns,
     selectedPeriod,
+    setSelectedPeriod,
     todayTotals,
     loading,
     error,

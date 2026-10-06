@@ -1,12 +1,10 @@
+import { useReportSession, useReportAccounts, useReportResult, useReportPeriod } from '../reports/useReportSession';
 import ReportCampaignFilter from '../../shared/components/ReportCampaignFilter';
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { supabase } from '../../services/supabase';
-import { useGoogleAds } from '../../contexts/GoogleAdsContext';
 import PlatformFilter from '../../shared/components/PlatformFilter';
 import ReportFormatSelector from '../../shared/components/ReportFormatSelector';
-import { fetchGoogleReport } from '../../services/googleReports';
 import { googleVisualData } from '../../shared/utils/googleReports';
-import { useMetaAds } from '../../contexts/MetaAdsContext';
 import { useAgency } from '../../contexts/AgencyContext';
 import { Image, Download, Loader2, Sparkles, Copy, Check, CheckCircle2, Target, Link2, X, Trash2, Pencil } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -15,8 +13,7 @@ import ReportCard from '../../shared/components/ReportCard';
 import CopyImageMenu from './CopyImageMenu';
 import { copyReportImage } from './copyReportImage';
 import {
-  fetchAccountInsights, fetchCampaignsWithInsights,
-  fetchCampaignDailyInsights, getPreviousPeriodRange
+  getPreviousPeriodRange
 } from '../../services/metaApi';
 import { PRESETS } from '../../shared/utils/dateUtils';
 import { getAgencyLogoSources } from '../../shared/utils/agencyLogo';
@@ -662,34 +659,21 @@ function getExportCacheKey(reportData) {
 }
 
 export default function ReportVisual() {
-  const [platform, setPlatform] = useState('meta');
-  const [selectedAgency, setSelectedAgency] = useState('__all__');
-  const meta = useMetaAds();
-  const google = useGoogleAds();
-
-  const handlePlatformChange = (nextPlatform) => {
-    if (nextPlatform === platform) return;
-    const current = platform === 'google' ? google : meta;
-    const next = nextPlatform === 'google' ? google : meta;
-    // Leva o período atual para a plataforma de destino antes de trocar a tela.
-    next.setSelectedPeriod(current.selectedPeriod);
-    setPlatform(nextPlatform);
-  };
-
-  return <ReportVisualContent key={platform} platform={platform} onPlatformChange={handlePlatformChange} selectedAgency={selectedAgency} setSelectedAgency={setSelectedAgency} />;
+  const { platform } = useReportSession();
+  return <ReportVisualContent key={platform} />;
 }
-function ReportVisualContent({ platform, onPlatformChange, selectedAgency, setSelectedAgency }) {
-  const meta = useMetaAds();
-  const google = useGoogleAds();
-  const { accounts, campaigns, selectedPeriod, setSelectedPeriod } = platform === 'google' ? google : meta;
+function ReportVisualContent() {
+  const { platform, onPlatformChange, selectedAgency, setSelectedAgency, selectedAccount, setSelectedAccount,
+    selectedCampaignIds, setSelectedCampaignIds, selectedPeriod: periodSelection, setSelectedPeriod,
+    selectedObjective, setSelectedObjective, requests, refreshData } = useReportSession();
+  const selectedPeriod = useReportPeriod();
+  const { accounts, campaigns, campaignsLoading, campaignsError } = useReportAccounts();
   const objectiveOptions = platform === 'google' ? [{ id: 'conversions', label: 'Conversões' }, { id: 'clicks', label: 'Cliques' }] : OBJECTIVE_OPTIONS;
   const { agencies, accountAgencies } = useAgency();
-  const [selectedAccount, setSelectedAccount] = useState('');
 
   const [clientLogos, setClientLogos] = useState(() => readClientLogos());
-  const [selectedObjective, setSelectedObjective] = useState(platform === 'google' ? 'conversions' : 'messages');
-  const [selectedCampaignIds, setSelectedCampaignIds] = useState([]);
-  const [reportData, setReportData] = useState(null);
+  const [storedReportData, startReport] = useReportResult('visual', JSON.stringify(clientLogos));
+  const reportData = useMemo(() => storedReportData ? { ...storedReportData, objective: selectedObjective } : null, [storedReportData, selectedObjective]);
   const [generating, setGenerating] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const reportRef = useRef(null);
@@ -840,7 +824,7 @@ function ReportVisualContent({ platform, onPlatformChange, selectedAgency, setSe
     if (!selectedAccount && filteredAccounts.length > 0) {
       setSelectedAccount(filteredAccounts[0].id);
     }
-  }, [filteredAccounts, selectedAccount]);
+  }, [filteredAccounts, selectedAccount, setSelectedAccount]);
 
   useEffect(() => {
     if (!selectedAccount) {
@@ -848,20 +832,24 @@ function ReportVisualContent({ platform, onPlatformChange, selectedAgency, setSe
       return;
     }
 
+    if (campaignsLoading || campaignsError) return;
     const availableIds = new Set(accountCampaigns.map(campaign => campaign.id));
-    setSelectedCampaignIds(prev => prev.filter(id => availableIds.has(id)));
-  }, [selectedAccount, accountCampaigns]);
+    setSelectedCampaignIds(prev => {
+      const next = prev.filter(id => availableIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [selectedAccount, accountCampaigns, campaignsLoading, campaignsError, setSelectedCampaignIds]);
 
   const handleGenerate = useCallback(async () => {
     if (!selectedAccount) return;
+    const setReportData = startReport();
     setGenerating(true);
-    setReportData(null);
     exportCacheRef.current = { key: '', dataUrl: '', blob: null };
 
     try {
       if (platform === 'google') {
         const account = accounts.find(a => a.id === selectedAccount);
-        const { current, previous, period } = await fetchGoogleReport(account, selectedPeriod, selectedCampaignIds);
+        const { current, previous, period } = await requests.fetchGoogleReport(account, selectedPeriod, selectedCampaignIds);
         const clientLogoUrl = clientLogos[selectedAccount] || clientLogos[account.accountId] || null;
         const [agencyLogoB64, platformLogoB64, clientLogoB64] = await Promise.all([
           toBase64FromSources(logoSources),
@@ -904,8 +892,8 @@ function ReportVisualContent({ platform, onPlatformChange, selectedAgency, setSe
       if (hasCampaignFilter) {
         const selectedCampaignSet = new Set(selectedCampaignIds);
         const [currentCampaigns, previousCampaigns] = await Promise.all([
-          fetchCampaignsWithInsights(selectedAccount, selectedPeriod),
-          fetchCampaignsWithInsights(selectedAccount, prevPeriod),
+          requests.fetchCampaignsWithInsights(selectedAccount, selectedPeriod),
+          requests.fetchCampaignsWithInsights(selectedAccount, prevPeriod),
         ]);
 
         campData = currentCampaigns.filter(campaign => selectedCampaignSet.has(campaign.id));
@@ -941,9 +929,9 @@ function ReportVisualContent({ platform, onPlatformChange, selectedAgency, setSe
         selectedCampaignNames = selectedCampaigns.map(campaign => campaign.name);
       } else {
         const [insights, prevInsights, currentCampaigns] = await Promise.all([
-          fetchAccountInsights(selectedAccount, selectedPeriod),
-          fetchAccountInsights(selectedAccount, prevPeriod),
-          fetchCampaignsWithInsights(selectedAccount, selectedPeriod),
+          requests.fetchAccountInsights(selectedAccount, selectedPeriod),
+          requests.fetchAccountInsights(selectedAccount, prevPeriod),
+          requests.fetchCampaignsWithInsights(selectedAccount, selectedPeriod),
         ]);
 
         if (!insights) {
@@ -1000,7 +988,7 @@ function ReportVisualContent({ platform, onPlatformChange, selectedAgency, setSe
       if (campData.length > 0) {
         try {
           const allDaily = await Promise.all(
-            campData.map(c => fetchCampaignDailyInsights(c.id, selectedPeriod))
+            campData.map(c => requests.fetchCampaignDailyInsights(c.id, selectedPeriod))
           );
           const dayMap = {};
           for (const daily of allDaily) {
@@ -1083,6 +1071,8 @@ function ReportVisualContent({ platform, onPlatformChange, selectedAgency, setSe
     selectedCampaigns,
     campaignScopeLabel,
     clientLogos,
+    requests,
+    startReport,
   ]);
 
   const buildExportAsset = useCallback(async () => {
@@ -1327,7 +1317,7 @@ function ReportVisualContent({ platform, onPlatformChange, selectedAgency, setSe
           <PlatformFilter value={platform} onChange={onPlatformChange} />
           <div className={`${FILTER_FIELD} z-50`}>
             <label className={FILTER_LABEL}>Período</label>
-            <PeriodSelector selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} className="w-full" align="left" />
+            <PeriodSelector selectedPeriod={periodSelection} onPeriodChange={setSelectedPeriod} className="w-full" align="left" />
           </div>
 
           {hasAgencies ? (
@@ -1336,9 +1326,12 @@ function ReportVisualContent({ platform, onPlatformChange, selectedAgency, setSe
               <select
                 value={selectedAgency}
                 onChange={e => {
-                  setSelectedAgency(e.target.value);
-                  setSelectedAccount('');
-                  setSelectedCampaignIds([]);
+                  const agency = e.target.value;
+                  setSelectedAgency(agency);
+                  if (agency !== '__all__' && accountAgencies[selectedAccount] !== agency) {
+                    setSelectedAccount('');
+                    setSelectedCampaignIds([]);
+                  }
                 }}
                 className={FILTER_CONTROL}
               >
@@ -1381,7 +1374,9 @@ function ReportVisualContent({ platform, onPlatformChange, selectedAgency, setSe
 
         </div>
 
-        {selectedAccount && (
+        {campaignsLoading && <p role="status" className="mt-4 text-sm text-text-secondary">Carregando campanhas da conta...</p>}
+        {campaignsError && <p role="alert" className="mt-4 text-sm text-danger">{campaignsError.message}</p>}
+        {selectedAccount && !campaignsLoading && !campaignsError && (
           <ReportCampaignFilter
             accountCampaigns={accountCampaigns}
             selectedCampaignIds={selectedCampaignIds}
@@ -1393,7 +1388,7 @@ function ReportVisualContent({ platform, onPlatformChange, selectedAgency, setSe
         <div className="relative mt-6 flex items-center justify-center gap-4">
           <button
             onClick={handleGenerate}
-            disabled={!selectedAccount || generating}
+            disabled={!selectedAccount || generating || campaignsLoading || Boolean(campaignsError)}
             className="group relative inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl font-semibold text-sm
               bg-gradient-to-r from-primary to-primary-light text-white shadow-lg shadow-primary/25
               hover:shadow-xl hover:shadow-primary/30 hover:scale-[1.02] active:scale-[0.98]
@@ -1403,6 +1398,14 @@ function ReportVisualContent({ platform, onPlatformChange, selectedAgency, setSe
             {generating ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
             {generating ? 'Gerando...' : 'Gerar Relatório'}
             <div className="absolute inset-0 rounded-xl bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+          </button>
+          <button
+            onClick={() => { refreshData(); handleGenerate(); }}
+            disabled={!selectedAccount || generating || campaignsLoading}
+            className="px-4 py-2 text-sm font-medium text-text-secondary hover:text-primary-light disabled:opacity-40"
+            title="Consultar dados atualizados da conta selecionada"
+          >
+            Atualizar dados
           </button>
 
           {d && !d.error && (
