@@ -5,6 +5,7 @@ import {
     isInvalidMetaTokenError,
 } from './metaTokenGuard.js';
 import { resolveMetaPeriodTarget, getMetaInsightsField, getPreviousPeriodRange } from '../shared/utils/metaPeriods.js';
+import { buildFatigueInsightsParams, detectCreativeFatigue, getFatigueWindows } from '../shared/utils/creativeFatigue.js';
 export { resolveMetaPeriodTarget, getMetaInsightsField, getPreviousPeriodRange };
 
 const IS_DEV = import.meta.env.DEV;
@@ -169,16 +170,6 @@ const applyPeriodParams = (params, period) => {
     }
     return p;
 };
-const applyPeriodParams = (params, period) => {
-    const p = { ...params };
-    const target = resolveMetaPeriodTarget(period);
-    if (target.type === 'preset') {
-        p.date_preset = target.preset;
-    } else if (target.type === 'time_range') {
-        p.time_range = JSON.stringify({ since: target.since, until: target.until });
-    }
-    return p;
-};
 
 /**
  * Busca os insights agregados de uma conta específica.
@@ -323,6 +314,19 @@ export const fetchAdsWithInsights = async (accountId, period = '7d', limit = 60)
 };
 
 /**
+ * Anúncios ativos da conta com sinais de fadiga (frequência alta + CTR caindo),
+ * comparando os últimos 7 dias completos com os 7 anteriores.
+ */
+export const fetchCreativeFatigue = async (accountId) => {
+    const windows = getFatigueWindows();
+    const [recent, previous] = await Promise.all([
+        fetchMeta(`/${accountId}/insights`, buildFatigueInsightsParams(windows.recent)),
+        fetchMeta(`/${accountId}/insights`, buildFatigueInsightsParams(windows.previous)),
+    ]);
+    return { windows, ads: detectCreativeFatigue(recent.data || [], previous.data || []) };
+};
+
+/**
  * Busca breakdown por região (estado) para uma conta ou campanha.
  * Usa level=campaign para garantir que o breakdown funcione corretamente.
  */
@@ -372,61 +376,6 @@ export const fetchCampaignDailyInsights = async (campaignId, period = '7d') => {
     const data = await fetchMeta(`/${campaignId}/insights`, params);
     return data.data || [];
 };
-
-/**
- * Calcula o período anterior de mesmo tamanho.
- * Ex: se o período é '7d', retorna { type: 'custom', startDate: 14 dias atrás, endDate: 8 dias atrás }.
- */
-export function getPreviousPeriodRange(period) {
-    const today = new Date();
-    const fmt = (d) => d.toISOString().slice(0, 10);
-
-    if (typeof period === 'object' && period.type === 'custom' && period.startDate && period.endDate) {
-        const start = new Date(period.startDate + 'T00:00:00');
-        const end = new Date(period.endDate + 'T00:00:00');
-        const days = Math.round((end - start) / 86400000) + 1;
-        const prevEnd = new Date(start);
-        prevEnd.setDate(prevEnd.getDate() - 1);
-        const prevStart = new Date(prevEnd);
-        prevStart.setDate(prevStart.getDate() - days + 1);
-        return { type: 'custom', startDate: fmt(prevStart), endDate: fmt(prevEnd) };
-    }
-
-    let days;
-    switch (period) {
-        case 'today': days = 1; break;
-        case 'yesterday': days = 1; break;
-        case '7d': days = 7; break;
-        case '14d': days = 14; break;
-        case '30d': days = 30; break;
-        case 'today_yesterday': days = 2; break;
-        case 'last_month': {
-            const startOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-            const prevEnd = new Date(startOfLastMonth);
-            prevEnd.setDate(prevEnd.getDate() - 1);
-            const prevStart = new Date(prevEnd.getFullYear(), prevEnd.getMonth(), 1);
-            return { type: 'custom', startDate: fmt(prevStart), endDate: fmt(prevEnd) };
-        }
-        case 'month': {
-            const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-            days = Math.round((today - firstOfMonth) / 86400000) + 1;
-            break;
-        }
-        default: days = 7;
-    }
-
-    const currentEnd = new Date(today);
-    currentEnd.setDate(currentEnd.getDate() - 1); // yesterday = end of current window
-    const currentStart = new Date(currentEnd);
-    currentStart.setDate(currentStart.getDate() - days + 1);
-
-    const prevEnd = new Date(currentStart);
-    prevEnd.setDate(prevEnd.getDate() - 1);
-    const prevStart = new Date(prevEnd);
-    prevStart.setDate(prevStart.getDate() - days + 1);
-
-    return { type: 'custom', startDate: fmt(prevStart), endDate: fmt(prevEnd) };
-}
 
 /**
  * Busca insights diários do período anterior para uma campanha (para comparação temporal).

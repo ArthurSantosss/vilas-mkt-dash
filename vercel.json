@@ -29,6 +29,10 @@
     {
       "path": "/api/cron/slack-alerts",
       "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/cron/morning-briefing",
+      "schedule": "0 10 * * *"
     }
   ],
   "functions": {
@@ -37,6 +41,15 @@
       "includeFiles": "public/**"
     },
     "api/google-ads-proxy.js": {
+      "maxDuration": 300
+    },
+    "api/cron/morning-briefing.js": {
+      "maxDuration": 300
+    },
+    "api/cron/slack-alerts.js": {
+      "maxDuration": 300
+    },
+    "api/alerts/briefing.js": {
       "maxDuration": 300
     }
   }

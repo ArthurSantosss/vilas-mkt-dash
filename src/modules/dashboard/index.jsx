@@ -46,7 +46,7 @@ export default function Dashboard() {
     setRefreshing(true);
     setRefreshError(null);
     try {
-      await Promise.all([refreshMetaData(), refreshGoogleData()]);
+      await Promise.all([refreshMetaData(), refreshGoogleData(), queryClient.invalidateQueries({ queryKey: ['briefing'] })]);
       const failed = queryClient.getQueryCache().findAll({ type: 'active' })
         .some(query => ['meta', 'googleAds'].includes(query.queryKey[0]) && query.state.status === 'error');
       if (failed) setRefreshError('Alguns dados não foram atualizados. Exibindo os últimos dados disponíveis.');

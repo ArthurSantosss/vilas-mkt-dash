@@ -15,7 +15,7 @@ export default function AlertsPanel({ loading, error }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-text-primary">Avisos e prioridades</h2>
-          <p className="text-xs text-text-secondary mt-1">Pagamentos, saldos e resultados de hoje. Entrega no período selecionado.</p>
+          <p className="text-xs text-text-secondary mt-1">Saldos atuais e tendências em semanas completas. Meta e Google Ads.</p>
         </div>
         <label className="text-xs text-text-secondary flex items-center gap-2">
           Exibir
@@ -38,11 +38,12 @@ export default function AlertsPanel({ loading, error }) {
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-semibold text-text-primary">{alert.accountName}</span>
-                <span className="text-[11px] text-text-secondary">Meta{alert.agency ? ` · ${alert.agency}` : ''}</span>
+                <span className="text-[11px] text-text-secondary">{alert.platform === 'google' ? 'Google' : 'Meta'}{alert.agency ? ` · ${alert.agency}` : ''}</span>
                 {alert.read && <span className="text-[11px] text-text-secondary">Lido</span>}
               </div>
               <p className="text-sm text-text-primary mt-1">{alert.message}</p>
               {alert.detail && <p className="text-xs text-text-secondary mt-1">{alert.detail}</p>}
+              {alert.nextAction && <p className="text-xs text-primary-light mt-2">Próximo passo: {alert.nextAction}</p>}
               <div className="flex flex-wrap items-center gap-4 mt-3">
                 <Link to={alert.href} className="inline-flex items-center gap-1 text-xs text-primary-light hover:underline">{alert.href === '/saldos' ? 'Ver saldos' : 'Ver campanhas'}<ArrowUpRight size={13} /></Link>
                 {!alert.read && <button onClick={() => markAsRead(alert.readKey)} className="inline-flex items-center gap-1 text-xs text-text-secondary hover:text-text-primary"><Check size={13} /> Marcar como lido</button>}
@@ -58,14 +59,18 @@ export default function AlertsPanel({ loading, error }) {
           {[
             ['balance_critical', 'Saldo crítico (R$)'],
             ['balance_warning', 'Saldo em atenção (R$)'],
-            ['high_cost_lead', 'Custo por lead (R$)'],
+            ['high_cost_lead', 'Meta de custo por resultado (R$)'],
+            ['min_spend', 'Gasto mínimo na semana (R$)'],
+            ['min_results', 'Mínimo de resultados por semana'],
+            ['worsening_percent', 'Variação mínima (%)'],
+            ['google_lag_days', 'Dias recentes excluídos — Google'],
           ].map(([key, label]) => (
             <label key={key} className="flex flex-col gap-2">{label}
               <input type="number" min="0" step="1" value={thresholds[key]} onChange={event => { if (event.target.value !== '') updateThreshold(key, Number(event.target.value)); }} className="min-w-0 w-full rounded-lg bg-bg border border-border px-3 py-2 text-text-primary" />
             </label>
           ))}
         </div>
-        <p className="mt-3">Envio programado ao Slack: diariamente às 12h (Brasília).</p>
+        <p className="mt-3">Briefing no Slack às 7h; novos alertas ou agravamentos às 12h (Bahia). Valores em R$ aplicam-se às contas BRL.</p>
       </details>
       <p className="pt-3 border-t border-border/60 text-[11px] text-text-secondary">Marcar como lido não resolve a condição nem altera o envio de alertas ao Slack.</p>
     </section>

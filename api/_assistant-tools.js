@@ -6,24 +6,40 @@
 // servidor — o mesmo padrão do meta-proxy.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { normalizeAdAccountId, readMetaConnectionsSafe, resolveConnectionForAccount } from './_meta-tokens.js';
+import { getSupabase } from './_supabase-server.js';
 
 const META_API_BASE = 'https://graph.facebook.com/v22.0';
 
 export const metaTokenStorage = new AsyncLocalStorage();
 
-export function runWithMetaToken(token, fn) {
-    return metaTokenStorage.run(token, fn);
+// Carrega os tokens de BM do registro (mesma fonte do meta-proxy) junto com o token
+// de perfil da requisição, para o assistente enxergar as mesmas contas que o painel.
+export async function runWithMetaToken(token, fn) {
+    const connections = await readMetaConnectionsSafe();
+    return metaTokenStorage.run({ token, connections }, fn);
 }
 
-function getEffectiveMetaToken() {
-    const contextToken = metaTokenStorage.getStore();
-    return contextToken || process.env.META_ACCESS_TOKEN || process.env.VITE_META_ACCESS_TOKEN || '';
+function profileToken() {
+    return metaTokenStorage.getStore()?.token || process.env.META_ACCESS_TOKEN || process.env.VITE_META_ACCESS_TOKEN || '';
+}
+
+// Token de BM que cobre a conta tem prioridade; sem cobertura, cai no token de perfil.
+function getEffectiveMetaToken(accountId) {
+    const connections = metaTokenStorage.getStore()?.connections || [];
+    const bmToken = accountId ? resolveConnectionForAccount(connections, accountId)?.token : null;
+    return bmToken || profileToken();
+}
+
+function accountFromPath(path) {
+    return normalizeAdAccountId(String(path).replace(/^\//, '').split('/')[0]);
 }
 
 // ─── Meta Graph helpers (server-side) ────────────────────────────────────────
 
-export async function metaGet(path, params = {}) {
-    const token = getEffectiveMetaToken();
+// `accountId` escolhe o token quando o caminho não começa pela conta (ex.: /{campanha}).
+export async function metaGet(path, params = {}, { accountId, token: explicitToken } = {}) {
+    const token = explicitToken || getEffectiveMetaToken(accountId || accountFromPath(path));
     if (!token) {
         throw new Error('Nenhum token Meta ativo encontrado.');
     }
@@ -46,8 +62,8 @@ export async function metaGet(path, params = {}) {
 
 // POST à Graph API (mutações: status/orçamento de campanha). Token vai no body,
 // nunca em query, para não vazar em logs.
-export async function metaPost(path, body = {}) {
-    const token = getEffectiveMetaToken();
+export async function metaPost(path, body = {}, { accountId } = {}) {
+    const token = getEffectiveMetaToken(accountId || accountFromPath(path));
     if (!token) {
         throw new Error('Nenhum token Meta ativo encontrado.');
     }
@@ -143,9 +159,12 @@ export function summarizeInsights(insights) {
 const accountsCache = new Map();
 const CACHE_TTL_MS = 60 * 1000; // 60 segundos
 
+// União das contas de todos os tokens de BM + token de perfil (igual ao meta-proxy).
 export async function listAccountsRaw(forceRefresh = false) {
-    const token = getEffectiveMetaToken();
-    const cacheKey = token ? token.slice(-16) : 'default';
+    const connections = metaTokenStorage.getStore()?.connections || [];
+    const tokens = [...new Set([...connections.map((c) => c.token), profileToken()].filter(Boolean))];
+    if (tokens.length === 0) throw new Error('Nenhum token Meta ativo encontrado.');
+    const cacheKey = tokens.map((t) => t.slice(-16)).join('|');
     const now = Date.now();
     const cached = accountsCache.get(cacheKey);
 
@@ -153,11 +172,25 @@ export async function listAccountsRaw(forceRefresh = false) {
         return cached.data;
     }
 
-    const data = await metaGet('/me/adaccounts', {
-        fields: 'id,account_id,name,account_status,currency,balance,amount_spent',
-        limit: 1000,
-    });
-    const accounts = data.data || [];
+    const errors = [];
+    const results = await Promise.all(tokens.map(async (token) => {
+        try {
+            const data = await metaGet('/me/adaccounts', {
+                fields: 'id,account_id,name,account_status,currency,balance,amount_spent',
+                limit: 1000,
+            }, { token });
+            return data.data || [];
+        } catch (err) {
+            errors.push(err.message);
+            return [];
+        }
+    }));
+    const merged = new Map();
+    for (const account of results.flat()) {
+        if (!merged.has(account.id)) merged.set(account.id, account);
+    }
+    if (merged.size === 0 && errors.length) throw new Error(errors[0]);
+    const accounts = [...merged.values()];
     accountsCache.set(cacheKey, { data: accounts, time: now });
     return accounts;
 }
@@ -183,6 +216,59 @@ export async function resolveCampaign(accountId, query) {
     if (!match) match = campaigns.find((c) => normalize(c.name) === q);
     if (!match) match = campaigns.find((c) => normalize(c.name).includes(q));
     return { match, campaigns };
+}
+
+// ─── Períodos comparáveis (fuso de São Paulo) ────────────────────────────────
+
+function todayInSaoPaulo(now = new Date()) {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(now).map((p) => [p.type, p.value]));
+    return new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)));
+}
+
+const ymd = (date) => date.toISOString().slice(0, 10);
+const addDays = (date, days) => new Date(date.getTime() + days * 86_400_000);
+
+/** Período atual e o período anterior de mesmo tamanho, só com dias completos (exceto "month"). */
+export function comparableRanges(period, now = new Date()) {
+    const today = todayInSaoPaulo(now);
+    if (period === 'month') {
+        const first = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+        const prevFirst = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1));
+        const prevMonthLast = addDays(first, -1);
+        const prevUntil = new Date(Math.min(
+            Date.UTC(prevFirst.getUTCFullYear(), prevFirst.getUTCMonth(), today.getUTCDate()),
+            prevMonthLast.getTime(),
+        ));
+        return {
+            atual: { since: ymd(first), until: ymd(today) },
+            anterior: { since: ymd(prevFirst), until: ymd(prevUntil) },
+        };
+    }
+    const days = { yesterday: 1, '7d': 7, '14d': 14, '30d': 30 }[period] || 7;
+    return {
+        atual: { since: ymd(addDays(today, -days)), until: ymd(addDays(today, -1)) },
+        anterior: { since: ymd(addDays(today, -2 * days)), until: ymd(addDays(today, -days - 1)) },
+    };
+}
+
+function variationPct(current, previous) {
+    if (current == null || previous == null || previous === 0) return null;
+    return Number((((current - previous) / previous) * 100).toFixed(1));
+}
+
+async function accountInsightsForRange(accountId, range) {
+    const data = await metaGet(`/${accountId}/insights`, {
+        fields: 'spend,impressions,cpm,cpc,ctr,actions,reach,frequency',
+        level: 'account',
+        time_range: JSON.stringify(range),
+    });
+    return summarizeInsights(data.data && data.data[0]);
+}
+
+function accountNotFound(conta, accounts) {
+    return { erro: `Nenhuma conta encontrada para "${conta}".`, contas_disponiveis: accounts.map((a) => a.name) };
 }
 
 // ─── Definição das ferramentas de LEITURA (schema + executor) ────────────────
@@ -306,6 +392,139 @@ export const TOOLS = [
             const valid = rows.filter((r) => !r.erro && r[metrica] != null);
             valid.sort((x, y) => (ordem === 'asc' ? x[metrica] - y[metrica] : y[metrica] - x[metrica]));
             return { metrica, ordem, periodo, ranking: valid };
+        },
+    },
+    {
+        name: 'compare_periods',
+        description:
+            'Compara as métricas de UMA conta Meta (cliente) no período atual com o período anterior de mesmo tamanho e devolve a variação percentual de cada métrica. Use para "como a conta X está em relação à semana passada", "melhorou ou piorou", "o que mudou".',
+        input_schema: {
+            type: 'object',
+            properties: {
+                conta: { type: 'string', description: 'Nome do cliente ou ID da conta.' },
+                periodo: {
+                    type: 'string',
+                    enum: ['yesterday', '7d', '14d', '30d', 'month'],
+                    description: 'yesterday = ontem vs anteontem; 7d/14d/30d = últimos N dias completos vs N dias anteriores; month = mês até hoje vs mesmo trecho do mês passado. Default: 7d.',
+                },
+            },
+            required: ['conta'],
+        },
+        execute: async ({ conta, periodo = '7d' }) => {
+            const { match, accounts } = await resolveAccount(conta);
+            if (!match) return accountNotFound(conta, accounts);
+            const ranges = comparableRanges(periodo);
+            const [atual, anterior] = await Promise.all([
+                accountInsightsForRange(match.id, ranges.atual),
+                accountInsightsForRange(match.id, ranges.anterior),
+            ]);
+            const variacao = {};
+            if (atual && anterior) {
+                for (const key of Object.keys(atual)) variacao[key] = variationPct(atual[key], anterior[key]);
+            }
+            return {
+                conta: match.name,
+                id: match.id,
+                periodo_atual: ranges.atual,
+                periodo_anterior: ranges.anterior,
+                atual: atual || 'Sem dados no período.',
+                anterior: anterior || 'Sem dados no período.',
+                variacao_percentual: variacao,
+                nota: 'Em custo_por_lead, CPM e CPC, variação positiva é piora. Em leads e CTR, positiva é melhora.',
+            };
+        },
+    },
+    {
+        name: 'get_top_ads',
+        description:
+            'Lista os MELHORES ou PIORES anúncios (criativos) de uma conta Meta num período, pelo custo por lead. "piores" inclui primeiro os anúncios que gastaram sem gerar nenhum lead. Use para "quais criativos estão performando melhor/pior no cliente X".',
+        input_schema: {
+            type: 'object',
+            properties: {
+                conta: { type: 'string', description: 'Nome do cliente ou ID da conta.' },
+                ordem: { type: 'string', enum: ['melhores', 'piores'], description: 'Default: melhores.' },
+                periodo: { type: 'string', enum: ['today', 'yesterday', '7d', '30d', 'month'], description: 'Default: 7d.' },
+                limite: { type: 'number', description: 'Quantos anúncios devolver (1 a 15). Default: 5.' },
+            },
+            required: ['conta'],
+        },
+        execute: async ({ conta, ordem = 'melhores', periodo = '7d', limite = 5 }) => {
+            const { match, accounts } = await resolveAccount(conta);
+            if (!match) return accountNotFound(conta, accounts);
+            const data = await metaGet(`/${match.id}/insights`, {
+                level: 'ad',
+                fields: 'ad_id,ad_name,campaign_name,spend,impressions,cpm,ctr,inline_link_click_ctr,frequency,actions,reach',
+                date_preset: presetFromPeriod(periodo),
+                limit: 500,
+            });
+            const MIN_SPEND = 10;
+            const ads = (data.data || [])
+                .map((row) => ({
+                    anuncio: row.ad_name,
+                    id: row.ad_id,
+                    campanha: row.campaign_name,
+                    ctr_link: row.inline_link_click_ctr ? Number(Number(row.inline_link_click_ctr).toFixed(2)) : null,
+                    ...summarizeInsights(row),
+                }))
+                .filter((ad) => ad.investimento >= MIN_SPEND);
+            let ranked;
+            if (ordem === 'piores') {
+                const semLead = ads.filter((ad) => ad.leads === 0).sort((a, b) => b.investimento - a.investimento);
+                const comLead = ads.filter((ad) => ad.leads > 0).sort((a, b) => b.custo_por_lead - a.custo_por_lead);
+                ranked = [...semLead, ...comLead];
+            } else {
+                ranked = ads.filter((ad) => ad.leads > 0).sort((a, b) => a.custo_por_lead - b.custo_por_lead);
+            }
+            const n = Math.min(Math.max(Math.round(Number(limite) || 5), 1), 15);
+            return {
+                conta: match.name,
+                periodo,
+                ordem,
+                criterio: `custo por lead; só anúncios com pelo menos R$${MIN_SPEND} de investimento`,
+                total_analisados: ads.length,
+                anuncios: ranked.slice(0, n),
+            };
+        },
+    },
+    {
+        name: 'get_change_log',
+        description:
+            'Consulta o histórico de alterações registradas na plataforma (pausas, ativações, mudanças de orçamento, alertas, método de pagamento), de todas as contas ou de um cliente. Use para "o que eu mudei na conta X", "quais alterações fiz essa semana".',
+        input_schema: {
+            type: 'object',
+            properties: {
+                conta: { type: 'string', description: 'Nome do cliente (opcional). Sem isso, traz todas as contas.' },
+                dias: { type: 'number', description: 'Quantos dias para trás (1 a 90). Default: 14.' },
+            },
+            required: [],
+        },
+        execute: async ({ conta, dias = 14 }) => {
+            const days = Math.min(Math.max(Math.round(Number(dias) || 14), 1), 90);
+            const since = new Date(Date.now() - days * 86_400_000).toISOString();
+            let query = getSupabase()
+                .from('change_log')
+                .select('date,platform,client_name,campaign_name,change_type,description,previous_value,new_value')
+                .gte('date', since)
+                .order('date', { ascending: false })
+                .limit(50);
+            if (conta) query = query.ilike('client_name', `%${String(conta).replace(/[%_,()]/g, ' ').trim()}%`);
+            const { data, error } = await query;
+            if (error) return { erro: `Não foi possível ler o histórico: ${error.message}` };
+            return {
+                dias: days,
+                conta: conta || 'todas',
+                total: (data || []).length,
+                alteracoes: (data || []).map((row) => ({
+                    data: row.date,
+                    plataforma: row.platform,
+                    cliente: row.client_name,
+                    campanha: row.campaign_name,
+                    tipo: row.change_type,
+                    descricao: row.description,
+                    antes: row.previous_value,
+                    depois: row.new_value,
+                })),
+            };
         },
     },
 ];

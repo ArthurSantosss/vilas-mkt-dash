@@ -12,6 +12,7 @@
 
 import { resolveAccount, resolveCampaign, metaPost, normalize } from './_assistant-tools.js';
 import { getSupabase, logChange } from './_supabase-server.js';
+import { GOOGLE_EXECUTORS, GOOGLE_PREPARERS, GOOGLE_WRITE_TOOLS } from './_assistant-google-tools.js';
 
 const PAYMENT_METHODS = ['credit_card', 'pix', 'boleto'];
 const MAX_DAILY_BUDGET = 100000; // teto de sanidade (R$) para evitar erro grosseiro
@@ -208,13 +209,15 @@ export const PREPARERS = {
             },
         };
     },
+
+    ...GOOGLE_PREPARERS,
 };
 
 // ─── EXECUTORS: rodam SÓ após confirmação (via /api/assistant-action) ────────
 
 export const EXECUTORS = {
     pause_campaign: async (meta) => {
-        await metaPost(`/${meta.campaignId}`, { status: 'PAUSED' });
+        await metaPost(`/${meta.campaignId}`, { status: 'PAUSED' }, { accountId: meta.accountId });
         await logChange({
             clientName: meta.accountName, accountId: meta.accountId, campaignName: meta.campaignName,
             changeType: 'pause_campaign', description: `Campanha pausada via assistente.`,
@@ -224,7 +227,7 @@ export const EXECUTORS = {
     },
 
     activate_campaign: async (meta) => {
-        await metaPost(`/${meta.campaignId}`, { status: 'ACTIVE' });
+        await metaPost(`/${meta.campaignId}`, { status: 'ACTIVE' }, { accountId: meta.accountId });
         await logChange({
             clientName: meta.accountName, accountId: meta.accountId, campaignName: meta.campaignName,
             changeType: 'activate_campaign', description: `Campanha ativada via assistente.`,
@@ -238,7 +241,7 @@ export const EXECUTORS = {
         if (!Number.isFinite(budget) || budget <= 0 || budget > MAX_DAILY_BUDGET) {
             throw new Error('Orçamento inválido.');
         }
-        await metaPost(`/${meta.campaignId}`, { daily_budget: Math.round(budget * 100) });
+        await metaPost(`/${meta.campaignId}`, { daily_budget: Math.round(budget * 100) }, { accountId: meta.accountId });
         await logChange({
             clientName: meta.accountName, accountId: meta.accountId, campaignName: meta.campaignName,
             changeType: 'set_budget', description: `Orçamento diário alterado via assistente.`,
@@ -280,6 +283,8 @@ export const EXECUTORS = {
         });
         return `Método de pagamento da conta ${meta.accountName} alterado para ${meta.method}.`;
     },
+
+    ...GOOGLE_EXECUTORS,
 };
 
 // Executa uma ferramenta de escrita no CHAT = apenas preparar a proposta.
@@ -302,7 +307,7 @@ export async function executeConfirmedAction(action) {
 }
 
 export function writeToolSchemas() {
-    return WRITE_TOOLS.map(({ name, description, input_schema }) => ({ name, description, input_schema }));
+    return [...WRITE_TOOLS, ...GOOGLE_WRITE_TOOLS].map(({ name, description, input_schema }) => ({ name, description, input_schema }));
 }
 
 export function isWriteTool(name) {

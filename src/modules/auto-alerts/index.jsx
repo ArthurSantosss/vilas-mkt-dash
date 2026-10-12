@@ -1,38 +1,14 @@
-import { generateAutomaticAlerts } from '../../shared/utils/automaticAlerts';
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useAlerts } from '../../contexts/AlertsContext';
+import { useState, useMemo, useCallback } from 'react';
 import {
   Bell, AlertTriangle, TrendingDown, DollarSign, Trash2,
-  CheckCircle2, CreditCard, Send, Wallet, MessageSquareX,
-  Settings, ChevronDown, ChevronUp, Loader2, SlidersHorizontal
+  CheckCircle2, CreditCard, Send, MessageSquareX,
+  Settings, ChevronDown, ChevronUp, Loader2, SlidersHorizontal, Repeat, Activity
 } from 'lucide-react';
 import { useMetaAds } from '../../contexts/MetaAdsContext';
-import { useAgency } from '../../contexts/AgencyContext';
-import { readSavedPaymentMethods } from '../../shared/utils/paymentMethod';
 import {
   AUTO_ALERT_REMINDER_HOURS,
-  AUTO_ALERTS_STORAGE_KEY,
-  DEFAULT_AUTO_ALERT_THRESHOLDS,
-  normalizeAutoAlertThresholds,
 } from '../../shared/constants/autoAlerts';
-
-function loadThresholds() {
-  try {
-    const stored = JSON.parse(localStorage.getItem(AUTO_ALERTS_STORAGE_KEY));
-    return normalizeAutoAlertThresholds(stored);
-  } catch {
-    return { ...DEFAULT_AUTO_ALERT_THRESHOLDS };
-  }
-}
-
-function saveThresholds(thresholds) {
-  localStorage.setItem(AUTO_ALERTS_STORAGE_KEY, JSON.stringify(thresholds));
-  window.dispatchEvent(new CustomEvent('local-storage-map-updated', {
-    detail: {
-      key: AUTO_ALERTS_STORAGE_KEY,
-      value: thresholds,
-    },
-  }));
-}
 
 function loadBalances() {
   try {
@@ -43,53 +19,18 @@ function loadBalances() {
 }
 
 export default function AutoAlerts() {
-  const { accounts, balances: contextBalances } = useMetaAds();
-  const { accountAgencies } = useAgency();
-
-  const [thresholds, setThresholds] = useState(loadThresholds);
+  const { balances: contextBalances } = useMetaAds();
+  const { alerts: sharedAlerts, thresholds, updateThreshold, monitoredCount, error: alertsError } = useAlerts();
   const [showSettings, setShowSettings] = useState(false);
   const [dismissedIds, setDismissedIds] = useState(new Set());
-
-  const [paymentMethodsMap, setPaymentMethodsMap] = useState(() => readSavedPaymentMethods());
-
-  useEffect(() => {
-    const syncPaymentMethods = () => setPaymentMethodsMap(readSavedPaymentMethods());
-    const handleLocalStorageMapUpdated = (event) => {
-      if (event?.detail?.key === 'account_payment_methods') {
-        setPaymentMethodsMap(event.detail.value || {});
-      }
-    };
-    window.addEventListener('storage', syncPaymentMethods);
-    window.addEventListener('focus', syncPaymentMethods);
-    window.addEventListener('local-storage-map-updated', handleLocalStorageMapUpdated);
-    return () => {
-      window.removeEventListener('storage', syncPaymentMethods);
-      window.removeEventListener('focus', syncPaymentMethods);
-      window.removeEventListener('local-storage-map-updated', handleLocalStorageMapUpdated);
-    };
-  }, []);
 
   const balances = useMemo(() => {
     if (contextBalances && contextBalances.length > 0) return contextBalances;
     return loadBalances();
   }, [contextBalances]);
 
-  const handleThresholdChange = (key, value) => {
-    const num = parseFloat(value);
-    if (isNaN(num) || num < 0) return;
-    setThresholds(prev => {
-      const updated = { ...prev, [key]: num };
-      saveThresholds(updated);
-      return updated;
-    });
-  };
-
-  // ── Automatic alert evaluation for ALL accounts ──
-  const allAlerts = useMemo(() => {
-    const icons = { payment_error: CreditCard, balance_low: DollarSign, high_cost: TrendingDown, no_messages: MessageSquareX };
-    return generateAutomaticAlerts({ accounts, balances, accountAgencies, paymentMethodsMap, thresholds })
-      .map(alert => ({ ...alert, icon: icons[alert.type] || Bell }));
-  }, [accounts, balances, accountAgencies, paymentMethodsMap, thresholds]);
+  const handleThresholdChange = (key, value) => { if (value !== '') updateThreshold(key, Number(value)); };
+  const allAlerts = useMemo(() => sharedAlerts.map(alert => ({ ...alert, type: alert.category, icon: Bell })), [sharedAlerts]);
 
   const visibleAlerts = useMemo(
     () => allAlerts.filter(a => !dismissedIds.has(a.id)),
@@ -139,11 +80,26 @@ export default function AutoAlerts() {
     payment_error: 'Erro Pagamento',
     balance_low: 'Saldo Baixo',
     high_cost: 'Custo Alto',
-    no_messages: 'Sem Mensagens',
+    cost_increase: 'Piora de custo',
+    no_results: 'Sem resultados',
+    results_drop: 'Queda de resultados',
+    account_status: 'Status da conta',
+    creative_fatigue: 'Criativo cansado',
   };
+
+  const thresholdFields = [
+    { key: 'balance_critical', label: 'Saldo Crítico (R$)', hint: 'Alerta vermelho quando o saldo pré-pago fica abaixo', dot: 'bg-danger', money: true, step: 10 },
+    { key: 'balance_warning', label: 'Saldo em Atenção (R$)', hint: 'Alerta amarelo quando o saldo pré-pago fica abaixo', dot: 'bg-warning', money: true, step: 10 },
+    { key: 'high_cost_lead', label: 'Meta de Custo por Resultado (R$)', hint: 'Alerta quando o custo da semana passa da meta', dot: 'bg-orange-400', money: true, step: 1 },
+    { key: 'min_spend', label: 'Gasto Mínimo na Semana (R$)', hint: 'Abaixo disso a conta não é avaliada (amostra pequena)', dot: 'bg-primary-light', money: true, step: 10 },
+    { key: 'min_results', label: 'Mínimo de Resultados na Semana', hint: 'Base mínima para comparar custo entre semanas', dot: 'bg-primary-light', step: 1 },
+    { key: 'worsening_percent', label: 'Piora Mínima (%)', hint: 'Variação do custo ou do volume que gera alerta', dot: 'bg-primary-light', step: 5 },
+    { key: 'google_lag_days', label: 'Dias Recentes Excluídos — Google', hint: 'Evita alarme falso pelo atraso das conversões', dot: 'bg-primary-light', step: 1 },
+  ];
 
   return (
     <div className="space-y-6">
+      {alertsError && <p role="alert" className="text-sm text-warning">{alertsError}</p>}
       {/* ═══ HEADER ═══ */}
       <div className="relative z-10 rounded-2xl border border-border bg-gradient-to-br from-surface via-[#1a1d27] to-[#0f1117] p-6 mb-6">
         <div className="absolute inset-0 overflow-hidden rounded-2xl pointer-events-none">
@@ -219,71 +175,33 @@ export default function AutoAlerts() {
         {showSettings && (
           <div className="px-6 pb-6 border-t border-border/50">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-5">
-              {/* Balance Critical */}
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 text-xs font-medium text-text-secondary">
-                  <div className="w-2 h-2 rounded-full bg-danger" />
-                  Saldo Crítico (R$)
-                </label>
-                <p className="text-[11px] text-text-secondary/60">Alerta vermelho quando saldo abaixo</p>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-text-secondary">R$</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="10"
-                    value={thresholds.balance_critical}
-                    onChange={e => handleThresholdChange('balance_critical', e.target.value)}
-                    className="w-full bg-bg border border-border rounded-lg pl-9 pr-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-primary transition-colors"
-                  />
+              {thresholdFields.map(field => (
+                <div key={field.key} className="space-y-2">
+                  <label htmlFor={`threshold-${field.key}`} className="flex items-center gap-2 text-xs font-medium text-text-secondary">
+                    <div className={`w-2 h-2 rounded-full ${field.dot}`} />
+                    {field.label}
+                  </label>
+                  <p className="text-[11px] text-text-secondary/60">{field.hint}</p>
+                  <div className="relative">
+                    {field.money && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-text-secondary">R$</span>}
+                    <input
+                      id={`threshold-${field.key}`}
+                      type="number"
+                      min="0"
+                      step={field.step}
+                      value={thresholds[field.key]}
+                      onChange={e => handleThresholdChange(field.key, e.target.value)}
+                      className={`w-full bg-bg border border-border rounded-lg ${field.money ? 'pl-9' : 'pl-3'} pr-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-primary transition-colors`}
+                    />
+                  </div>
                 </div>
-              </div>
-
-              {/* Balance Warning */}
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 text-xs font-medium text-text-secondary">
-                  <div className="w-2 h-2 rounded-full bg-warning" />
-                  Saldo em Atenção (R$)
-                </label>
-                <p className="text-[11px] text-text-secondary/60">Alerta amarelo quando saldo abaixo</p>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-text-secondary">R$</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="10"
-                    value={thresholds.balance_warning}
-                    onChange={e => handleThresholdChange('balance_warning', e.target.value)}
-                    className="w-full bg-bg border border-border rounded-lg pl-9 pr-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-primary transition-colors"
-                  />
-                </div>
-              </div>
-
-              {/* High Cost per Lead */}
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 text-xs font-medium text-text-secondary">
-                  <div className="w-2 h-2 rounded-full bg-orange-400" />
-                  Custo por Lead Máximo (R$)
-                </label>
-                <p className="text-[11px] text-text-secondary/60">Alerta quando custo por lead acima</p>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-text-secondary">R$</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={thresholds.high_cost_lead}
-                    onChange={e => handleThresholdChange('high_cost_lead', e.target.value)}
-                    className="w-full bg-bg border border-border rounded-lg pl-9 pr-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-primary transition-colors"
-                  />
-                </div>
-              </div>
+              ))}
             </div>
 
             <div className="mt-4 p-3 rounded-lg bg-primary/5 border border-primary/10">
               <p className="text-xs text-text-secondary">
                 <span className="font-bold text-primary-light">Monitoramento automático:</span>{' '}
-                Erro de pagamento (cartão) e contas sem mensagens são verificados automaticamente, sem necessidade de configurar limites.
+                Cada conta é avaliada em 7 dias completos contra os 7 anteriores. Valores em R$ valem para contas em BRL; falhas de consulta aparecem como pendência, nunca como conta saudável.
               </p>
             </div>
           </div>
@@ -320,7 +238,7 @@ export default function AutoAlerts() {
             <CheckCircle2 size={32} className="mx-auto text-success/30 mb-3" />
             <p className="text-sm text-text-secondary">Todas as contas estão dentro dos limites</p>
             <p className="text-xs text-text-secondary/60 mt-1">
-              {accounts.length} contas monitoradas automaticamente
+              {monitoredCount} contas monitoradas automaticamente
             </p>
           </div>
         ) : (
@@ -378,10 +296,12 @@ export default function AutoAlerts() {
         <div className="p-6 space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {[
-              { icon: CreditCard, color: 'text-danger', bg: 'bg-danger/10', label: 'Erro no Pagamento', desc: 'Conta com cartão desativada ou saldo zerado em Pix/Boleto' },
+              { icon: CreditCard, color: 'text-danger', bg: 'bg-danger/10', label: 'Saldo Esgotado / Conta Indisponível', desc: 'Saldo pré-pago zerado ou conta sem veicular (a causa é conferida, não presumida)' },
               { icon: DollarSign, color: 'text-warning', bg: 'bg-warning/10', label: 'Saldo Baixo', desc: `Crítico < R$ ${thresholds.balance_critical} • Atenção < R$ ${thresholds.balance_warning}` },
-              { icon: TrendingDown, color: 'text-orange-400', bg: 'bg-orange-500/10', label: 'Custo Alto por Lead', desc: `Alerta quando CPL > R$ ${thresholds.high_cost_lead}` },
-              { icon: MessageSquareX, color: 'text-purple-400', bg: 'bg-purple-500/10', label: 'Sem Mensagens', desc: 'Conta gastando sem gerar nenhuma conversa' },
+              { icon: TrendingDown, color: 'text-orange-400', bg: 'bg-orange-500/10', label: 'Piora de Custo', desc: `Custo por resultado subiu ${thresholds.worsening_percent}%+ ou passou da meta de R$ ${thresholds.high_cost_lead}` },
+              { icon: Activity, color: 'text-orange-400', bg: 'bg-orange-500/10', label: 'Queda de Resultados', desc: `Volume caiu ${thresholds.worsening_percent}%+ com gasto parecido` },
+              { icon: MessageSquareX, color: 'text-purple-400', bg: 'bg-purple-500/10', label: 'Gasto sem Resultados', desc: 'Semana sem resultados quando a anterior tinha base comparável' },
+              { icon: Repeat, color: 'text-warning', bg: 'bg-warning/10', label: 'Criativo Cansado (Meta)', desc: 'Frequência alta com queda no CTR de link' },
             ].map(check => (
               <div key={check.label} className="flex items-start gap-3 p-3 rounded-lg bg-bg/50 border border-border/30">
                 <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${check.bg}`}>
@@ -402,7 +322,7 @@ export default function AutoAlerts() {
               <span className="text-xs font-bold text-primary-light">Lembretes no Slack</span>
             </div>
             <p className="text-xs text-text-secondary">
-              Se houver alertas pendentes, um lembrete é enviado automaticamente nos horários (Brasília):
+              Briefing diário às 7h (Bahia). Condições novas ou agravadas são enviadas às 12h:
             </p>
             <div className="flex flex-wrap gap-1.5 mt-2">
               {AUTO_ALERT_REMINDER_HOURS.map(h => (

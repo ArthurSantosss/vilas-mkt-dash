@@ -69,7 +69,7 @@ export async function getReportSetup(store, env = process.env) {
   };
 }
 
-async function metaRows(path, params, token, fetchImpl) {
+export async function metaRows(path, params, token, fetchImpl) {
   const rows = [];
   let after;
   for (let page = 0; page < 100; page++) {
@@ -105,7 +105,7 @@ async function metaRows(path, params, token, fetchImpl) {
   throw new Error('A consulta excedeu o limite de páginas do Meta Ads.');
 }
 
-async function metaRowsWithFallback(path, params, tokens, fetchImpl) {
+export async function metaRowsWithFallback(path, params, tokens, fetchImpl) {
   let lastError;
   for (const token of tokens) {
     try {

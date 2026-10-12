@@ -9,6 +9,7 @@ import { getNextPaymentDate, getDaysUntil, formatDateBR, readSavedLastPayments, 
 import { Power, ChevronDown, ChevronRight, Loader2, RefreshCw, Settings2, Wallet, AlertTriangle, Clock, DollarSign, Check, X, ChevronUp, Info, Image, Pencil, CreditCard, CalendarClock, GripVertical, MessageSquare, Plus } from 'lucide-react';
 import { updateCampaignStatus, updateCampaignBudget, fetchAdSetsForCampaign, updateAdSetBudget, updateAdSetStatus, updateAdStatus, fetchAdsForAdSet } from '../../services/metaApi';
 import PeriodSelector from '../../shared/components/PeriodSelector';
+import CreativeFatiguePanel from './CreativeFatiguePanel';
 import { MetaIcon } from '../../shared/components/PlatformIcons';
 import { FILTER_FIELD, FILTER_LABEL, FILTER_CONTROL } from '../../shared/constants/filterStyles';
 
@@ -729,6 +730,9 @@ export default function MetaAdsOverview() {
     return [...visibleAccounts].sort((a, b) => getSpendValue(b) - getSpendValue(a));
   }, [agencyFilteredAccounts, getSpendValue, selectedAccount]);
 
+  const selectedAccountData = selectedAccount === 'all'
+    ? null
+    : agencyFilteredAccounts.find(a => a.id === selectedAccount) || null;
 
   const getCampaignsForAccount = useCallback((accountId) => {
     return campaigns
@@ -1019,6 +1023,10 @@ export default function MetaAdsOverview() {
           </div>
         </div>
       </div>
+
+      {selectedAccountData && (
+        <CreativeFatiguePanel accountId={selectedAccountData.id} accountName={selectedAccountData.clientName} />
+      )}
 
       {showColumnSettings && (
         <div className="bg-surface rounded-2xl border border-border p-4 lg:p-5 shadow-[0_2px_12px_-4px_rgba(0,0,0,0.25)]">

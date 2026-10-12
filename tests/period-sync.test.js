@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveMetaPeriodTarget, getMetaInsightsField, getPreviousPeriodRange } from '../src/services/metaApi.js';
+import { resolveMetaPeriodTarget, getMetaInsightsField, getPreviousPeriodRange } from '../src/shared/utils/metaPeriods.js';
 import { normalizePeriodToDateFilter } from '../api/google-ads-proxy.js';
 import { PRESETS } from '../src/shared/utils/dateUtils.js';
 

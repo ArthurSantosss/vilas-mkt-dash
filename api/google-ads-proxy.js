@@ -31,7 +31,7 @@ function owner() {
   return authorizedEmail;
 }
 
-async function readConnections() {
+export async function readConnections() {
   const { data, error } = await getSupabaseClient().from(CONNECTION_TABLE).select('*').eq('owner_email', owner()).order('id');
   if (error) throw new Error('Não foi possível ler as conexões. Confira a migração Google Ads e a chave de serviço do Supabase.');
   return data || [];
@@ -604,7 +604,7 @@ function httpError(status, message) {
 }
 
 // Every account-scoped action resolves the route on the server: the client never picks the MCC or the token.
-async function resolveAccountRoute(body) {
+export async function resolveAccountRoute(body) {
   const customerId = String(body.customerId || '').replace(/-/g, '');
   if (!/^\d{10}$/.test(customerId)) throw httpError(400, 'customerId inválido.');
   const connections = await readConnections();
@@ -621,10 +621,10 @@ async function handleGetAccountOverview(_req, res, body) {
 }
 
 // Read-only fallback. Mutations intentionally retain their explicit account route.
-async function readWithAuthorizedRoutes(body, read) {
+export async function readWithAuthorizedRoutes(body, read, { connections: suppliedConnections, tokens = new Map() } = {}) {
   const customerId = String(body.customerId || '').replace(/-/g, '');
   if (!/^\d{10}$/.test(customerId)) throw httpError(400, 'customerId inválido.');
-  const connections = await readConnections();
+  const connections = suppliedConnections || await readConnections();
   const preferredId = body.connectionId || publicSnapshot(connections).accounts.find(a => a.accountId === customerId)?.connectionId;
   const candidates = connections.flatMap(connection => (connection.accounts || [])
     .filter(account => account.accountId === customerId)
@@ -632,7 +632,6 @@ async function readWithAuthorizedRoutes(body, read) {
   candidates.sort((a, b) => Number(b.connection.id === preferredId) - Number(a.connection.id === preferredId));
   if (!candidates.length) throw httpError(403, 'Conta não disponível. Sincronize as contas em Configurações.');
   let lastError;
-  const tokens = new Map();
   for (const { connection, account } of candidates) {
     try {
       if (!tokens.has(connection.id)) tokens.set(connection.id, await refreshAccessToken(connection.refresh_token));
