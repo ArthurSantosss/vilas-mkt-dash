@@ -18,6 +18,7 @@ import {
 } from './google-ads-proxy.js';
 import { normalize } from './_assistant-tools.js';
 import { logChange } from './_supabase-server.js';
+import { readMemorySafe } from './_assistant-memory.js';
 
 const MAX_DAILY_BUDGET = 100000; // mesmo teto de sanidade das ferramentas Meta (R$)
 const PERIODS = ['today', 'yesterday', '7d', '14d', '30d', 'month', 'last_month'];
@@ -28,12 +29,17 @@ async function listGoogleAccounts() {
     return publicSnapshot(await readConnections()).accounts.filter((a) => !a.unavailable);
 }
 
-async function resolveGoogleAccount(query) {
+export async function resolveGoogleAccount(query) {
     const accounts = await listGoogleAccounts();
     const q = normalize(query).replace(/-/g, '');
     let match = accounts.find((a) => a.accountId === q);
-    if (!match) match = accounts.find((a) => normalize(a.name) === normalize(query));
-    if (!match) match = accounts.find((a) => normalize(a.name).includes(normalize(query)));
+    const exact = accounts.filter((a) => normalize(a.name) === normalize(query));
+    if (!match && exact.length === 1) match = exact[0];
+    if (!match && exact.length > 1) return { match: undefined, accounts };
+    if (!match && q) {
+        const candidates = accounts.filter((a) => normalize(a.name).includes(normalize(query)));
+        if (candidates.length === 1) match = candidates[0];
+    }
     return { match, accounts };
 }
 
@@ -121,10 +127,13 @@ export const GOOGLE_READ_TOOLS = [
             const period = PERIODS.includes(periodo) ? periodo : '7d';
             const overview = await readWithAuthorizedRoutes({ customerId: match.accountId }, (token, route) =>
                 fetchAccountOverview(token, route.accountId, period, route.loginCustomerId, route.timeZone));
+            const memory = await readMemorySafe('google', match.accountId);
             return {
                 conta: match.name,
                 id: match.accountId,
                 periodo: period,
+                memoria: memory,
+                limitacoes: ['Visão geral Google: conversões configuradas na plataforma; não separa o evento da ficha nem verifica qualidade comercial.'],
                 totais: summarizeGoogleMetrics(overview.totals),
                 campanhas: overview.campaigns.slice(0, 30).map((c) => ({
                     nome: c.name,

@@ -13,6 +13,7 @@
 import { resolveAccount, resolveCampaign, metaPost, normalize } from './_assistant-tools.js';
 import { getSupabase, logChange } from './_supabase-server.js';
 import { GOOGLE_EXECUTORS, GOOGLE_PREPARERS, GOOGLE_WRITE_TOOLS } from './_assistant-google-tools.js';
+import { INTELLIGENCE_EXECUTORS, INTELLIGENCE_PREPARERS, INTELLIGENCE_WRITE_TOOLS, isIntelligenceAction, verifyIntelligenceAction } from './_assistant-intelligence-tools.js';
 
 const PAYMENT_METHODS = ['credit_card', 'pix', 'boleto'];
 const MAX_DAILY_BUDGET = 100000; // teto de sanidade (R$) para evitar erro grosseiro
@@ -211,6 +212,7 @@ export const PREPARERS = {
     },
 
     ...GOOGLE_PREPARERS,
+    ...INTELLIGENCE_PREPARERS,
 };
 
 // ─── EXECUTORS: rodam SÓ após confirmação (via /api/assistant-action) ────────
@@ -285,14 +287,16 @@ export const EXECUTORS = {
     },
 
     ...GOOGLE_EXECUTORS,
+    ...INTELLIGENCE_EXECUTORS,
 };
 
 // Executa uma ferramenta de escrita no CHAT = apenas preparar a proposta.
-export async function prepareWriteTool(name, input) {
+export async function prepareWriteTool(name, input, context) {
+    if (!Object.hasOwn(PREPARERS, name)) return null;
     const preparer = PREPARERS[name];
     if (!preparer) return null; // não é ferramenta de escrita
     try {
-        return await preparer(input || {});
+        return await preparer(input || {}, context);
     } catch (err) {
         return { erro: `Falha ao preparar ${name}: ${err.message}` };
     }
@@ -301,15 +305,17 @@ export async function prepareWriteTool(name, input) {
 // Executa a ação já confirmada pelo usuário.
 export async function executeConfirmedAction(action) {
     if (!action || !action.type) throw new Error('Ação inválida.');
+    if (!Object.hasOwn(EXECUTORS, action.type)) throw new Error(`Ação desconhecida: ${action.type}`);
     const executor = EXECUTORS[action.type];
     if (!executor) throw new Error(`Ação desconhecida: ${action.type}`);
+    if (isIntelligenceAction(action.type)) verifyIntelligenceAction(action);
     return executor(action.meta || {});
 }
 
 export function writeToolSchemas() {
-    return [...WRITE_TOOLS, ...GOOGLE_WRITE_TOOLS].map(({ name, description, input_schema }) => ({ name, description, input_schema }));
+    return [...WRITE_TOOLS, ...GOOGLE_WRITE_TOOLS, ...INTELLIGENCE_WRITE_TOOLS].map(({ name, description, input_schema }) => ({ name, description, input_schema }));
 }
 
 export function isWriteTool(name) {
-    return !!PREPARERS[name];
+    return Object.hasOwn(PREPARERS, name);
 }

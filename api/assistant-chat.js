@@ -6,56 +6,51 @@
 // Executa loop de tool-use com leitura imediata e guardrails de confirmação para escrita.
 
 import crypto from 'node:crypto';
+import { SYSTEM_PROMPT } from './_assistant-prompt.js';
+import { INTELLIGENCE_READ_TOOLS, observationFromTool, signIntelligenceAction } from './_assistant-intelligence-tools.js';
 import { isAuthenticatedRequest } from './_auth.js';
 import { executeReadTool, readToolSchemas, runWithMetaToken } from './_assistant-tools.js';
 import { GOOGLE_READ_TOOLS } from './_assistant-google-tools.js';
+import { ANALYST_READ_TOOLS } from './_assistant-analyst-tools.js';
 import { prepareWriteTool, writeToolSchemas, isWriteTool } from './_assistant-write-tools.js';
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
-const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5';
+const DEFAULT_ANTHROPIC_MODEL = 'claude-opus-5-5';
+// Modelos que aceitam fallback server-side `"default"` (recusas de classificador são reenviadas a outro modelo).
+const SERVER_FALLBACK_MODELS = new Set(['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-opus-5', 'claude-fable-5-1']);
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
-const MAX_TOOL_ITERATIONS = 8;
+// Análise de analista desce conta → campanha → conjunto → anúncio → segmento; precisa de mais rodadas.
+const MAX_TOOL_ITERATIONS = 16;
+// A função tem 300s; a partir daqui pedimos a conclusão com o que já foi apurado.
+const WRAP_UP_AFTER_MS = 170_000;
+// Perguntas de análise (gargalo, diagnóstico, comparação) recebem esforço alto; consultas pontuais, médio.
+const DEEP_ANALYSIS = /gargal|diagn[oó]st|analis|análise|por ?que|porqu|piorou|caiu|subiu|aument|otimiz|estrat|sugest|recomend|melhor|carteira|todas as contas|compar|funil|criativ|p[uú]blico|escal/i;
 
-const SYSTEM_PROMPT = `Você é o assistente da plataforma VilasMKT, um painel de gestão de tráfego pago (Meta Ads e Google Ads) usado por um gestor profissional. Você conversa DIRETAMENTE com o gestor (não com o cliente final).
+// ANTHROPIC_EFFORT fixa o esforço; sem ela, escolhe pelo último pedido do usuário.
+export function pickEffort(messages, forced = process.env.ANTHROPIC_EFFORT) {
+    if (forced) return forced;
+    const last = [...messages].reverse().find((m) => m.role === 'user' && typeof m.content === 'string');
+    return last && DEEP_ANALYSIS.test(last.content) ? 'high' : 'medium';
+}
 
-Seu papel: ajudar o gestor a consultar e entender os dados das contas dos clientes, comparar performance, sugerir melhorias e, quando pedido, PREPARAR alterações no sistema.
+const WRAP_UP_NOTE = 'Limite de tempo/consultas desta resposta atingido. Responda agora com o que já foi apurado, sem chamar novas ferramentas, e diga claramente o que ficou sem verificar.';
 
-CONHECIMENTO DE DOMÍNIO:
-- "Cliente" e "conta de anúncio" são a mesma coisa. O usuário fala pelo nome do cliente; use as ferramentas para resolver o nome na conta certa.
-- Meta Ads: "leads" = conversas iniciadas por mensagem (ou lead forms). É a métrica principal.
-- Google Ads: a métrica principal é conversão (custo por conversão).
-- Custo por lead/conversão: quanto MENOR, melhor. Queda = melhora; alta = piora.
-- Quando o usuário não disser a plataforma, assuma Meta Ads. Se o cliente só existir no Google, use as ferramentas do Google.
-
-FERRAMENTAS DE LEITURA: retornam dados na hora. Use sempre que a pergunta depender de números; nunca invente métricas.
-- Meta: list_ad_accounts, get_account_metrics, get_account_campaigns, rank_accounts, compare_periods (atual vs anterior), get_top_ads (melhores/piores criativos).
-- Google: list_google_accounts, get_google_account_overview.
-- Histórico: get_change_log (alterações já feitas na plataforma).
-
-FERRAMENTAS DE ESCRITA (pause/activate/set_budget nas duas plataformas, create_balance_alert, set_account_payment_method): elas NÃO executam nada imediatamente — apenas PREPARAM uma proposta que o usuário vai confirmar na interface com um botão. Quando usar uma:
-- Confirme para o usuário, em uma frase clara, o que você preparou e que basta ele confirmar no card que apareceu.
-- NÃO diga que já executou. Diga que está aguardando a confirmação dele.
-- Se faltar informação (qual campanha, qual valor), pergunte antes de preparar.
-
-REGRAS GERAIS:
-- Responda de forma ágil, direta e concisa. Evite rodeios ou introduções longas; vá direto aos números e fatos.
-- Use listas ou tópicos curtos e claros.
-- Ao dar números, contextualize de forma breve.
-- Formate de forma legível. Valores em R$.`;
+const schemaOf = ({ name, description, input_schema }) => ({ name, description, input_schema });
+const EXTRA_READ_TOOLS = [...GOOGLE_READ_TOOLS, ...ANALYST_READ_TOOLS, ...INTELLIGENCE_READ_TOOLS];
 
 function allToolSchemas() {
-    const google = GOOGLE_READ_TOOLS.map(({ name, description, input_schema }) => ({ name, description, input_schema }));
-    return [...readToolSchemas(), ...google, ...writeToolSchemas()];
+    return [...readToolSchemas(), ...EXTRA_READ_TOOLS.map(schemaOf), ...writeToolSchemas()];
 }
 
 // Executa uma chamada de ferramenta: leitura roda na hora; escrita só vira proposta.
-async function runTool(name, input, { toolTrace, pendingActions }) {
+export async function runTool(name, input, context) {
+    const { toolTrace, pendingActions } = context;
     toolTrace.push({ tool: name, input });
 
     if (isWriteTool(name)) {
-        const prepared = await prepareWriteTool(name, input);
+        const prepared = await prepareWriteTool(name, input, context);
         if (prepared?.requiresConfirmation) {
-            pendingActions.push({ id: crypto.randomUUID(), ...prepared.action });
+            pendingActions.push(signIntelligenceAction({ id: crypto.randomUUID(), ...prepared.action }));
             return {
                 status: 'aguardando_confirmacao_do_usuario',
                 resumo: prepared.action.summary,
@@ -66,8 +61,10 @@ async function runTool(name, input, { toolTrace, pendingActions }) {
     }
 
     try {
-        const googleTool = GOOGLE_READ_TOOLS.find((t) => t.name === name);
-        const result = googleTool ? await googleTool.execute(input) : await executeReadTool(name, input);
+        const extraTool = EXTRA_READ_TOOLS.find((t) => t.name === name);
+        const result = extraTool ? await extraTool.execute(input) : await executeReadTool(name, input);
+        const observation = observationFromTool(name, result);
+        if (observation) context.observations.set(`${observation.platform}:${observation.id}`, observation);
         return result ?? { erro: `Ferramenta desconhecida: ${name}` };
     } catch (err) {
         return { erro: `Falha ao executar ${name}: ${err.message}` };
@@ -75,21 +72,24 @@ async function runTool(name, input, { toolTrace, pendingActions }) {
 }
 
 // ── Anthropic Claude (principal) ──
-async function callAnthropic({ apiKey, model, messages, tools }) {
+async function callAnthropic({ apiKey, model, messages, tools, effort }) {
+    const fallback = SERVER_FALLBACK_MODELS.has(model);
     const response = await fetch(ANTHROPIC_URL, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             'x-api-key': apiKey,
             'anthropic-version': '2023-06-01',
+            ...(fallback ? { 'anthropic-beta': 'server-side-fallback-2026-07-01' } : {}),
         },
         body: JSON.stringify({
             model,
             max_tokens: 16000,
-            // Chat ágil: esforço médio mantém respostas rápidas sem perder qualidade nas ferramentas.
-            output_config: { effort: 'medium' },
+            // Esforço por pedido: alto só onde a análise cruza muitos sinais (latência e custo menores no resto).
+            output_config: { effort },
             // Cache automático do prefixo estável (ferramentas + system + histórico).
             cache_control: { type: 'ephemeral' },
+            ...(fallback ? { fallbacks: 'default' } : {}),
             system: SYSTEM_PROMPT,
             tools,
             messages,
@@ -112,14 +112,18 @@ function textFromClaude(reply) {
 
 async function runClaude({ apiKey, incoming, tools }) {
     const model = process.env.ANTHROPIC_MODEL || DEFAULT_ANTHROPIC_MODEL;
-    const ctx = { toolTrace: [], pendingActions: [] };
+    const ctx = { toolTrace: [], pendingActions: [], observations: new Map() };
     const messages = incoming.map((m) => ({ role: m.role, content: m.content }));
+    // Fixado por requisição: mudar o esforço no meio do loop invalidaria o cache do prefixo.
+    const effort = pickEffort(incoming);
+    const startedAt = Date.now();
+    let wrapUpSent = false;
 
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
-        const reply = await callAnthropic({ apiKey, model, messages, tools });
+        const reply = await callAnthropic({ apiKey, model, messages, tools, effort });
 
         if (reply.stop_reason === 'refusal') {
-            return { reply: 'Não consigo ajudar com esse pedido.', ...ctx };
+            return { reply: 'Não consigo ajudar com esse pedido. Se for uma análise de conta, tente reformular de forma mais específica.', ...ctx };
         }
 
         if (reply.stop_reason === 'tool_use') {
@@ -127,14 +131,18 @@ async function runClaude({ apiKey, incoming, tools }) {
             messages.push({ role: 'assistant', content: reply.content });
             const toolBlocks = reply.content.filter((block) => block.type === 'tool_use');
             const results = await Promise.all(toolBlocks.map((block) => runTool(block.name, block.input || {}, ctx)));
-            messages.push({
-                role: 'user',
-                content: toolBlocks.map((block, i) => ({
-                    type: 'tool_result',
-                    tool_use_id: block.id,
-                    content: JSON.stringify(results[i]),
-                })),
-            });
+            const content = toolBlocks.map((block, i) => ({
+                type: 'tool_result',
+                tool_use_id: block.id,
+                content: JSON.stringify(results[i]),
+            }));
+            // Aviso anexado (nunca editado depois) para manter o histórico append-only.
+            const nearLimit = iteration >= MAX_TOOL_ITERATIONS - 2 || Date.now() - startedAt > WRAP_UP_AFTER_MS;
+            if (nearLimit && !wrapUpSent) {
+                content.push({ type: 'text', text: WRAP_UP_NOTE });
+                wrapUpSent = true;
+            }
+            messages.push({ role: 'user', content });
             continue;
         }
 
@@ -149,15 +157,16 @@ async function runClaude({ apiKey, incoming, tools }) {
 }
 
 // ── Google Gemini (reserva) com fallback de modelo ──
-let cachedWorkingModel = 'gemini-3.5-flash-lite';
+let cachedWorkingModel = 'gemini-2.5-flash';
 
 async function callGemini({ apiKey, contents, tools }) {
     const candidateModels = [
         process.env.GEMINI_MODEL,
         cachedWorkingModel,
+        'gemini-2.5-flash',
+        'gemini-3.5-flash',
         'gemini-3.5-flash-lite',
         'gemini-3-flash-preview',
-        'gemini-3.6-flash',
         'gemini-3.8-flash',
     ].filter(Boolean);
 
@@ -175,7 +184,7 @@ async function callGemini({ apiKey, contents, tools }) {
         tools: [{ functionDeclarations }],
         generationConfig: {
             temperature: 0.2,
-            maxOutputTokens: 1024,
+            maxOutputTokens: 4096,
         },
     };
 
@@ -209,7 +218,7 @@ async function callGemini({ apiKey, contents, tools }) {
 }
 
 async function runGemini({ apiKey, incoming, tools }) {
-    const ctx = { toolTrace: [], pendingActions: [] };
+    const ctx = { toolTrace: [], pendingActions: [], observations: new Map() };
     const contents = incoming.map((m) => ({
         role: m.role === 'assistant' ? 'model' : 'user',
         parts: [{ text: m.content || '' }],

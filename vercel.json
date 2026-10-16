@@ -43,6 +43,9 @@
     "api/google-ads-proxy.js": {
       "maxDuration": 300
     },
+    "api/assistant-chat.js": {
+      "maxDuration": 300
+    },
     "api/cron/morning-briefing.js": {
       "maxDuration": 300
     },

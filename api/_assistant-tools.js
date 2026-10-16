@@ -8,6 +8,9 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { normalizeAdAccountId, readMetaConnectionsSafe, resolveConnectionForAccount } from './_meta-tokens.js';
 import { getSupabase } from './_supabase-server.js';
+import { readMemorySafe } from './_assistant-memory.js';
+import { buildDiagnosis, diagnosticMetrics, diagnosticRanges, DIAGNOSTIC_FIELDS } from './_assistant-diagnosis.js';
+import { adsetStructure, classifyBottlenecks, creativeSignals, decomposeCostChange, funnelMetrics, resolveEvent, targetGap } from './_assistant-bottleneck.js';
 
 const META_API_BASE = 'https://graph.facebook.com/v22.0';
 
@@ -176,7 +179,7 @@ export async function listAccountsRaw(forceRefresh = false) {
     const results = await Promise.all(tokens.map(async (token) => {
         try {
             const data = await metaGet('/me/adaccounts', {
-                fields: 'id,account_id,name,account_status,currency,balance,amount_spent',
+                fields: 'id,account_id,name,account_status,currency,balance,amount_spent,timezone_name',
                 limit: 1000,
             }, { token });
             return data.data || [];
@@ -199,8 +202,13 @@ export async function resolveAccount(query) {
     const accounts = await listAccountsRaw();
     const q = normalize(query);
     let match = accounts.find((a) => normalize(a.id) === q || normalize(a.account_id) === q);
-    if (!match) match = accounts.find((a) => normalize(a.name) === q);
-    if (!match) match = accounts.find((a) => normalize(a.name).includes(q));
+    const exact = accounts.filter((a) => normalize(a.name) === q);
+    if (!match && exact.length === 1) match = exact[0];
+    if (!match && exact.length > 1) return { match: undefined, accounts };
+    if (!match && q) {
+        const candidates = accounts.filter((a) => normalize(a.name).includes(q));
+        if (candidates.length === 1) match = candidates[0];
+    }
     return { match, accounts };
 }
 
@@ -269,6 +277,109 @@ async function accountInsightsForRange(accountId, range) {
 
 function accountNotFound(conta, accounts) {
     return { erro: `Nenhuma conta encontrada para "${conta}".`, contas_disponiveis: accounts.map((a) => a.name) };
+}
+
+// Segue apenas o cursor, nunca uma URL de paginação que poderia mudar host/token.
+export async function diagnosticRows(path, params) {
+    const rows = [];
+    let after;
+    try {
+        for (let page = 0; page < 5; page += 1) {
+            const result = await metaGet(path, { ...params, limit: 200, after });
+            if (!Array.isArray(result.data)) throw new Error('Resposta sem dados válidos.');
+            rows.push(...result.data);
+            if (!result.paging?.next) return { rows, complete: true };
+            after = result.paging?.cursors?.after;
+            if (!after) break;
+        }
+        return { rows, complete: false, error: 'Limite de paginação atingido; cobertura parcial.' };
+    } catch (error) {
+        return { rows: rows.length ? rows : null, complete: false, error: error.message };
+    }
+}
+
+export const ACCOUNT_FIELDS = `${DIAGNOSTIC_FIELDS},action_values,video_thruplay_watched_actions`;
+export const AD_FIELDS = `ad_id,ad_name,adset_id,adset_name,campaign_name,${DIAGNOSTIC_FIELDS},quality_ranking,engagement_rate_ranking,conversion_rate_ranking,video_thruplay_watched_actions,action_values`;
+const ADSET_BASE_FIELDS = 'id,name,campaign_id,effective_status,optimization_goal,bid_strategy,daily_budget,lifetime_budget';
+
+export const campaignFilter = (campaign) => campaign
+    ? JSON.stringify([{ field: 'campaign.id', operator: 'IN', value: [campaign.id] }])
+    : undefined;
+
+// Conjuntos ativos com fase de aprendizado; se o campo não for aceito, repete sem ele e registra a limitação.
+export async function fetchAdsets(accountId, range, campaign) {
+    const params = (fields) => ({
+        fields: `${fields},insights.time_range(${JSON.stringify(range)}){${DIAGNOSTIC_FIELDS}}`,
+        effective_status: JSON.stringify(['ACTIVE']),
+        filtering: campaignFilter(campaign),
+    });
+    const withLearning = await diagnosticRows(`/${accountId}/adsets`, params(`${ADSET_BASE_FIELDS},learning_stage_info`));
+    if (withLearning.rows) return withLearning;
+    const fallback = await diagnosticRows(`/${accountId}/adsets`, params(ADSET_BASE_FIELDS));
+    return { ...fallback, complete: false, error: fallback.error || `Fase de aprendizado indisponível: ${withLearning.error}` };
+}
+
+const rangeDays = (range) => Math.round((Date.parse(range.until) - Date.parse(range.since)) / 86400000) + 1;
+
+export async function diagnoseAccount({ conta, periodo = '7d' }) {
+    const { match, accounts } = await resolveAccount(conta);
+    if (!match) return accountNotFound(conta, accounts);
+    const ranges = diagnosticRanges(periodo, new Date(), match.timezone_name || 'America/Sao_Paulo');
+    if (!ranges) return { erro: 'Ainda não há dias completos neste mês. Use 7d ou yesterday.' };
+    const memory = await readMemorySafe('meta', match.id);
+    const params = (range, level) => ({ level, fields: level === 'ad' ? AD_FIELDS : ACCOUNT_FIELDS, time_range: JSON.stringify(range) });
+    const [current, previous, campaigns, ads, oldAds, adsets] = await Promise.all([
+        diagnosticRows(`/${match.id}/insights`, params(ranges.atual, 'account')),
+        diagnosticRows(`/${match.id}/insights`, params(ranges.anterior, 'account')),
+        diagnosticRows(`/${match.id}/campaigns`, {
+            fields: `id,name,status,objective,daily_budget,insights.time_range(${JSON.stringify(ranges.atual)}){${DIAGNOSTIC_FIELDS}}`,
+        }),
+        diagnosticRows(`/${match.id}/insights`, params(ranges.atual, 'ad')),
+        diagnosticRows(`/${match.id}/insights`, params(ranges.anterior, 'ad')),
+        fetchAdsets(match.id, ranges.atual),
+    ]);
+    const sources = { conta_atual: current, conta_anterior: previous, campanhas: campaigns, anuncios_atuais: ads, anuncios_anteriores: oldAds, conjuntos: adsets };
+    const limitations = Object.entries(sources).filter(([, result]) => !result.complete).map(([name, result]) => `${name}: ${result.error}`);
+    if (!memory.disponivel) limitations.push(memory.erro);
+    // Sem ficha, o evento de maior volume entra como inferido; a ficha sempre prevalece.
+    const event = resolveEvent(memory.ficha, current.rows?.[0]);
+    if (event.inferido) limitations.push(`Conversão principal inferida pelo maior volume (${event.evento}); confirme ou corrija na ficha.`);
+    const profile = event.evento ? { ...(memory.ficha || {}), conversao_principal: event.evento } : memory.ficha;
+    const diagnosis = buildDiagnosis({ current: current.rows?.[0], previous: previous.rows?.[0],
+        ads: ads.rows || [], previousAds: oldAds.rows || [], profile, ranges, limitations });
+
+    const funnel = funnelMetrics(current.rows?.[0]);
+    const previousFunnel = funnelMetrics(previous.rows?.[0]);
+    const decomposition = decomposeCostChange(diagnosis.metricas_atuais, diagnosis.metricas_anteriores);
+    const goal = targetGap(diagnosis.metricas_atuais, memory.ficha?.meta_custo);
+    const structure = adsetStructure(adsets.rows || [], { event: event.evento, days: rangeDays(ranges.atual) });
+    const creatives = creativeSignals(ads.rows || [], oldAds.rows || [], { event: event.evento, reference: diagnosis.revisao_de_gasto.referencia_custo });
+    const bottlenecks = classifyBottlenecks({ current: diagnosis.metricas_atuais, previous: diagnosis.metricas_anteriores,
+        funnel, previousFunnel, decomposition, goal, structure, creatives });
+
+    return {
+        conta: match.name, id: match.id, plataforma: 'meta', moeda: match.currency,
+        consultado_em: new Date().toISOString(), periodo, periodo_atual: ranges.atual, periodo_anterior: ranges.anterior,
+        fuso: match.timezone_name || 'America/Sao_Paulo', comparacao: 'Janelas consecutivas de mesma duração; apenas dias completos.',
+        memoria: memory, ...diagnosis, conversao_inferida: event.inferido,
+        gargalos: bottlenecks,
+        decomposicao_custo: decomposition,
+        distancia_da_meta: goal,
+        funil: { atual: funnel, anterior: previousFunnel },
+        estrutura_conjuntos: structure.resumo,
+        criativos: { resumo: creatives.resumo, principais_por_gasto: creatives.anuncios.slice(0, 8)
+            .map(({ id, nome, campanha, participacao_gasto_pct, sinais, hook_rate_pct, rankings, metricas }) => ({
+                id, nome, campanha, participacao_gasto_pct, sinais, hook_rate_pct, rankings,
+                investimento: metricas.investimento, resultados: metricas.resultados, custo_por_resultado: metricas.custo_por_resultado, ctr_link: metricas.ctr_link,
+            })) },
+        cobertura: Object.fromEntries(Object.entries(sources).map(([name, result]) => [name, { completa: result.complete, linhas: result.rows?.length ?? null }])),
+        campanhas: campaigns.rows?.slice(0, 30).map(campaign => ({
+            id: campaign.id, nome: campaign.name, status: campaign.status,
+            orcamento_diario: campaign.daily_budget ? Number(campaign.daily_budget) / 100 : null,
+            metricas: diagnosticMetrics(campaign.insights?.data?.[0], event.evento),
+        })) ?? null,
+        limite_campanhas_exibidas: 30,
+    };
 }
 
 // ─── Definição das ferramentas de LEITURA (schema + executor) ────────────────
@@ -485,6 +596,24 @@ export const TOOLS = [
                 anuncios: ranked.slice(0, n),
             };
         },
+    },
+    {
+        name: 'diagnose_account',
+        description:
+            'Diagnóstico Meta com ficha do cliente, memória, conversão principal, evidências, hipóteses e limitações; compara dias completos e os mesmos intervalos para conta, campanhas e anúncios. Use sempre que o gestor pedir "analisa a conta X", "diagnóstico de tráfego", "como está a performance do cliente X".',
+        input_schema: {
+            type: 'object',
+            properties: {
+                conta: { type: 'string', description: 'Nome do cliente ou ID da conta.' },
+                periodo: {
+                    type: 'string',
+                    enum: ['yesterday', '7d', '14d', '30d', 'month'],
+                    description: 'Default: 7d.',
+                },
+            },
+            required: ['conta'],
+        },
+        execute: diagnoseAccount,
     },
     {
         name: 'get_change_log',

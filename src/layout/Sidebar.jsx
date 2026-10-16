@@ -97,7 +97,7 @@ export default function Sidebar() {
           >
             <div className="flex items-center gap-2.5 min-w-0">
               <Sparkles size={16} className="text-primary-light shrink-0 animate-pulse" />
-              <span className="font-semibold truncate text-primary-light">Assistente Vilas</span>
+              <span className="font-semibold truncate text-primary-light">Analista de Tráfego</span>
             </div>
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-primary/20 text-primary-light border border-primary/30">
               IA
