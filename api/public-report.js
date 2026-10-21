@@ -1,9 +1,7 @@
 /* global process */
 
-import { normalizeAdAccountId, readMetaConnectionsSafe, resolveConnectionForAccount } from './_meta-tokens.js';
-import { createReportStore } from './_automatic-reports.js';
-
-const META_API_BASE = 'https://graph.facebook.com/v22.0';
+import { normalizeAdAccountId } from './_meta-tokens.js';
+import { metaGet, resolveWorkingToken } from './_meta-graph.js';
 
 const LEAD_ACTION_TYPES = [
   'onsite_conversion.messaging_conversation_started_7d',
@@ -83,76 +81,6 @@ function resolveRange(period) {
 
 function timeRangeParam(range) {
   return JSON.stringify({ since: range.startDate, until: range.endDate });
-}
-
-async function metaGet(path, params, token) {
-  const url = new URL(`${META_API_BASE}${path}`);
-  url.searchParams.append('access_token', token);
-  for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined && v !== null) url.searchParams.append(k, v);
-  }
-  const res = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
-  const text = await res.text();
-  const data = text ? JSON.parse(text) : {};
-  if (!res.ok) {
-    const error = new Error(data.error?.message || `Meta API ${res.status}`);
-    error.metaError = data.error || null;
-    throw error;
-  }
-  return data;
-}
-
-// Token sem validade ou sem acesso à conta: vale tentar o próximo candidato.
-function isRetryableTokenError(error) {
-  const metaError = error?.metaError || {};
-  const code = Number(metaError.code);
-  const subcode = Number(metaError.error_subcode);
-  if ([3, 10, 102, 190, 200, 803].includes(code)) return true;
-  if ([458, 459, 460, 463, 464, 466, 467, 492].includes(subcode)) return true;
-  return /access token|session|permission|unsupported get request/i.test(String(error?.message || ''));
-}
-
-async function readSavedProfileToken() {
-  try {
-    return await createReportStore().get('meta_provider_token');
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Mesma ordem do painel: token da BM que cobre a conta → token de perfil salvo →
- * token de perfil do ambiente → demais tokens de BM. Devolve o primeiro que
- * consegue ler a conta (e o nome dela, já que a consulta é a mesma).
- */
-async function resolveWorkingToken(accountId) {
-  const [connections, savedToken] = await Promise.all([readMetaConnectionsSafe(), readSavedProfileToken()]);
-  const matched = resolveConnectionForAccount(connections, accountId);
-  const candidates = [...new Set([
-    matched?.token,
-    savedToken,
-    process.env.META_ACCESS_TOKEN,
-    process.env.VITE_META_ACCESS_TOKEN,
-    ...connections.map(connection => connection.token),
-  ].filter(token => typeof token === 'string' && token.trim()).map(token => token.trim()))];
-
-  if (!candidates.length) {
-    throw new Error('Nenhum token Meta configurado no servidor.');
-  }
-
-  let lastError;
-  for (const token of candidates) {
-    try {
-      const account = await metaGet(`/${accountId}`, { fields: 'name' }, token);
-      return { token, accountName: account?.name || null };
-    } catch (error) {
-      lastError = error;
-      if (!isRetryableTokenError(error)) throw error;
-    }
-  }
-  const error = new Error('Nenhuma conexão Meta válida conseguiu acessar esta conta. Reconecte a conta ou revise os tokens das Business Managers em Configurações.');
-  error.cause = lastError;
-  throw error;
 }
 
 async function fetchAccountInsights(accountId, range, token) {

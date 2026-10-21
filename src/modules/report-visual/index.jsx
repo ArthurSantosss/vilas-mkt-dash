@@ -1166,6 +1166,7 @@ function ReportVisualContent() {
         .from('shared_reports')
         .select('*')
         .eq('account_id', selectedAccount)
+        .neq('objective', 'trafego_pago')
         .order('created_at', { ascending: false });
       if (error) throw error;
       setShareList(data || []);

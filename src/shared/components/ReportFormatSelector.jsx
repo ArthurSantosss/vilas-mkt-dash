@@ -5,7 +5,8 @@ import { FILTER_FIELD, FILTER_LABEL, FILTER_CONTROL } from '../constants/filterS
 export default function ReportFormatSelector() {
   const id = useId();
   const [searchParams, setSearchParams] = useSearchParams();
-  const format = searchParams.get('formato') === 'visual' ? 'visual' : 'texto';
+  const requested = searchParams.get('formato');
+  const format = ['visual', 'completo'].includes(requested) ? requested : 'texto';
 
   return (
     <div className={FILTER_FIELD}>
@@ -22,6 +23,7 @@ export default function ReportFormatSelector() {
       >
         <option value="texto">Texto</option>
         <option value="visual">Visual</option>
+        <option value="completo">Relatório completo</option>
       </select>
     </div>
   );

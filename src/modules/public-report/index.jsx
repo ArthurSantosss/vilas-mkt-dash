@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { Navigate, useParams } from 'react-router-dom';
 import { Loader2, AlertCircle, RefreshCw, Target } from 'lucide-react';
 import { supabase } from '../../services/supabase';
@@ -18,6 +18,8 @@ const LEAD_ACTION_TYPES = [
   'messaging_conversation_started_7d',
   'onsite_conversion.messaging_first_reply',
 ];
+
+const TrafficReport = lazy(() => import('./traffic/TrafficReport'));
 
 const ENGAGEMENT_ACTION_TYPES = ['post_engagement', 'page_engagement'];
 const SHARE_BASE_URL = (import.meta.env.VITE_PUBLIC_SHARE_BASE_URL || '').trim();
@@ -343,7 +345,38 @@ export function PublicReportEntry() {
   return <PublicReport shareKey={shareSlug} />;
 }
 
+// O mesmo link serve os dois modelos: o template gravado no link decide o layout.
 export default function PublicReport({ shareKey: shareKeyProp = null }) {
+  const params = useParams();
+  const shareKey = shareKeyProp || params.shareId;
+  const [state, setState] = useState({ key: null, share: null });
+
+  useEffect(() => {
+    let active = true;
+    fetchSharedReport(shareKey)
+      .then(share => { if (active) setState({ key: shareKey, share }); })
+      .catch(() => { if (active) setState({ key: shareKey, share: null }); });
+    return () => { active = false; };
+  }, [shareKey]);
+
+  if (state.key !== shareKey) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-bg">
+        <Loader2 size={24} className="animate-spin text-text-secondary" />
+      </div>
+    );
+  }
+  if (state.share?.objective === 'trafego_pago') {
+    return (
+      <Suspense fallback={null}>
+        <TrafficReport source={{ shareKey }} share={state.share} />
+      </Suspense>
+    );
+  }
+  return <ClassicPublicReport shareKey={shareKey} />;
+}
+
+function ClassicPublicReport({ shareKey: shareKeyProp = null }) {
   const params = useParams();
   const shareKey = shareKeyProp || params.shareId;
   const [selectedPeriod, setSelectedPeriod] = useState('7d');
