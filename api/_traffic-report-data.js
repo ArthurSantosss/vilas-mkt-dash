@@ -148,13 +148,18 @@ async function fetchMetaGroupReach(accountId, campaignIds, range, token) {
 }
 
 /**
- * Grupos da aba Campanhas: "ads" (todas as campanhas que não são post turbinado) e
- * "aud:<id>" (as campanhas de cada funil). Com mais de uma conta Meta, as mesmas pessoas
+ * Grupos da aba Campanhas: "ads" (todas as campanhas que não são post turbinado),
+ * "aud:<id>" (as campanhas de cada funil) e "aud:__todas" (todos os funis juntos). Com mais de uma conta Meta, as mesmas pessoas
  * podem estar nas duas e não há como deduplicar: o alcance do grupo fica "—".
  */
 async function collectMetaGroupReach(config, campaigns, range, tokens) {
   const groups = { ads: campaigns.filter(c => !c.boosted) };
   for (const audience of config.audiences) groups[`aud:${audience.id}`] = groups.ads.filter(c => c.audience === audience.id);
+  // "aud:__todas": campanhas de qualquer funil (opção "Ambas"); mesmo id de ALL_AUDIENCES no front.
+  if (config.audiences.length > 1) {
+    const ids = new Set(config.audiences.map(a => a.id));
+    groups['aud:__todas'] = groups.ads.filter(c => ids.has(c.audience));
+  }
   const out = {};
   await Promise.all(Object.entries(groups).map(async ([key, list]) => {
     const accounts = [...new Set(list.map(c => c.accountId))];
@@ -267,6 +272,8 @@ export async function collectMeta(config, ranges) {
 
 const micros = (value) => num(value) / 1_000_000;
 const gaqlRange = ({ start, end }) => `segments.date BETWEEN '${start}' AND '${end}'`;
+// Relatório faz ~11 consultas em paralelo por conta; contas grandes passam dos 20s padrão.
+const REPORT_SEARCH = { timeoutMs: 45_000, timeoutRetries: 1 };
 
 function pickConversionValue(row, primaryByName) {
   const name = row.segments?.conversionActionName;
@@ -281,18 +288,18 @@ async function fetchGoogleRange(customerId, range, token, loginCustomerId, prima
     googleAdsSearch(customerId, `
       SELECT campaign.id, campaign.name, campaign.advertising_channel_type,
         metrics.cost_micros, metrics.impressions, metrics.clicks
-      FROM campaign WHERE ${where} AND metrics.impressions > 0`, token, loginCustomerId),
+      FROM campaign WHERE ${where} AND metrics.impressions > 0`, token, loginCustomerId, REPORT_SEARCH),
     googleAdsSearch(customerId, `
       SELECT campaign.id, segments.conversion_action_name, metrics.conversions, metrics.all_conversions
-      FROM campaign WHERE ${where}`, token, loginCustomerId),
+      FROM campaign WHERE ${where} AND metrics.all_conversions > 0`, token, loginCustomerId, REPORT_SEARCH),
     googleAdsSearch(customerId, `
       SELECT campaign.id, ad_group_ad.ad.id, ad_group_ad.ad.name, ad_group_ad.ad.type,
         ad_group_ad.ad.responsive_search_ad.headlines,
         metrics.cost_micros, metrics.impressions, metrics.clicks
-      FROM ad_group_ad WHERE ${where} AND metrics.impressions > 0`, token, loginCustomerId),
+      FROM ad_group_ad WHERE ${where} AND metrics.impressions > 0`, token, loginCustomerId, REPORT_SEARCH),
     googleAdsSearch(customerId, `
       SELECT campaign.id, ad_group_ad.ad.id, segments.conversion_action_name, metrics.conversions, metrics.all_conversions
-      FROM ad_group_ad WHERE ${where}`, token, loginCustomerId),
+      FROM ad_group_ad WHERE ${where} AND metrics.all_conversions > 0`, token, loginCustomerId, REPORT_SEARCH),
     googleAdsSearch(customerId, `
       SELECT campaign.id, campaign.name,
         metrics.search_impression_share, metrics.search_budget_lost_impression_share,
@@ -300,7 +307,7 @@ async function fetchGoogleRange(customerId, range, token, loginCustomerId, prima
         metrics.absolute_top_impression_percentage,
         metrics.cost_micros, metrics.impressions, metrics.clicks
       FROM campaign
-      WHERE ${where} AND campaign.advertising_channel_type = 'SEARCH' AND metrics.impressions > 0`, token, loginCustomerId),
+      WHERE ${where} AND campaign.advertising_channel_type = 'SEARCH' AND metrics.impressions > 0`, token, loginCustomerId, REPORT_SEARCH),
   ]);
 
   const byCampaign = new Map();
@@ -371,7 +378,7 @@ async function fetchGoogleRange(customerId, range, token, loginCustomerId, prima
 async function fetchConversionActions(customerId, token, loginCustomerId) {
   const payload = await googleAdsSearch(customerId, `
     SELECT conversion_action.name, conversion_action.include_in_conversions_metric, conversion_action.status
-    FROM conversion_action WHERE conversion_action.status != 'REMOVED'`, token, loginCustomerId);
+    FROM conversion_action WHERE conversion_action.status != 'REMOVED'`, token, loginCustomerId, REPORT_SEARCH);
   return (payload.results || []).map(row => ({
     name: row.conversionAction?.name,
     primary: row.conversionAction?.includeInConversionsMetric !== false,

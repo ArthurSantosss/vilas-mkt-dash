@@ -264,9 +264,17 @@ export function spendFor(totals, channel) {
 /** Modelo usado por todas as abas, a partir da resposta de /api/traffic-report. */
 /** Só as campanhas ligadas ao funil (público) informado, das duas plataformas. */
 export function snapshotForAudience(snapshot, audienceId) {
-  const keys = new Set(snapshot.google.filter(c => c.audience === audienceId).map(c => c.key));
+  return snapshotForAudiences(snapshot, [audienceId]);
+}
+
+/** Id da visão que junta as campanhas de todos os funis (opção "Ambas" na aba Campanhas). */
+export const ALL_AUDIENCES = '__todas';
+
+function snapshotForAudiences(snapshot, audienceIds) {
+  const ids = new Set(audienceIds);
+  const keys = new Set(snapshot.google.filter(c => ids.has(c.audience)).map(c => c.key));
   return {
-    meta: snapshot.meta.filter(c => c.audience === audienceId),
+    meta: snapshot.meta.filter(c => ids.has(c.audience)),
     google: snapshot.google.filter(c => keys.has(c.key)),
     auction: snapshot.auction.filter(row => keys.has(row.key)),
   };
@@ -280,10 +288,12 @@ function buildAudienceViews(audiences, cur, prev) {
   if (!audiences.length) {
     return { geral: { cur, prev, totals: channelTotals(cur), prevTotals: channelTotals(prev) } };
   }
-  return Object.fromEntries(audiences.map(audience => {
-    const audCur = snapshotForAudience(cur, audience.id);
-    const audPrev = snapshotForAudience(prev, audience.id);
-    return [audience.id, { cur: audCur, prev: audPrev, totals: channelTotals(audCur), prevTotals: channelTotals(audPrev) }];
+  const groups = audiences.map(audience => [audience.id, [audience.id]]);
+  if (audiences.length > 1) groups.push([ALL_AUDIENCES, audiences.map(a => a.id)]);
+  return Object.fromEntries(groups.map(([key, ids]) => {
+    const audCur = snapshotForAudiences(cur, ids);
+    const audPrev = snapshotForAudiences(prev, ids);
+    return [key, { cur: audCur, prev: audPrev, totals: channelTotals(audCur), prevTotals: channelTotals(audPrev) }];
   }));
 }
 

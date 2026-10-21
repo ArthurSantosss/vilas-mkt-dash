@@ -256,15 +256,25 @@ async function googleAdsGet(path, accessToken, loginCustomerId) {
   return payload;
 }
 
-export async function googleAdsSearch(customerId, query, accessToken, loginCustomerId) {
+const isTimeout = (error) => error?.name === 'TimeoutError' || error?.name === 'AbortError';
+
+export async function googleAdsSearch(customerId, query, accessToken, loginCustomerId, { timeoutMs = 20_000, timeoutRetries = 0 } = {}) {
   const results = [];
   let pageToken;
   const seen = new Set();
   do {
-    const response = await fetch(`${GOOGLE_ADS_API_BASE}/customers/${String(customerId).replace(/-/g, '')}/googleAds:search`, {
-      method: 'POST', signal: AbortSignal.timeout(20_000), headers: buildGoogleAdsHeaders(accessToken, loginCustomerId),
-      body: JSON.stringify({ query, ...(pageToken ? { pageToken } : {}) }),
-    });
+    let response;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        response = await fetch(`${GOOGLE_ADS_API_BASE}/customers/${String(customerId).replace(/-/g, '')}/googleAds:search`, {
+          method: 'POST', signal: AbortSignal.timeout(timeoutMs), headers: buildGoogleAdsHeaders(accessToken, loginCustomerId),
+          body: JSON.stringify({ query, ...(pageToken ? { pageToken } : {}) }),
+        });
+        break;
+      } catch (error) {
+        if (!isTimeout(error) || attempt >= timeoutRetries) throw error;
+      }
+    }
     const payload = await response.json();
     if (!response.ok) throw googleAdsError(payload, response);
     results.push(...(payload.results || []));
