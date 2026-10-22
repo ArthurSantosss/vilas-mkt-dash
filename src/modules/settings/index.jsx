@@ -31,6 +31,7 @@ import {
 import { supabase } from '../../services/supabase';
 import { MetaIcon, GoogleAdsIcon } from '../../shared/components/PlatformIcons';
 import { readAgencyLogos, saveAgencyLogo } from '../../shared/utils/agencyLogo';
+import InstagramAgencies from './InstagramAgencies';
 
 
 const FB_SDK_SRC = 'https://connect.facebook.net/pt_BR/sdk.js';
@@ -1025,6 +1026,9 @@ export default function Settings() {
           )}
         </div>
       </div>
+
+      {/* ═══ INSTAGRAM — agência de cada perfil ═══ */}
+      <InstagramAgencies />
 
       <div className="bg-surface rounded-xl border border-border overflow-hidden">
         <div className="px-6 py-4 border-b border-border/50 flex items-center gap-3">

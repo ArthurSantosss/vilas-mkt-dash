@@ -415,9 +415,9 @@ export async function collectGoogle(config, ranges) {
 
 /* ─────────────────────────── Instagram ─────────────────────────── */
 
-const unix = (ymd, endOfDay = false) => Math.floor(new Date(`${ymd}T${endOfDay ? '23:59:59' : '00:00:00'}-03:00`).getTime() / 1000);
+export const unix = (ymd, endOfDay = false) => Math.floor(new Date(`${ymd}T${endOfDay ? '23:59:59' : '00:00:00'}-03:00`).getTime() / 1000);
 
-async function resolveInstagramToken(igUserId, metaAccounts) {
+export async function resolveInstagramToken(igUserId, metaAccounts) {
   const candidates = await listTokenCandidates(metaAccounts[0] || null);
   let lastError;
   for (const token of candidates) {
@@ -435,7 +435,7 @@ async function resolveInstagramToken(igUserId, metaAccounts) {
 }
 
 /** follower_count por dia: a API só devolve os últimos 30 dias, sem incluir hoje. */
-async function fetchFollowerGains(igUserId, range, token, today) {
+export async function fetchFollowerGains(igUserId, range, token, today) {
   const oldest = addDays(today, -30);
   const yesterday = addDays(today, -1);
   if (range.start < oldest) {
@@ -486,7 +486,7 @@ async function fetchProfileTotals(igUserId, range, token) {
  * sozinha: o Instagram tirou algumas da API (ex.: website_clicks), e a recusa de uma não
  * pode derrubar as outras.
  */
-async function fetchAccountMetric(igUserId, metric, range, token) {
+export async function fetchAccountMetric(igUserId, metric, range, token) {
   let total = 0;
   let start = range.start;
   while (start <= range.end) {
@@ -530,7 +530,7 @@ async function fetchProfileExtras(igUserId, ranges, token) {
 const MEDIA_METRICS = ['reach', 'views', 'saved', 'shares', 'likes', 'comments'];
 const REELS_METRICS = ['ig_reels_avg_watch_time', 'reels_skip_rate'];
 
-async function fetchMediaInsights(mediaId, isReel, token) {
+export async function fetchMediaInsights(mediaId, isReel, token) {
   let metrics = isReel ? [...MEDIA_METRICS, ...REELS_METRICS] : [...MEDIA_METRICS];
   // Métricas recusadas para um tipo de mídia saem da lista e o resto é lido.
   for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -548,12 +548,12 @@ async function fetchMediaInsights(mediaId, isReel, token) {
   return {};
 }
 
-async function fetchPosts(igUserId, range, token) {
+export async function fetchPosts(igUserId, range, token) {
   const startTs = unix(range.start);
   const endTs = unix(range.end, true);
   const media = [];
   let page = await metaGet(`/${igUserId}/media`, {
-    fields: 'id,caption,media_type,media_product_type,permalink,timestamp,like_count,comments_count',
+    fields: 'id,caption,media_type,media_product_type,permalink,timestamp,like_count,comments_count,media_url,thumbnail_url',
     limit: 50,
   }, token);
   for (let pages = 0; pages < 20; pages += 1) {
@@ -582,6 +582,7 @@ async function fetchPosts(igUserId, range, token) {
         timestamp: item.timestamp,
         productType: item.media_product_type || null,
         mediaType: item.media_type || null,
+        thumbnail: item.thumbnail_url || (item.media_type === 'VIDEO' ? null : item.media_url) || null,
         reach: data.reach ?? null,
         views: data.views ?? null,
         likes: data.likes ?? optionalNum(item.like_count),
@@ -596,7 +597,7 @@ async function fetchPosts(igUserId, range, token) {
   return posts;
 }
 
-async function settle(promise) {
+export async function settle(promise) {
   try { return { value: await promise, error: null }; } catch (error) { return { value: null, error: error.message }; }
 }
 
