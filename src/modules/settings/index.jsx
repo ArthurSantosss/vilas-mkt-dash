@@ -32,6 +32,7 @@ import { supabase } from '../../services/supabase';
 import { MetaIcon, GoogleAdsIcon } from '../../shared/components/PlatformIcons';
 import { readAgencyLogos, saveAgencyLogo } from '../../shared/utils/agencyLogo';
 import InstagramAgencies from './InstagramAgencies';
+import ClientSelect from '../clients/ClientSelect';
 
 
 const FB_SDK_SRC = 'https://connect.facebook.net/pt_BR/sdk.js';
@@ -842,6 +843,7 @@ export default function Settings() {
                         )}
                       </div>
 
+                      <ClientSelect platform="meta" id={account.id} name={account.name} className="sm:w-[160px]" />
                       {agencies.length > 0 && (
                         <select
                           value={accountAgencies[account.id] || ''}
@@ -1003,6 +1005,7 @@ export default function Settings() {
                         )}
                       </div>
 
+                      <ClientSelect platform="google" id={accountId} name={account.name} className="sm:w-[160px]" />
                       {agencies.length > 0 && (
                         <select
                           value={accountAgencies[accountId] || ''}

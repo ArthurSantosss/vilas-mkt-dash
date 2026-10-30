@@ -34,6 +34,8 @@ export const CLOUD_SYNC_KEYS = [
   'agency_logos',
   'account_agencies',
   'checklist_all_tasks',
+  'agency_clients',
+  'agency_billing',
   AUTO_ALERTS_STORAGE_KEY,
 ];
 

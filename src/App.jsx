@@ -11,6 +11,7 @@ import { GoogleAdsProvider } from './contexts/GoogleAdsContext';
 import { AgencyProvider } from './contexts/AgencyContext';
 import { AlertsProvider } from './contexts/AlertsContext';
 import { PreferencesProvider } from './contexts/PreferencesContext';
+import { ClientsProvider } from './contexts/ClientsContext';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -30,6 +31,7 @@ const MetaAdsOverview = lazy(() => import('./modules/meta-ads'));
 const GoogleAdsOverview = lazy(() => import('./modules/google-ads'));
 const InstagramOverview = lazy(() => import('./modules/instagram'));
 const Balances = lazy(() => import('./modules/balances'));
+const Clients = lazy(() => import('./modules/clients'));
 const DetailedView = lazy(() => import('./modules/detailed-view'));
 const Settings = lazy(() => import('./modules/settings'));
 const Reports = lazy(() => import('./modules/reports'));
@@ -62,7 +64,9 @@ function ProtectedAppShell() {
             <MetaAdsProvider>
               <GoogleAdsProvider>
                 <AlertsProvider>
-                  <AppLayout />
+                  <ClientsProvider>
+                    <AppLayout />
+                  </ClientsProvider>
                 </AlertsProvider>
               </GoogleAdsProvider>
             </MetaAdsProvider>
@@ -93,6 +97,7 @@ export default function App() {
               <Route path="meta-ads" element={<MetaAdsOverview />} />
               <Route path="google-ads" element={<GoogleAdsOverview />} />
               <Route path="instagram" element={<InstagramOverview />} />
+              <Route path="clientes" element={<Clients />} />
               <Route path="saldos" element={<Balances />} />
               {/* Links antigos continuam funcionando. */}
               <Route path="saldos-meta" element={<Navigate to="/saldos" replace />} />

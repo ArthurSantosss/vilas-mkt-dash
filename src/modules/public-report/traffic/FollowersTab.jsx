@@ -6,6 +6,25 @@ const CONVERSATIONS = 'onsite_conversion.messaging_conversation_started_7d';
 
 const isoToYmd = (iso) => (iso ? todayIn(undefined, new Date(iso)) : null);
 
+/** Junta anúncios do mesmo post: os seguidores são do post, então não podem repetir por anúncio. */
+function groupByPost(ads) {
+  const byPost = new Map();
+  for (const ad of ads) {
+    const key = ad.post?.mediaId || ad.id;
+    const start = ad.campaign.startTime || ad.createdTime || null;
+    const existing = byPost.get(key);
+    if (!existing) {
+      byPost.set(key, { key, name: ad.name, post: ad.post, startTime: start, spend: ad.spend, clicks: ad.clicks, reach: ad.reach, follows: ad.post?.follows ?? null });
+      continue;
+    }
+    existing.spend += ad.spend;
+    existing.clicks += ad.clicks;
+    existing.reach = null; // alcance é de pessoas únicas: não dá para somar entre anúncios
+    if (start && (!existing.startTime || start < existing.startTime)) existing.startTime = start;
+  }
+  return [...byPost.values()];
+}
+
 export default function FollowersTab({ m }) {
   const metaSpend = m.metaOk ? m.totals.meta.spend : null;
   const prevMetaSpend = m.metaOk ? m.prevTotals.meta.spend : null;
@@ -32,9 +51,13 @@ export default function FollowersTab({ m }) {
   const prevConversations = m.metaOk ? conversionCount(m.prevTotals.meta, CONVERSATIONS) : null;
 
   const boosted = m.metaOk
-    ? m.cur.meta.filter(c => c.boosted).flatMap(c => c.ads.map(ad => ({ ...ad, campaign: c })))
+    ? groupByPost(m.cur.meta.filter(c => c.boosted).flatMap(c => c.ads.map(ad => ({ ...ad, campaign: c }))))
       .sort((a, b) => b.spend - a.spend)
     : [];
+  const boostedFollows = boosted.some(post => post.follows != null)
+    ? boosted.reduce((sum, post) => sum + (post.follows ?? 0), 0)
+    : null;
+  const boostedFollowsSpend = boosted.filter(post => post.follows != null).reduce((sum, post) => sum + post.spend, 0);
 
   return (
     <>
@@ -73,14 +96,16 @@ export default function FollowersTab({ m }) {
               <th>Alcance</th>
               <th>Cliques</th>
               <th>Custo por clique</th>
+              <th>Seguidores</th>
+              <th>Custo por seguidor</th>
             </tr>
           </thead>
           <tbody>
             {boosted.map(ad => {
-              const start = isoToYmd(ad.campaign.startTime || ad.createdTime);
+              const start = isoToYmd(ad.startTime);
               const caption = truncate(ad.post?.caption || ad.name);
               return (
-                <tr key={ad.id}>
+                <tr key={ad.key}>
                   <td>
                     <span className="tr-name">
                       {ad.post?.permalink
@@ -93,15 +118,30 @@ export default function FollowersTab({ m }) {
                   <td>{fmtInt(ad.reach)}</td>
                   <td>{fmtInt(ad.clicks)}</td>
                   <td>{fmtMoney(ratio(ad.spend, ad.clicks))}</td>
+                  <td>{fmtInt(ad.follows)}</td>
+                  <td>{fmtMoney(ratio(ad.spend, ad.follows))}</td>
                 </tr>
               );
             })}
             {!boosted.length && (
-              <tr><td colSpan={6} className="tr-empty">{m.metaOk ? 'Nenhum post turbinado com veiculação no período.' : '— A conta do Meta não respondeu.'}</td></tr>
+              <tr><td colSpan={8} className="tr-empty">{m.metaOk ? 'Nenhum post turbinado com veiculação no período.' : '— A conta do Meta não respondeu.'}</td></tr>
+            )}
+            {boosted.length > 1 && (
+              <tr>
+                <td><strong>Total</strong></td>
+                <td />
+                <td>{fmtMoney(boosted.reduce((sum, post) => sum + post.spend, 0))}</td>
+                <td>—</td>
+                <td>{fmtInt(boosted.reduce((sum, post) => sum + post.clicks, 0))}</td>
+                <td>{fmtMoney(ratio(boosted.reduce((sum, post) => sum + post.spend, 0), boosted.reduce((sum, post) => sum + post.clicks, 0)))}</td>
+                <td>{fmtInt(boostedFollows)}</td>
+                <td>{fmtMoney(ratio(boostedFollowsSpend, boostedFollows))}</td>
+              </tr>
             )}
           </tbody>
         </table>
       </div>
+      <Note>Seguidores = contas que passaram a seguir o perfil a partir do post (dado do Instagram, somando orgânico e pago, desde a publicação). Custo por seguidor = gasto do boost no período ÷ seguidores do post. Posts que o Instagram não libera (ex.: alguns Reels) aparecem como “—”.</Note>
 
     </>
   );

@@ -234,6 +234,28 @@ async function enrichBoostedAds(campaigns, token) {
       console.warn('[traffic-report] Não foi possível ler os criativos turbinados:', error.message);
     }
   }
+  await enrichBoostedFollows(ads, token);
+}
+
+/** Seguidores que cada post turbinado trouxe (métrica "follows" do post, vida inteira; orgânico + pago). */
+async function enrichBoostedFollows(ads, token) {
+  const mediaIds = [...new Set(ads.map(ad => ad.post?.mediaId).filter(Boolean))];
+  const follows = new Map();
+  for (let i = 0; i < mediaIds.length; i += 5) {
+    const chunk = mediaIds.slice(i, i + 5);
+    await Promise.all(chunk.map(async (mediaId) => {
+      try {
+        const data = await metaGet(`/${mediaId}/insights`, { metric: 'follows' }, token);
+        const item = (data.data || []).find(entry => entry.name === 'follows');
+        follows.set(mediaId, optionalNum(item?.values?.[0]?.value ?? item?.total_value?.value));
+      } catch (error) {
+        console.warn(`[traffic-report] Seguidores do post ${mediaId} indisponíveis:`, error.message);
+      }
+    }));
+  }
+  for (const ad of ads) {
+    if (ad.post?.mediaId && follows.has(ad.post.mediaId)) ad.post.follows = follows.get(ad.post.mediaId);
+  }
 }
 
 export async function collectMeta(config, ranges) {

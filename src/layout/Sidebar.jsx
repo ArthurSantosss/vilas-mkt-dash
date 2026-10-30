@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Calendar, Wallet,
   SearchCheck, Settings, FileText, Lightbulb,
-  Bell, Scale, Menu, X, Sparkles, Send, Instagram
+  Bell, Scale, Menu, X, Sparkles, Send, Instagram, Users
 } from 'lucide-react';
 import { useAlerts } from '../contexts/AlertsContext';
 import { MetaIcon, GoogleAdsIcon } from '../shared/components/PlatformIcons';
@@ -16,6 +16,7 @@ const navItems = [
   { path: '/meta-ads', label: 'Meta Ads', icon: MetaNavIcon },
   { path: '/google-ads', label: 'Google Ads', icon: GoogleAdsNavIcon },
   { path: '/instagram', label: 'Instagram', icon: Instagram },
+  { path: '/clientes', label: 'Clientes', icon: Users },
   { path: '/saldos', label: 'Saldos', icon: Wallet },
   { path: '/visao-detalhada', label: 'Visão Detalhada', icon: SearchCheck },
   { path: '/relatorios', label: 'Relatórios', icon: FileText },

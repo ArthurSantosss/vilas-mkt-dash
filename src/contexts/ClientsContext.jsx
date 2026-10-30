@@ -1,122 +1,210 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { supabase } from '../services/supabase';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import { dispatchLocalStorageMapUpdated } from '../shared/utils/cloudBackup';
+import { useAgency } from './AgencyContext';
+import {
+  CLIENTS_STORAGE_KEY,
+  AGENCY_BILLING_STORAGE_KEY,
+  createId,
+  normalizeClient,
+  normalizeAgencyBilling,
+  normalizeTransaction,
+  validateClient,
+  buildMonthlyFeeTransaction,
+  buildSalaryTransaction,
+  releaseLinksFromOthers,
+  assignLinkToClient,
+  agencyAccountKey,
+} from '../shared/utils/clients';
+
+// Clientes e o financeiro das agências ficam no localStorage e entram no backup
+// da nuvem (app_preferences), como as demais configurações do painel.
+//
+// Lançamentos financeiros pertencem a um "dono":
+//   { kind: 'client', id: <id do cliente> } — mensalidades (Vilas MKT)
+//   { kind: 'agency', id: <nome da agência> } — salário fixo das demais agências
 
 const ClientsContext = createContext();
 
-// Converte snake_case do Supabase para camelCase do frontend
-function toFrontend(row) {
-  return {
-    id: row.id,
-    name: row.name,
-    contactName: row.contact_name,
-    phone: row.phone,
-    email: row.email,
-    niche: row.niche,
-    platforms: row.platforms || ['meta'],
-    metaAccountId: row.meta_account_id,
-    logoUrl: row.logo_url,
-    monthlyBudget: parseFloat(row.monthly_budget) || 0,
-    contractStartDate: row.contract_start_date,
-    paymentDueDay: row.payment_due_day,
-    status: row.status,
-    notes: row.notes,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
+function readJson(key, fallback) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key));
+    return parsed ?? fallback;
+  } catch {
+    return fallback;
+  }
 }
 
-// Converte camelCase do frontend para snake_case do Supabase
-function toDatabase(data) {
-  const map = {};
-  if (data.name !== undefined) map.name = data.name;
-  if (data.contactName !== undefined) map.contact_name = data.contactName;
-  if (data.phone !== undefined) map.phone = data.phone;
-  if (data.email !== undefined) map.email = data.email;
-  if (data.niche !== undefined) map.niche = data.niche;
-  if (data.platforms !== undefined) map.platforms = data.platforms;
-  if (data.metaAccountId !== undefined) map.meta_account_id = data.metaAccountId;
-  if (data.logoUrl !== undefined) map.logo_url = data.logoUrl;
-  if (data.monthlyBudget !== undefined) map.monthly_budget = data.monthlyBudget;
-  if (data.contractStartDate !== undefined) map.contract_start_date = data.contractStartDate;
-  if (data.paymentDueDay !== undefined) map.payment_due_day = data.paymentDueDay;
-  if (data.status !== undefined) map.status = data.status;
-  if (data.notes !== undefined) map.notes = data.notes;
-  return map;
+function readStoredClients() {
+  const list = readJson(CLIENTS_STORAGE_KEY, []);
+  return Array.isArray(list) ? list.map((client) => normalizeClient(client)) : [];
+}
+
+function readStoredBilling() {
+  const map = readJson(AGENCY_BILLING_STORAGE_KEY, {});
+  if (!map || typeof map !== 'object' || Array.isArray(map)) return {};
+  return Object.fromEntries(Object.entries(map).map(([agency, billing]) => [agency, normalizeAgencyBilling(billing)]));
+}
+
+function persist(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+    dispatchLocalStorageMapUpdated(key, value);
+  } catch {
+    /* modo privado: mantém só em memória */
+  }
 }
 
 export function ClientsProvider({ children }) {
-  const [clients, setClients] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const { setAccountAgency } = useAgency();
+  const [clients, setClients] = useState(readStoredClients);
+  const [agencyBilling, setAgencyBilling] = useState(readStoredBilling);
 
-  const fetchClients = useCallback(async () => {
-    setLoading(true);
-    const { data, error: err } = await supabase
-      .from('clients')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (err) {
-      console.error('Erro ao buscar clientes:', err);
-      setError(err.message);
-    } else {
-      setClients(data.map(toFrontend));
-    }
-    setLoading(false);
+  // Backup da nuvem aplicado depois da montagem → recarrega do localStorage.
+  useEffect(() => {
+    const handleCloud = (event) => {
+      if (!event?.detail?.fromCloud) return;
+      setClients(readStoredClients());
+      setAgencyBilling(readStoredBilling());
+    };
+    window.addEventListener('local-storage-map-updated', handleCloud);
+    return () => window.removeEventListener('local-storage-map-updated', handleCloud);
   }, []);
 
-  useEffect(() => {
-    fetchClients();
-  }, [fetchClients]);
+  const commitClients = useCallback((updater) => {
+    setClients((prev) => {
+      const next = updater(prev);
+      persist(CLIENTS_STORAGE_KEY, next);
+      return next;
+    });
+  }, []);
 
-  const addClient = async (clientData) => {
-    const { data, error: err } = await supabase
-      .from('clients')
-      .insert(toDatabase(clientData))
-      .select()
-      .single();
+  const commitBilling = useCallback((updater) => {
+    setAgencyBilling((prev) => {
+      const next = updater(prev);
+      persist(AGENCY_BILLING_STORAGE_KEY, next);
+      return next;
+    });
+  }, []);
 
-    if (err) {
-      console.error('Erro ao criar cliente:', err);
-      throw err;
+  // A conta vinculada passa a pertencer também à agência do cliente.
+  const syncAccountAgencies = useCallback((links, agency) => {
+    if (!agency) return;
+    links.forEach((link) => setAccountAgency(agencyAccountKey(link), agency));
+  }, [setAccountAgency]);
+
+  const updateClientWith = useCallback((clientId, updater) => {
+    commitClients((prev) => prev.map((client) => (
+      client.id === clientId ? { ...updater(client), updatedAt: new Date().toISOString() } : client
+    )));
+  }, [commitClients]);
+
+  const updateBillingWith = useCallback((agency, updater) => {
+    commitBilling((prev) => ({ ...prev, [agency]: updater(prev[agency] || normalizeAgencyBilling()) }));
+  }, [commitBilling]);
+
+  /** Aplica `updater` à lista de lançamentos do dono (cliente ou agência). */
+  const updateTransactionsOf = useCallback((owner, updater) => {
+    if (owner.kind === 'agency') {
+      updateBillingWith(owner.id, (billing) => ({ ...billing, transactions: updater(billing.transactions) }));
+    } else {
+      updateClientWith(owner.id, (client) => ({ ...client, transactions: updater(client.transactions) }));
     }
+  }, [updateBillingWith, updateClientWith]);
 
-    setClients(prev => [toFrontend(data), ...prev]);
-    return toFrontend(data);
-  };
+  const saveClient = useCallback((data) => {
+    const now = new Date().toISOString();
+    const existing = data.id ? clients.find((client) => client.id === data.id) : null;
+    const client = normalizeClient({ ...existing, ...data, updatedAt: now }, now);
+    const error = validateClient(client);
+    if (error) throw new Error(error);
 
-  const updateClient = async (id, updates) => {
-    const { data, error: err } = await supabase
-      .from('clients')
-      .update(toDatabase(updates))
-      .eq('id', id)
-      .select()
-      .single();
+    commitClients((prev) => {
+      const list = existing
+        ? prev.map((item) => (item.id === client.id ? client : item))
+        : [client, ...prev];
+      return releaseLinksFromOthers(list, client.id, client.links, now);
+    });
+    syncAccountAgencies(client.links, client.agency);
+    return client;
+  }, [clients, commitClients, syncAccountAgencies]);
 
-    if (err) {
-      console.error('Erro ao atualizar cliente:', err);
-      throw err;
-    }
+  const deleteClient = useCallback((clientId) => {
+    commitClients((prev) => prev.filter((client) => client.id !== clientId));
+  }, [commitClients]);
 
-    setClients(prev => prev.map(c => c.id === id ? toFrontend(data) : c));
-    return toFrontend(data);
-  };
+  /** Usado nas Configurações: define o cliente de uma conta (clientId vazio remove o vínculo). */
+  const assignAccount = useCallback((link, clientId) => {
+    commitClients((prev) => assignLinkToClient(prev, link, clientId));
+    const client = clients.find((item) => item.id === clientId);
+    if (client) syncAccountAgencies([link], client.agency);
+  }, [clients, commitClients, syncAccountAgencies]);
 
-  const deleteClient = async (id) => {
-    const { error: err } = await supabase
-      .from('clients')
-      .delete()
-      .eq('id', id);
+  const addNote = useCallback((clientId, text) => {
+    const trimmed = String(text || '').trim();
+    if (!trimmed) return;
+    const note = { id: createId('note'), text: trimmed, pinned: false, createdAt: new Date().toISOString() };
+    updateClientWith(clientId, (client) => ({ ...client, notes: [note, ...client.notes] }));
+  }, [updateClientWith]);
 
-    if (err) {
-      console.error('Erro ao deletar cliente:', err);
-      throw err;
-    }
+  const updateNote = useCallback((clientId, noteId, changes) => {
+    updateClientWith(clientId, (client) => ({
+      ...client,
+      notes: client.notes.map((note) => (note.id === noteId ? { ...note, ...changes } : note)),
+    }));
+  }, [updateClientWith]);
 
-    setClients(prev => prev.filter(c => c.id !== id));
-  };
+  const deleteNote = useCallback((clientId, noteId) => {
+    updateClientWith(clientId, (client) => ({ ...client, notes: client.notes.filter((note) => note.id !== noteId) }));
+  }, [updateClientWith]);
 
-  const value = { clients, loading, error, addClient, updateClient, deleteClient, refetch: fetchClients };
+  const saveTransaction = useCallback((owner, data) => {
+    const transaction = normalizeTransaction(data);
+    if (!transaction.description) throw new Error('Informe a descrição do lançamento.');
+    if (transaction.amount <= 0) throw new Error('Informe um valor maior que zero.');
+    updateTransactionsOf(owner, (list) => (list.some((trx) => trx.id === transaction.id)
+      ? list.map((trx) => (trx.id === transaction.id ? transaction : trx))
+      : [transaction, ...list]));
+  }, [updateTransactionsOf]);
+
+  const deleteTransaction = useCallback((owner, transactionId) => {
+    updateTransactionsOf(owner, (list) => list.filter((trx) => trx.id !== transactionId));
+  }, [updateTransactionsOf]);
+
+  /** Lança a mensalidade (cliente) ou o salário (agência) do mês; false quando já existe ou não há valor. */
+  const generateRecurring = useCallback((owner) => {
+    const transaction = owner.kind === 'agency'
+      ? buildSalaryTransaction(agencyBilling[owner.id] || normalizeAgencyBilling())
+      : (() => {
+        const client = clients.find((item) => item.id === owner.id);
+        return client ? buildMonthlyFeeTransaction(client) : null;
+      })();
+    if (!transaction) return false;
+    updateTransactionsOf(owner, (list) => [transaction, ...list]);
+    return true;
+  }, [agencyBilling, clients, updateTransactionsOf]);
+
+  const saveAgencyBilling = useCallback((agency, { salary, dueDay }) => {
+    updateBillingWith(agency, (billing) => normalizeAgencyBilling({ ...billing, salary, dueDay }));
+  }, [updateBillingWith]);
+
+  const value = useMemo(() => ({
+    clients,
+    agencyBilling,
+    saveClient,
+    deleteClient,
+    assignAccount,
+    addNote,
+    updateNote,
+    deleteNote,
+    saveTransaction,
+    deleteTransaction,
+    generateRecurring,
+    saveAgencyBilling,
+  }), [
+    clients, agencyBilling, saveClient, deleteClient, assignAccount, addNote, updateNote, deleteNote,
+    saveTransaction, deleteTransaction, generateRecurring, saveAgencyBilling,
+  ]);
+
   return <ClientsContext.Provider value={value}>{children}</ClientsContext.Provider>;
 }
 
