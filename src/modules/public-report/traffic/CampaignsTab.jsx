@@ -10,30 +10,27 @@ const validSteps = (funnel) => (funnel || []).filter(step => step.label && (step
  * "Ambas": cada coluna junta a etapa de mesma posição de cada funil; cada campanha conta
  * o evento do próprio funil, e as linhas de canal/total somam as campanhas.
  */
-function mergedSteps(audiences, funnels) {
-  const perAudience = audiences.map(a => [a.id, validSteps(funnels[a.id])]);
-  const size = Math.max(0, ...perAudience.map(([, steps]) => steps.length));
-  return Array.from({ length: size }, (_, i) => {
-    const byAudience = Object.fromEntries(perAudience.filter(([, steps]) => steps[i]).map(([id, steps]) => [id, steps[i]]));
-    return { label: [...new Set(Object.values(byAudience).map(step => step.label))].join(' / '), byAudience };
-  });
+/**
+ * "Ambas": uma coluna por tipo de conversão dos funis, contada em todas as campanhas.
+ * Assim aparecem as conversões cruzadas (ex.: venda numa campanha de comprador).
+ */
+function distinctSteps(audiences, funnels) {
+  const byEvent = new Map();
+  for (const audience of audiences) {
+    for (const step of validSteps(funnels[audience.id])) {
+      const key = `${step.meta || ''}|${step.google || ''}`;
+      if (!byEvent.has(key)) byEvent.set(key, { ...step, audienceLabel: audience.label });
+    }
+  }
+  const steps = [...byEvent.values()];
+  // Mesmo nome com eventos diferentes: o nome do funil desempata.
+  const repeated = (label) => steps.filter(step => step.label === label).length > 1;
+  return steps.map(step => ({ ...step, label: repeated(step.label) ? `${step.label} (${step.audienceLabel})` : step.label }));
 }
 
 function eventCount(row, step, which) {
   const totals = which === 'cur' ? row.cur : row.prev;
   if (!totals) return null;
-  if (step.byAudience) {
-    if (row.level >= 2) {
-      const key = step.byAudience[row.audience]?.[row.platform];
-      return key ? totals.conversions?.[key] || 0 : null;
-    }
-    const campaigns = (which === 'cur' ? row.campaigns?.cur : row.campaigns?.prev) || [];
-    const values = campaigns.flatMap(c => {
-      const key = step.byAudience[c.audience]?.[c.platform];
-      return key ? [c.conversions?.[key] || 0] : [];
-    });
-    return values.length ? values.reduce((a, b) => a + b, 0) : null;
-  }
   if (row.platform === 'all') {
     const parts = which === 'cur' ? row.parts : row.prevParts;
     const values = ['meta', 'google']
@@ -105,15 +102,10 @@ function buildRows(m, reachKey) {
   const prevMetaTotals = m.metaOk ? m.prevTotals.metaAds : null;
 
   // Conversões por campanha, para somar eventos de funis diferentes na opção "Ambas".
-  const events = (list, platform) => list.map(c => ({ platform, audience: c.audience, conversions: c.conversions }));
-  const metaEvents = (list) => events(list.filter(c => !c.boosted).map(c => ({ ...metaCampaignTotals(c), audience: c.audience })), 'meta');
-  const googleCampaigns = { cur: events(m.cur.google, 'google'), prev: events(m.prev.google, 'google') };
-  const metaCampaigns = { cur: metaEvents(m.cur.meta), prev: metaEvents(m.prev.meta) };
-
   const channels = [];
-  if (m.hasGoogle) channels.push({ key: 'ch:google', level: 1, label: 'Google Ads', platform: 'google', cur: googleTotals, prev: prevGoogleTotals, campaigns: googleCampaigns, children: googleChildren });
+  if (m.hasGoogle) channels.push({ key: 'ch:google', level: 1, label: 'Google Ads', platform: 'google', cur: googleTotals, prev: prevGoogleTotals, children: googleChildren });
   const metaFields = metaOnly(metaTotals, prevMetaTotals, groupReach, prevGroupReach);
-  if (m.hasMeta) channels.push({ key: 'ch:meta', level: 1, label: 'Meta', platform: 'meta', cur: metaTotals, prev: prevMetaTotals, ...metaFields, campaigns: metaCampaigns, children: metaChildren });
+  if (m.hasMeta) channels.push({ key: 'ch:meta', level: 1, label: 'Meta', platform: 'meta', cur: metaTotals, prev: prevMetaTotals, ...metaFields, children: metaChildren });
 
   const total = m.allOk ? sumTotals([googleTotals, metaTotals].filter(Boolean)) : null;
   const prevTotal = m.allOk ? sumTotals([prevGoogleTotals, prevMetaTotals].filter(Boolean)) : null;
@@ -124,10 +116,6 @@ function buildRows(m, reachKey) {
     ...(m.hasMeta && total ? metaFields : metaOnly(null, null)),
     parts: { meta: metaTotals, google: googleTotals },
     prevParts: { meta: prevMetaTotals, google: prevGoogleTotals },
-    campaigns: {
-      cur: [...(m.hasGoogle ? googleCampaigns.cur : []), ...(m.hasMeta ? metaCampaigns.cur : [])],
-      prev: [...(m.hasGoogle ? googleCampaigns.prev : []), ...(m.hasMeta ? metaCampaigns.prev : [])],
-    },
     children: channels,
   };
 }
@@ -195,7 +183,7 @@ export default function CampaignsTab({ m, onPlatform }) {
   const [open, setOpen] = useState(() => new Set(['total', 'ch:google', 'ch:meta']));
   const isAll = audienceId === ALL_AUDIENCES;
   const steps = useMemo(
-    () => (isAll ? mergedSteps(m.audiences, m.funnels) : validSteps(m.funnels[audienceId])),
+    () => (isAll ? distinctSteps(m.audiences, m.funnels) : validSteps(m.funnels[audienceId])),
     [isAll, m.audiences, m.funnels, audienceId],
   );
   // Só as campanhas do funil escolhido (ou de todos, em "Ambas"): nada fora dos funis entra.
@@ -231,7 +219,7 @@ export default function CampaignsTab({ m, onPlatform }) {
       </div>
       {m.audiences.length > 0 && (
         <Note>
-          {isAll ? `Mostrando as campanhas dos funis ${allLabelText}; cada campanha conta os eventos do próprio funil.` : `Mostrando só as campanhas do funil ${audienceLabel}.`}
+          {isAll ? `Mostrando as campanhas dos funis ${allLabelText}; cada tipo de conversão tem sua coluna e conta em todas as campanhas, inclusive as de outro funil.` : `Mostrando só as campanhas do funil ${audienceLabel}.`}
           {m.unassigned.count > 0 && ` ${m.unassigned.count} campanha${m.unassigned.count > 1 ? 's' : ''} com gasto no período (${fmtMoney(m.unassigned.spend)}) não ${m.unassigned.count > 1 ? 'estão' : 'está'} em nenhum funil e ${m.unassigned.count > 1 ? 'ficam' : 'fica'} de fora; ajuste em Configurar.`}
         </Note>
       )}

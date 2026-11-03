@@ -119,7 +119,7 @@ async function fetchMetaAdInsights(accountId, range, token) {
   return metaGetAll(`/${accountId}/insights`, {
     level: 'ad',
     time_range: metaTimeRange(range),
-    fields: 'campaign_id,campaign_name,ad_id,ad_name,spend,impressions,inline_link_clicks,reach,actions',
+    fields: 'campaign_id,campaign_name,ad_id,ad_name,spend,impressions,inline_link_clicks,reach,instagram_profile_visits,actions',
     limit: 500,
   }, token);
 }
@@ -204,6 +204,7 @@ function shapeMetaCampaigns(accountId, rows, campaignMeta, config, reachById = n
       impressions: num(row.impressions),
       clicks: num(row.inline_link_clicks),
       reach: optionalNum(row.reach),
+      profileVisits: optionalNum(row.instagram_profile_visits),
       conversions: actionsToMap(row.actions),
     });
   }
@@ -217,16 +218,20 @@ async function enrichBoostedAds(campaigns, token) {
     try {
       const data = await metaGet('/', {
         ids: chunk.map(ad => ad.id).join(','),
-        fields: 'created_time,creative{body,title,effective_instagram_media_id,instagram_permalink_url,thumbnail_url}',
+        fields: 'created_time,effective_status,campaign{stop_time},creative{body,title,source_instagram_media_id,effective_instagram_media_id,instagram_permalink_url,thumbnail_url}',
       }, token);
       for (const ad of chunk) {
         const info = data[ad.id];
         if (!info) continue;
         ad.createdTime = info.created_time || null;
+        ad.status = info.effective_status || null;
+        ad.stopTime = info.campaign?.stop_time || null;
         ad.post = {
           caption: info.creative?.body || info.creative?.title || null,
           permalink: info.creative?.instagram_permalink_url || null,
-          mediaId: info.creative?.effective_instagram_media_id || null,
+          // effective_* é a cópia do anúncio (media_product_type AD), sem insights orgânicos;
+          // source_* é o post original do perfil, onde ficam os seguidores.
+          mediaId: info.creative?.source_instagram_media_id || info.creative?.effective_instagram_media_id || null,
           thumbnail: info.creative?.thumbnail_url || null,
         };
       }
@@ -234,10 +239,43 @@ async function enrichBoostedAds(campaigns, token) {
       console.warn('[traffic-report] Não foi possível ler os criativos turbinados:', error.message);
     }
   }
-  await enrichBoostedFollows(ads, token);
+  await Promise.all([enrichBoostedFollows(ads, token), enrichLastDelivery(campaigns, ads, token)]);
 }
 
-/** Seguidores que cada post turbinado trouxe (métrica "follows" do post, vida inteira; orgânico + pago). */
+/**
+ * Último dia com gasto de cada anúncio turbinado. A API não guarda quando um anúncio foi
+ * pausado (updated_time muda a cada edição), então "ativo até" é o último dia de veiculação.
+ */
+async function enrichLastDelivery(campaigns, ads, token) {
+  const accountId = campaigns[0]?.accountId;
+  const starts = campaigns.filter(c => c.boosted).map(c => c.startTime).filter(Boolean).map(t => todayIn(undefined, new Date(t))).sort();
+  if (!accountId || !ads.length) return;
+  const today = todayIn();
+  // A API de insights só volta 37 meses.
+  const oldest = addDays(today, -1095);
+  const since = starts[0] && starts[0] > oldest ? starts[0] : oldest;
+  try {
+    const rows = await metaGetAll(`/${accountId}/insights`, {
+      level: 'ad',
+      time_increment: 1,
+      time_range: metaTimeRange({ start: since, end: today }),
+      fields: 'ad_id,spend',
+      filtering: JSON.stringify([{ field: 'ad.id', operator: 'IN', value: ads.map(ad => ad.id) }]),
+      limit: 500,
+    }, token);
+    const last = new Map();
+    for (const row of rows) {
+      if (num(row.spend) <= 0) continue;
+      const id = String(row.ad_id);
+      if (!last.has(id) || row.date_start > last.get(id)) last.set(id, row.date_start);
+    }
+    for (const ad of ads) ad.lastDelivery = last.get(ad.id) || null;
+  } catch (error) {
+    console.warn('[traffic-report] Último dia de veiculação dos turbinados indisponível:', error.message);
+  }
+}
+
+/** Seguidores que cada post turbinado trouxe (métrica "follows" do post, vida inteira; orgânico + pago). A API não libera para Reels. */
 async function enrichBoostedFollows(ads, token) {
   const mediaIds = [...new Set(ads.map(ad => ad.post?.mediaId).filter(Boolean))];
   const follows = new Map();

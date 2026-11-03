@@ -14,15 +14,80 @@ function groupByPost(ads) {
     const start = ad.campaign.startTime || ad.createdTime || null;
     const existing = byPost.get(key);
     if (!existing) {
-      byPost.set(key, { key, name: ad.name, post: ad.post, startTime: start, spend: ad.spend, clicks: ad.clicks, reach: ad.reach, follows: ad.post?.follows ?? null });
+      byPost.set(key, {
+        key, name: ad.name, post: ad.post, startTime: start, spend: ad.spend, profileVisits: ad.profileVisits ?? null, impressions: ad.impressions ?? 0, reach: ad.reach, follows: ad.post?.follows ?? null,
+        status: ad.status ?? null, stopTime: ad.stopTime ?? null, lastDelivery: ad.lastDelivery ?? null,
+      });
       continue;
     }
+    // Post com vários anúncios: fica ativo se qualquer um estiver; "ativo até" é a última veiculação.
+    if (ad.status === 'ACTIVE' && existing.status !== 'ACTIVE') {
+      existing.status = ad.status;
+      existing.stopTime = ad.stopTime ?? null;
+    }
+    if (ad.lastDelivery && (!existing.lastDelivery || ad.lastDelivery > existing.lastDelivery)) existing.lastDelivery = ad.lastDelivery;
     existing.spend += ad.spend;
-    existing.clicks += ad.clicks;
+    existing.impressions += ad.impressions ?? 0;
+    if (ad.profileVisits != null) existing.profileVisits = (existing.profileVisits ?? 0) + ad.profileVisits;
     existing.reach = null; // alcance é de pessoas únicas: não dá para somar entre anúncios
     if (start && (!existing.startTime || start < existing.startTime)) existing.startTime = start;
   }
   return [...byPost.values()];
+}
+
+/**
+ * A API do Instagram não libera "follows" de Reels. Para esses posts, reparte os seguidores
+ * ganhos pelo perfil no período na proporção das impressões de cada post turbinado (a fatia
+ * dos posts com número real fica com eles). Sem o total do perfil (períodos com mais de 30
+ * dias), usa as visitas ao perfil × a taxa de seguidores por visita dos posts com número real.
+ */
+function estimateFollows(posts, accountFollowers) {
+  const totalImpressions = posts.reduce((sum, post) => sum + post.impressions, 0);
+  const real = posts.filter(post => post.follows != null && post.profileVisits > 0);
+  const realVisits = real.reduce((sum, post) => sum + post.profileVisits, 0);
+  const rate = realVisits ? real.reduce((sum, post) => sum + post.follows, 0) / realVisits : null;
+  return posts.map(post => {
+    if (post.follows != null) return { ...post, followsEstimated: false };
+    let follows = null;
+    if (accountFollowers != null && totalImpressions) follows = accountFollowers * post.impressions / totalImpressions;
+    else if (rate != null && post.profileVisits != null) follows = post.profileVisits * rate;
+    return follows == null
+      ? { ...post, followsEstimated: false }
+      : { ...post, follows: Math.round(follows), followsEstimated: true };
+  });
+}
+
+const INACTIVE_LABELS = {
+  PAUSED: 'Pausado',
+  CAMPAIGN_PAUSED: 'Pausado',
+  ADSET_PAUSED: 'Pausado',
+  DISAPPROVED: 'Reprovado',
+  PENDING_REVIEW: 'Em análise',
+  IN_PROCESS: 'Em análise',
+  WITH_ISSUES: 'Com problemas',
+  ARCHIVED: 'Arquivado',
+  DELETED: 'Excluído',
+};
+
+function BoostStatus({ post }) {
+  if (!post.status) return '—';
+  const ended = post.stopTime && new Date(post.stopTime) < new Date();
+  if (post.status === 'ACTIVE' && !ended) {
+    const until = post.stopTime ? isoToYmd(post.stopTime) : null;
+    return (
+      <>
+        <span className="tr-pill good">Ativo</span>
+        {until && <div className="tr-muted">programado até {fmtDDMMYY(until)}</div>}
+      </>
+    );
+  }
+  const label = ended ? 'Encerrado' : INACTIVE_LABELS[post.status] || 'Inativo';
+  return (
+    <>
+      <span className="tr-pill neutral">{label}</span>
+      <div className="tr-muted">{post.lastDelivery ? `ativo até ${fmtDDMMYY(post.lastDelivery)}` : 'sem veiculação'}</div>
+    </>
+  );
 }
 
 export default function FollowersTab({ m }) {
@@ -51,13 +116,19 @@ export default function FollowersTab({ m }) {
   const prevConversations = m.metaOk ? conversionCount(m.prevTotals.meta, CONVERSATIONS) : null;
 
   const boosted = m.metaOk
-    ? groupByPost(m.cur.meta.filter(c => c.boosted).flatMap(c => c.ads.map(ad => ({ ...ad, campaign: c }))))
+    ? estimateFollows(groupByPost(m.cur.meta.filter(c => c.boosted).flatMap(c => c.ads.map(ad => ({ ...ad, campaign: c })))), followers)
       .sort((a, b) => b.spend - a.spend)
     : [];
+  const anyEstimated = boosted.some(post => post.followsEstimated);
+  const approx = (estimated, text) => (estimated && text !== '—' ? `≈ ${text}` : text);
   const boostedFollows = boosted.some(post => post.follows != null)
     ? boosted.reduce((sum, post) => sum + (post.follows ?? 0), 0)
     : null;
   const boostedFollowsSpend = boosted.filter(post => post.follows != null).reduce((sum, post) => sum + post.spend, 0);
+  const boostedVisits = boosted.some(post => post.profileVisits != null)
+    ? boosted.reduce((sum, post) => sum + (post.profileVisits ?? 0), 0)
+    : null;
+  const boostedVisitsSpend = boosted.filter(post => post.profileVisits != null).reduce((sum, post) => sum + post.spend, 0);
 
   return (
     <>
@@ -92,10 +163,11 @@ export default function FollowersTab({ m }) {
             <tr>
               <th>Post</th>
               <th>Início do boost</th>
+              <th>Status</th>
               <th>Gasto</th>
               <th>Alcance</th>
-              <th>Cliques</th>
-              <th>Custo por clique</th>
+              <th>Visitas ao perfil</th>
+              <th>Custo por visita ao perfil</th>
               <th>Seguidores</th>
               <th>Custo por seguidor</th>
             </tr>
@@ -114,34 +186,36 @@ export default function FollowersTab({ m }) {
                     </span>
                   </td>
                   <td>{start ? fmtDDMMYY(start) : '—'}</td>
+                  <td><BoostStatus post={ad} /></td>
                   <td>{fmtMoney(ad.spend)}</td>
                   <td>{fmtInt(ad.reach)}</td>
-                  <td>{fmtInt(ad.clicks)}</td>
-                  <td>{fmtMoney(ratio(ad.spend, ad.clicks))}</td>
-                  <td>{fmtInt(ad.follows)}</td>
-                  <td>{fmtMoney(ratio(ad.spend, ad.follows))}</td>
+                  <td>{fmtInt(ad.profileVisits)}</td>
+                  <td>{fmtMoney(ratio(ad.spend, ad.profileVisits))}</td>
+                  <td>{approx(ad.followsEstimated, fmtInt(ad.follows))}</td>
+                  <td>{approx(ad.followsEstimated, fmtMoney(ratio(ad.spend, ad.follows)))}</td>
                 </tr>
               );
             })}
             {!boosted.length && (
-              <tr><td colSpan={8} className="tr-empty">{m.metaOk ? 'Nenhum post turbinado com veiculação no período.' : '— A conta do Meta não respondeu.'}</td></tr>
+              <tr><td colSpan={9} className="tr-empty">{m.metaOk ? 'Nenhum post turbinado com veiculação no período.' : '— A conta do Meta não respondeu.'}</td></tr>
             )}
             {boosted.length > 1 && (
               <tr>
                 <td><strong>Total</strong></td>
                 <td />
+                <td />
                 <td>{fmtMoney(boosted.reduce((sum, post) => sum + post.spend, 0))}</td>
                 <td>—</td>
-                <td>{fmtInt(boosted.reduce((sum, post) => sum + post.clicks, 0))}</td>
-                <td>{fmtMoney(ratio(boosted.reduce((sum, post) => sum + post.spend, 0), boosted.reduce((sum, post) => sum + post.clicks, 0)))}</td>
-                <td>{fmtInt(boostedFollows)}</td>
-                <td>{fmtMoney(ratio(boostedFollowsSpend, boostedFollows))}</td>
+                <td>{fmtInt(boostedVisits)}</td>
+                <td>{fmtMoney(ratio(boostedVisitsSpend, boostedVisits))}</td>
+                <td>{approx(anyEstimated, fmtInt(boostedFollows))}</td>
+                <td>{approx(anyEstimated, fmtMoney(ratio(boostedFollowsSpend, boostedFollows)))}</td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
-      <Note>Seguidores = contas que passaram a seguir o perfil a partir do post (dado do Instagram, somando orgânico e pago, desde a publicação). Custo por seguidor = gasto do boost no período ÷ seguidores do post. Posts que o Instagram não libera (ex.: alguns Reels) aparecem como “—”.</Note>
+      <Note>Seguidores = contas que passaram a seguir o perfil a partir do post (dado do Instagram, somando orgânico e pago, desde a publicação). Custo por seguidor = gasto do boost no período ÷ seguidores do post. Visitas ao perfil = visitas ao perfil do Instagram vindas do anúncio no período (dado do Meta Ads). A API do Instagram não libera seguidores de Reels: nesses posts o número marcado com “≈” é uma estimativa, que reparte os seguidores ganhos pelo perfil no período entre os posts turbinados na proporção das impressões de cada um.</Note>
 
     </>
   );
