@@ -7,6 +7,7 @@ import {
   Instagram, RefreshCw, Loader2, AlertTriangle, ArrowUpRight, ArrowDownRight, Minus,
   Eye, Users, Heart, MessageCircle, Bookmark, Share2, UserPlus, UserMinus, MousePointerClick,
   ExternalLink, Film, Images, Image as ImageIcon, ChevronDown, ChevronUp, Info,
+  FileText, Copy, Check,
 } from 'lucide-react';
 import { useAnalysisPeriod } from '../../contexts/AnalysisPeriodContext';
 import { useAgency } from '../../contexts/AgencyContext';
@@ -19,7 +20,9 @@ import {
   variation, engagementRate, postInteractions, postEngagementRate, postFormat,
   summarizeByFormat, sortPosts, POST_SORTS, FORMAT_LABELS, GENDER_LABELS, withShare,
   filterAccountsByAgency, NO_AGENCY,
+  instagramAgencyKey,
 } from '../../shared/utils/instagramMetrics';
+import { buildInstagramReportText } from '../../shared/utils/instagramReportText';
 
 const SELECTED_KEY = 'vilas_instagram_selected_account';
 const AGENCY_KEY = 'vilas_instagram_selected_agency';
@@ -218,6 +221,41 @@ function PostCard({ post, rank }) {
   );
 }
 
+function TextReport({ text }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => { /* sem permissão de clipboard: o texto continua selecionável */ });
+  };
+  return (
+    <section className="rounded-2xl border border-border/60 bg-surface overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-5 py-3">
+        <button type="button" onClick={() => setOpen(v => !v)} className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+          <FileText size={16} className="text-primary-light" />
+          Relatório em texto
+          {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+        <button
+          type="button"
+          onClick={copy}
+          className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-medium border transition-all ${copied ? 'bg-success/10 text-success border-success/30' : 'bg-surface border-border hover:border-primary/40 hover:text-primary text-text-secondary'}`}
+        >
+          {copied ? <Check size={13} /> : <Copy size={13} />}
+          {copied ? 'Copiado!' : 'Copiar texto'}
+        </button>
+      </div>
+      {open && (
+        <div className="border-t border-border/50 p-4 sm:p-6">
+          <pre className="whitespace-pre-wrap text-sm text-text-primary font-sans leading-relaxed select-all">{text}</pre>
+        </div>
+      )}
+    </section>
+  );
+}
+
 /* ───────────────────────── Página ───────────────────────── */
 
 export default function InstagramOverview() {
@@ -288,6 +326,13 @@ export default function InstagramOverview() {
     reach: acc.reach + (post.reach || 0),
     interactions: acc.interactions + (postInteractions(post) || 0),
   }), { reach: 0, interactions: 0 }), [data?.posts]);
+
+  const reportText = useMemo(() => (data ? buildInstagramReportText(data, {
+    start: startDate,
+    end: endDate,
+    accountName: activeAccount?.name || activeAccount?.username || '',
+    agencyName: accountAgencies?.[instagramAgencyKey(activeId)] || (activeAgency !== 'all' && activeAgency !== NO_AGENCY ? activeAgency : ''),
+  }) : ''), [data, startDate, endDate, activeAccount, accountAgencies, activeId, activeAgency]);
 
   const notes = data ? [
     data.profileNote,
@@ -433,6 +478,8 @@ export default function InstagramOverview() {
           <p className="text-[11px] text-text-secondary -mt-3">
             {formatPeriodLabel(selectedPeriod)} comparado a {fmtDayMonth(data.previousRange.start)}–{fmtDayMonth(data.previousRange.end)} · atualizado {formatDateTime(data.fetchedAt)}
           </p>
+
+          <TextReport text={reportText} />
 
           {/* ═══ KPIs ═══ */}
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">

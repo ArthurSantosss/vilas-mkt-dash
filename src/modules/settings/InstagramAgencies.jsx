@@ -5,7 +5,6 @@ import { useAgency } from '../../contexts/AgencyContext';
 import { fetchInstagramAccounts } from '../../services/instagramApi';
 import { instagramAgencyKey } from '../../shared/utils/instagramMetrics';
 import { formatNumber } from '../../shared/utils/format';
-import ClientSelect from '../clients/ClientSelect';
 
 /** Vincula cada perfil do Instagram a uma agência (mesmo mapa das contas de anúncio, chave `ig_<id>`). */
 export default function InstagramAgencies() {
@@ -63,7 +62,7 @@ export default function InstagramAgencies() {
               {accountsQuery.isLoading
                 ? 'Buscando perfis...'
                 : open
-                  ? 'Escolha o cliente e a agência de cada perfil (sem agência no final)'
+                  ? 'Escolha a agência de cada perfil (sem agência no final)'
                   : `${accounts.length} perfil(is) — clique para expandir`}
             </p>
           </div>
@@ -127,12 +126,6 @@ export default function InstagramAgencies() {
                   </div>
                 </div>
                 <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-                <ClientSelect
-                  platform="instagram"
-                  id={account.id}
-                  name={account.username ? `@${account.username}` : (account.name || account.id)}
-                  className="sm:w-[180px]"
-                />
                 {agencies.length > 0 && (
                   <select
                     value={agencyOf(account)}
