@@ -8,6 +8,13 @@ import GoogleAdsIssues from '../../shared/components/GoogleAdsIssues';
 import GoogleAccountFunds from '../../shared/components/GoogleAccountFunds';
 import PeriodSelector from '../../shared/components/PeriodSelector';
 import { GoogleAdsIcon } from '../../shared/components/PlatformIcons';
+import NextPaymentEditor from '../../shared/components/NextPaymentEditor';
+import { useGoogleBalances } from '../balances/useGoogleBalances';
+import { useStoredMap } from '../../shared/utils/useStoredMap';
+import {
+  GOOGLE_PAYMENT_METHODS_KEY, GOOGLE_LAST_PAYMENTS_KEY, GOOGLE_BILLING_FREQUENCIES_KEY,
+  GOOGLE_NEXT_PAYMENT_OVERRIDES_KEY, resolveGooglePayment, saveGoogleNextPaymentOverride,
+} from '../../shared/utils/googleBalance';
 
 import {
   ChevronDown, ChevronRight, ChevronUp, Loader2, RefreshCw, Settings2,
@@ -20,6 +27,8 @@ const ALL_COLUMNS = [
   { key: 'budget', label: 'Orçamento', align: 'center' },
   { key: 'spend', label: 'Gasto', align: 'right' },
   { key: 'balance', label: 'Saldo / fundos', align: 'right' },
+  { key: 'nextPayment', label: 'Próx. Pagamento', align: 'right' },
+  { key: 'dailyUntilPayment', label: 'Disp./dia até Pgto', align: 'right' },
   { key: 'impressions', label: 'Impressões', align: 'right' },
   { key: 'clicks', label: 'Cliques', align: 'right' },
   { key: 'cpc', label: 'CPC', align: 'right' },
@@ -311,6 +320,48 @@ export default function GoogleAdsOverview() {
       case 'conversionsValue': return m.conversionsValue > 0 ? formatCurrency(m.conversionsValue) : '—';
       default: return '—';
     }
+  };
+
+  // ── Próximo pagamento / saldo por dia (mesmas preferências da aba Saldos) ──
+  const { balances: googleBalances } = useGoogleBalances(hasConnection);
+  const balanceById = useMemo(() => Object.fromEntries(googleBalances.map(b => [b.accountId, b])), [googleBalances]);
+  const paymentMethods = useStoredMap(GOOGLE_PAYMENT_METHODS_KEY);
+  const lastPayments = useStoredMap(GOOGLE_LAST_PAYMENTS_KEY);
+  const billingFrequencies = useStoredMap(GOOGLE_BILLING_FREQUENCIES_KEY);
+  const nextPaymentOverrides = useStoredMap(GOOGLE_NEXT_PAYMENT_OVERRIDES_KEY);
+  const paymentFor = (account) => resolveGooglePayment({
+    accountId: account.accountId, paymentMethods, lastPayments, frequencies: billingFrequencies,
+    overrides: nextPaymentOverrides, balance: balanceById[account.accountId],
+  });
+
+  const renderPaymentCell = (key, account) => {
+    const payment = paymentFor(account);
+    if (!payment.prepaid) {
+      return <span className="text-text-secondary/60" title="Só contas Pix ou boleto têm data de pagamento. Defina a forma de pagamento na aba Saldos.">—</span>;
+    }
+    if (key === 'nextPayment') {
+      return <NextPaymentEditor accountId={account.accountId} computedDate={payment.computedDate}
+        overrideDate={payment.overrideDate} onSave={saveGoogleNextPaymentOverride} />;
+    }
+    const balance = balanceById[account.accountId];
+    if (!payment.split) {
+      const reason = !payment.effective ? 'Defina o próximo pagamento para calcular' : 'Informe o saldo da conta para calcular';
+      return <span className="text-text-secondary/60" title={reason}>—</span>;
+    }
+    const { days, daily, overdue } = payment.split;
+    const overBudget = Number(balance?.avgDailySpend7d || 0) > daily;
+    const color = overBudget ? 'text-danger' : overdue ? 'text-warning' : 'text-success';
+    const tooltip = overdue
+      ? `Pagamento atrasado — saldo ${formatCurrency(balance.currentBalance)} dividido por 1 dia`
+      : days === 0
+        ? `Pagamento hoje — saldo total ${formatCurrency(balance.currentBalance)}`
+        : `${formatCurrency(balance.currentBalance)} ÷ ${days} dia${days === 1 ? '' : 's'} até o próximo pagamento · gasto médio ${formatCurrency(balance.avgDailySpend7d || 0)}/dia`;
+    return (
+      <span className={`inline-flex flex-col items-end leading-tight font-medium ${color}`} title={tooltip}>
+        <span>{formatCurrency(daily)}</span>
+        <span className="text-[10px] opacity-70">{overdue ? 'Atrasado' : days === 0 ? 'Hoje' : `÷ ${days}d`}</span>
+      </span>
+    );
   };
 
   // ── Filtros ──
@@ -655,6 +706,16 @@ export default function GoogleAdsOverview() {
                       <GoogleAccountFunds account={account} />
                     </div>
                     <div className="rounded-xl border border-border/50 bg-bg/40 p-3">
+                      <span className="block text-[10px] uppercase tracking-wider text-text-secondary mb-2">Próx. pagamento</span>
+                      <div className="flex flex-col items-start gap-1 text-xs [&>*]:justify-start">
+                        {renderPaymentCell('nextPayment', account)}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-border/50 bg-bg/40 p-3">
+                      <span className="block text-[10px] uppercase tracking-wider text-text-secondary mb-2">Disp./dia até pgto</span>
+                      <div className="text-sm [&>span]:items-start">{renderPaymentCell('dailyUntilPayment', account)}</div>
+                    </div>
+                    <div className="rounded-xl border border-border/50 bg-bg/40 p-3">
                       <span className="block text-[10px] uppercase tracking-wider text-text-secondary">Gasto</span>
                       <span className="mt-1 block text-base font-bold text-text-primary">{formatCurrency(account.metrics?.spend || 0)}</span>
                     </div>
@@ -828,6 +889,9 @@ export default function GoogleAdsOverview() {
                           return <td key={col.key} className="px-3 py-3 text-right">
                             <GoogleAccountFunds account={account} />
                           </td>;
+                        }
+                        if (col.key === 'nextPayment' || col.key === 'dailyUntilPayment') {
+                          return <td key={col.key} className="px-3 py-3 text-right text-xs">{renderPaymentCell(col.key, account)}</td>;
                         }
                         const cellClass = col.key === 'spend' ? 'text-right text-text-primary' :
                           col.key === 'conversions' ? 'text-right font-medium text-text-primary' :

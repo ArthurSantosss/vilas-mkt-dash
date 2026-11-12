@@ -20,6 +20,8 @@ import {
   Loader2
 } from 'lucide-react';
 import { analyzeCampaign as analyzeLocal } from '../../services/campaignAnalysis';
+import { readAccountInstagram } from '../../shared/utils/accountInstagram';
+import { CampaignRanking, DailyChart, InstagramPanel, MetricStrip } from './DetailedSections';
 
 import PeriodSelector from '../../shared/components/PeriodSelector';
 import PlatformFilter from '../../shared/components/PlatformFilter';
@@ -359,17 +361,16 @@ export default function DetailedView() {
     };
   }, [selectedCampaign, account]);
 
-  // ── Daily chart data (conversations per day) ──
-  const chartData = useMemo(() => {
-    if (!account?.dailyMetrics?.length) return [];
-    return account.dailyMetrics.map(d => ({
-      ...d,
-      dateLabel: new Date(d.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
-      conversas: platform === 'meta'
-        ? (d.messages || getMessagesFromActions(d.actions) || 0)
-        : (d.conversions || d.messages || 0),
-    }));
+  // ── Instagram vinculado à conta (Configurações) e período em datas ──
+  const linkedInstagramId = useMemo(() => {
+    if (!account) return '';
+    return readAccountInstagram()[platform === 'google' ? String(account.accountId) : account.id] || '';
   }, [account, platform]);
+
+  const instagramRange = useMemo(() => {
+    const { start, end } = resolveCurrentRange(currentPeriod);
+    return { start: toYMD(start), end: toYMD(end) };
+  }, [currentPeriod]);
 
   // ── Spend diff vs yesterday ──
   useEffect(() => {
@@ -859,50 +860,26 @@ export default function DetailedView() {
 
 
 
-          {/* ═══ Daily Conversations Chart ═══ */}
+          <MetricStrip platform={platform} metrics={selectedCampaign ? (selectedCampaign.metrics || selectedCampaign) : account.metrics} />
+
+          {/* ═══ Daily chart ═══ */}
           <ScrollReveal direction="up" delay={100}>
-          <div className="bg-surface/40 rounded-2xl border border-border/50 p-6 shadow-lg shadow-black/10">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-sm font-semibold text-text-primary flex items-center gap-2.5">
-                <span className="w-1.5 h-5 rounded-full bg-gradient-to-b from-primary-light to-primary inline-block"></span>
-                {platform === 'meta' ? 'Conversas por Dia' : 'Resultados por Dia'}
-              </h3>
-              {chartData.length > 0 && (
-                <span className="text-[10px] text-text-secondary font-medium px-2 py-1 rounded-md bg-surface border border-border/50">
-                  {chartData.length} dias
-                </span>
-              )}
-            </div>
-            {chartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={280}>
-                <AreaChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="dailyAreaGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#18C8C8" stopOpacity={0.25} />
-                      <stop offset="100%" stopColor="#18C8C8" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
-                  <XAxis dataKey="dateLabel" stroke={AXIS_STROKE} tick={AXIS_TICK} tickLine={false} axisLine={false} />
-                  <YAxis stroke={AXIS_STROKE} tick={AXIS_TICK} allowDecimals={false} tickLine={false} axisLine={false} />
-                  <Tooltip content={<ChartTooltip metricLabel={platform === 'meta' ? 'Conversas' : 'Resultados'} />} cursor={{ stroke: '#18C8C8', strokeWidth: 1, strokeDasharray: '4 4' }} />
-                  <Area
-                    type="monotone"
-                    dataKey="conversas"
-                    stroke="#18C8C8"
-                    strokeWidth={2.5}
-                    fill="url(#dailyAreaGradient)"
-                    name={platform === 'meta' ? 'Conversas' : 'Resultados'}
-                    dot={{ r: 3.5, fill: '#13161F', stroke: '#18C8C8', strokeWidth: 2 }}
-                    activeDot={{ r: 5, fill: '#18C8C8', stroke: '#13161F', strokeWidth: 2 }}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            ) : (
-              <p className="text-text-secondary text-sm text-center py-12">Sem dados diários disponíveis.</p>
-            )}
-          </div>
+            <DailyChart key={platform} platform={platform} dailyMetrics={account.dailyMetrics} />
           </ScrollReveal>
+
+          {/* ═══ Campaign ranking ═══ */}
+          {!selectedCampaign && (
+            <CampaignRanking platform={platform} campaigns={activeCampaigns} onSelect={setSelectedCampaignId} />
+          )}
+
+          {/* ═══ Instagram ═══ */}
+          <InstagramPanel
+            igId={linkedInstagramId}
+            range={instagramRange}
+            spend={account.metrics?.spend || 0}
+            dailyMetrics={account.dailyMetrics}
+            platform={platform}
+          />
 
           {/* ═══ Breakdown Charts (Meta only) ═══ */}
           {platform === 'meta' && (

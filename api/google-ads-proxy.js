@@ -681,8 +681,21 @@ function accountNowText(timeZone, now = new Date()) {
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
 }
 
-export async function fetchAccountSpending(accessToken, account) {
-  const [monthTotals, weekTotals, budgetPayload] = await Promise.all([
+/**
+ * Filtro do gasto feito DEPOIS do dia em que o saldo foi informado (o saldo digitado já
+ * desconta o gasto daquele dia). Retorna null quando não há nada a somar.
+ */
+export function spentAfterFilter(balanceSince, timeZone, now = new Date()) {
+  if (!balanceSince) return null;
+  if (!validDate(balanceSince)) throw httpError(400, 'Data do saldo informado inválida.');
+  const start = formatYmd(new Date(new Date(`${balanceSince}T00:00:00Z`).getTime() + 86_400_000));
+  const today = formatYmd(getToday(timeZone, now));
+  return start > today ? null : `segments.date BETWEEN '${start}' AND '${today}'`;
+}
+
+export async function fetchAccountSpending(accessToken, account, { balanceSince } = {}) {
+  const sinceFilter = spentAfterFilter(balanceSince, account.timeZone);
+  const [monthTotals, weekTotals, budgetPayload, sinceTotals] = await Promise.all([
     ...['month', '7d'].map(period => googleAdsSearch(account.accountId,
       `SELECT metrics.cost_micros FROM customer WHERE ${normalizePeriodToDateFilter(period, account.timeZone)}`,
       accessToken, account.loginCustomerId)),
@@ -690,12 +703,16 @@ export async function fetchAccountSpending(accessToken, account) {
       console.warn('[google-ads] account_budget indisponível:', error.message);
       return { results: [] };
     }),
+    sinceFilter
+      ? googleAdsSearch(account.accountId, `SELECT metrics.cost_micros FROM customer WHERE ${sinceFilter}`, accessToken, account.loginCustomerId)
+      : { results: [] },
   ]);
   const amount = payload => payload.results.reduce((sum, row) => sum + microsToUnit(row.metrics?.costMicros), 0);
   const avgDailySpend7d = amount(weekTotals) / 7;
   const budget = pickActiveAccountBudget(budgetPayload.results || [], accountNowText(account.timeZone));
   const base = { spentThisMonth: amount(monthTotals), avgDailySpend7d, amountDue: null,
-    currency: account.currency, timeZone: account.timeZone };
+    currency: account.currency, timeZone: account.timeZone,
+    balanceSince: balanceSince || null, spentSinceBalance: balanceSince ? amount(sinceTotals) : null };
   if (!budget) {
     return { ...base, currentBalance: null, creditLimit: null, estimatedDaysRemaining: null,
       hasReliableBalance: false, balanceSource: 'unavailable' };
@@ -706,7 +723,8 @@ export async function fetchAccountSpending(accessToken, account) {
 }
 
 async function handleAccountSpending(_req, res, body) {
-  const payload = await readWithAuthorizedRoutes(body, fetchAccountSpending);
+  const balanceSince = body.balanceSince ? String(body.balanceSince) : '';
+  const payload = await readWithAuthorizedRoutes(body, (token, account) => fetchAccountSpending(token, account, { balanceSince }));
   return json(res, 200, { success: true, ...payload });
 }
 

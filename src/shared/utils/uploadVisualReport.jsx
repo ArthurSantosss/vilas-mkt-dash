@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom';
 import { toPng } from 'html-to-image';
 import ReportCard from '../components/ReportCard';
 import { getAgencyLogoSources, getAgencyLabel } from './agencyLogo';
-import { toVisualReportData } from './visualReportData';
+import { reportCardObjective, toVisualReportData } from './visualReportData';
 import { supabase } from '../../services/supabase';
 
 const assetCache = new Map();
@@ -81,7 +81,7 @@ export async function renderVisualReportPng(report) {
         clientLogoSrc={clientLogo}
         agencyLabel={getAgencyLabel(report.agencyName, report.agency)}
         showAccountName={false}
-        objective="messages"
+        objective={reportCardObjective(report)}
         withBarChart
       />
     ));

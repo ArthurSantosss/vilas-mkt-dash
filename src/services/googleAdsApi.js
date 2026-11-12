@@ -182,8 +182,20 @@ export async function fetchGoogleAdsAccountOverview(customerId, period, _loginCu
   return postGoogleAdsProxy({ action: 'get-account-overview', customerId, period, connectionId, campaignIds });
 }
 
-export async function fetchGoogleAccountSpending(customerId, connectionId) {
-  return postGoogleAdsProxy({ action: 'get-account-spending', customerId, connectionId });
+/** `balanceSince` (YYYY-MM-DD, opcional): também soma o gasto feito depois desse dia. */
+export async function fetchGoogleAccountSpending(customerId, connectionId, balanceSince) {
+  return postGoogleAdsProxy({ action: 'get-account-spending', customerId, connectionId, ...(balanceSince ? { balanceSince } : {}) });
+}
+
+/** Opções de React Query do gasto/saldo de uma conta Google (mesma chave em todas as telas). */
+export function googleSpendingQuery(account, manualBalance, enabled = true) {
+  const balanceSince = manualBalance?.date || '';
+  return {
+    queryKey: ['googleAds', 'spending', account.accountId, account.connectionId, balanceSince],
+    queryFn: () => fetchGoogleAccountSpending(account.accountId, account.connectionId, balanceSince),
+    enabled,
+    staleTime: 2 * 60 * 1000,
+  };
 }
 
 export async function updateGoogleCampaignStatus(customerId, campaignId, status, connectionId) {

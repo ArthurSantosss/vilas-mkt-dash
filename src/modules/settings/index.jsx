@@ -30,9 +30,9 @@ import {
 } from '../../services/metaTokensApi';
 import { supabase } from '../../services/supabase';
 import { MetaIcon, GoogleAdsIcon } from '../../shared/components/PlatformIcons';
-import { readAgencyLogos, saveAgencyLogo } from '../../shared/utils/agencyLogo';
+import { getAgencyLogoSources } from '../../shared/utils/agencyLogo';
 import InstagramAgencies from './InstagramAgencies';
-import ClientSelect from '../clients/ClientSelect';
+import InstagramLinkSelect from './InstagramLinkSelect';
 
 
 const FB_SDK_SRC = 'https://connect.facebook.net/pt_BR/sdk.js';
@@ -119,7 +119,6 @@ export default function Settings() {
   const [newAgencyName, setNewAgencyName] = useState('');
   const [showOnlyActive, setShowOnlyActive] = useState(false);
   const [showOnlyActiveGoogle, setShowOnlyActiveGoogle] = useState(false);
-  const [agencyLogos, setAgencyLogos] = useState(() => readAgencyLogos());
   const [metaAccountsOpen, setMetaAccountsOpen] = useState(false);
   const [googleAccountsOpen, setGoogleAccountsOpen] = useState(false);
 
@@ -843,7 +842,7 @@ export default function Settings() {
                         )}
                       </div>
 
-                      <ClientSelect platform="meta" id={account.id} name={account.name} className="sm:w-[160px]" />
+                      <InstagramLinkSelect accountId={account.id} agency={accountAgencies[account.id] || ''} accountAgencies={accountAgencies} className="sm:w-[150px]" />
                       {agencies.length > 0 && (
                         <select
                           value={accountAgencies[account.id] || ''}
@@ -1005,7 +1004,7 @@ export default function Settings() {
                         )}
                       </div>
 
-                      <ClientSelect platform="google" id={accountId} name={account.name} className="sm:w-[160px]" />
+                      <InstagramLinkSelect accountId={accountId} agency={accountAgencies[accountId] || ''} accountAgencies={accountAgencies} className="sm:w-[150px]" />
                       {agencies.length > 0 && (
                         <select
                           value={accountAgencies[accountId] || ''}
@@ -1070,21 +1069,12 @@ export default function Settings() {
                     {ag}
                   </span>
                   <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={agencyLogos[ag] || ''}
-                      onChange={e => setAgencyLogos(prev => ({ ...prev, [ag]: e.target.value }))}
-                      onBlur={e => setAgencyLogos(saveAgencyLogo(ag, e.target.value))}
-                      placeholder="URL da logo da agência"
-                      className="w-full bg-bg border border-border rounded-lg px-3 py-1.5 text-xs text-text-primary focus:outline-none focus:border-primary sm:w-[240px]"
-                    />
-                    {agencyLogos[ag] && (
+                    {getAgencyLogoSources(ag)[0] && (
                       <img
-                        src={agencyLogos[ag]}
+                        src={getAgencyLogoSources(ag)[0]}
                         alt=""
                         onError={(e) => { e.target.style.display = 'none'; }}
                         className="w-7 h-7 object-contain rounded border border-border bg-bg/50 p-0.5 shrink-0"
-                        style={{ display: 'block' }}
                       />
                     )}
                     <button onClick={() => removeAgency(ag)} className="text-text-secondary/50 hover:text-danger transition-colors shrink-0" title="Remover agencia">

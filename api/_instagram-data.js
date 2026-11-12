@@ -322,3 +322,40 @@ export async function collectInstagramOverview(igUserId, ranges, today) {
     demographics,
   };
 }
+
+/* ───────────────────────── Resumo para relatórios ───────────────────────── */
+
+const SUMMARY_METRICS = [
+  { key: 'profileViews', metric: 'profile_views' },
+  { key: 'reach', metric: 'reach' },
+  { key: 'interactions', metric: 'total_interactions' },
+];
+
+/**
+ * Números do Instagram que entram no relatório em texto da conta de anúncio vinculada.
+ * Cada leitura é independente: o que a API recusar volta como null e simplesmente não aparece.
+ */
+export async function collectInstagramSummary(igUserId, ranges, today) {
+  const { token, profile } = await resolveInstagramToken(igUserId, []);
+  const [movement, ...metrics] = await Promise.all([
+    settle(fetchFollowerMovement(igUserId, ranges, token, today)),
+    ...SUMMARY_METRICS.map(({ metric }) => Promise.all([
+      settle(fetchAccountMetric(igUserId, metric, ranges.current, token)),
+      settle(fetchAccountMetric(igUserId, metric, ranges.previous, token)),
+    ])),
+  ]);
+  const followers = movement.value;
+  // Seguidores ganhos: entradas brutas quando a API separa; senão o saldo, se for positivo.
+  const gained = followers?.follows.current ?? (followers?.net.current > 0 ? followers.net.current : null);
+  const gainedPrevious = followers?.follows.previous ?? (followers?.net.previous > 0 ? followers.net.previous : null);
+  return {
+    id: igUserId,
+    username: profile?.username || null,
+    followers: optionalNum(profile?.followers_count),
+    gained,
+    gainedPrevious,
+    ...Object.fromEntries(SUMMARY_METRICS.map(({ key }, index) => [key, {
+      current: metrics[index][0].value, previous: metrics[index][1].value,
+    }])),
+  };
+}

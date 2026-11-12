@@ -29,10 +29,13 @@ export const CLOUD_SYNC_KEYS = [
   'google_account_last_payments',
   'google_account_last_payment_sources',
   'google_account_billing_frequencies',
+  'google_account_next_payment_overrides',
+  'google_account_manual_balances',
   'client_logos',
   'agencies_list',
   'agency_logos',
   'account_agencies',
+  'account_instagram',
   'checklist_all_tasks',
   AUTO_ALERTS_STORAGE_KEY,
 ];

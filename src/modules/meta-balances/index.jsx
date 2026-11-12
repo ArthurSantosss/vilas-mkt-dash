@@ -3,9 +3,14 @@ import { useMetaAds } from '../../contexts/MetaAdsContext';
 import { useAgency } from '../../contexts/AgencyContext';
 import { formatCurrency } from '../../shared/utils/format';
 import { isCreditCardPaymentMethod, getAccountPaymentMethod } from '../../shared/utils/paymentMethod';
-import { billingFrequencyOptions, getNextPaymentDate, getDaysUntil, formatDateBR } from '../../shared/utils/nextPayment';
+import { billingFrequencyOptions, getNextPaymentDate, getDaysUntil, parseDateInput } from '../../shared/utils/nextPayment';
+import { splitBalanceUntil, GOOGLE_MANUAL_BALANCES_KEY } from '../../shared/utils/googleBalance';
+import { useStoredMap } from '../../shared/utils/useStoredMap';
+import NextPaymentEditor from '../../shared/components/NextPaymentEditor';
+import GoogleBalanceEditor from '../../shared/components/GoogleBalanceEditor';
+import { GoogleAdsIcon, MetaIcon } from '../../shared/components/PlatformIcons';
 import { supabase } from '../../services/supabase';
-import { Wallet, AlertTriangle, Clock, CreditCard, ArrowUpDown, RefreshCw, CalendarClock, Repeat } from 'lucide-react';
+import { Wallet, AlertTriangle, Clock, CreditCard, ArrowUpDown, RefreshCw, CalendarClock, Repeat, Divide } from 'lucide-react';
 import { FILTER_FIELD, FILTER_LABEL, FILTER_CONTROL } from '../../shared/constants/filterStyles';
 
 const sortOptions = [
@@ -13,6 +18,7 @@ const sortOptions = [
   { value: 'balance_desc', label: 'Maior saldo primeiro' },
   { value: 'name', label: 'Nome (A-Z)' },
   { value: 'days', label: 'Dias restantes' },
+  { value: 'spend_desc', label: 'Maior gasto mensal' },
 ];
 
 const paymentMethodOptions = [
@@ -130,7 +136,12 @@ function BalanceCard({
   setLastPaymentSource,
   billingFrequencies,
   setBillingFrequency,
+  nextPaymentOverrides,
+  setNextPaymentOverride,
+  platform = 'meta',
+  manualBalance,
 }) {
+  const isGoogle = platform === 'google';
   const selectedPaymentMethod = getAccountPaymentMethod(paymentMethods, balance.accountId) || 'credit_card';
   // Orçamento de conta Google é faturado, então o restante aparece mesmo com cartão selecionado.
   const isAccountBudget = balance.balanceSource === 'account_budget';
@@ -140,11 +151,20 @@ function BalanceCard({
   const lastPaymentSource = lastPaymentSources[balance.accountId] || (lastPaymentDate ? 'manual' : '');
   const selectedFrequency = billingFrequencies[balance.accountId] || 'monthly';
   const showFrequency = selectedPaymentMethod === 'pix' || selectedPaymentMethod === 'boleto';
-  const nextPaymentDate = showFrequency && !ignoresLastPayment ? getNextPaymentDate(lastPaymentDate, selectedFrequency) : null;
+  const computedNextPayment = showFrequency && !ignoresLastPayment ? getNextPaymentDate(lastPaymentDate, selectedFrequency) : null;
+  const overrideNextPayment = showFrequency ? parseDateInput(nextPaymentOverrides?.[balance.accountId] || '') : null;
+  const nextPaymentDate = overrideNextPayment || computedNextPayment;
   const daysUntilPayment = getDaysUntil(nextPaymentDate);
   const isPaymentSoon = daysUntilPayment !== null && daysUntilPayment <= 2;
   const isPaymentOverdue = daysUntilPayment !== null && daysUntilPayment < 0;
   const hasReliableBalance = balance.hasReliableBalance !== false;
+  const isManualBalance = balance.balanceSource === 'manual';
+  // Google sem orçamento de conta: o saldo pré-pago é informado pelo usuário.
+  const canInformBalance = isGoogle && !isAccountBudget && !isCreditCard;
+  const split = showFrequency && nextPaymentDate && hasReliableBalance && balance.currentBalance > 0
+    ? splitBalanceUntil(balance.currentBalance, daysUntilPayment)
+    : null;
+  const splitOverBudget = split && Number(balance.avgDailySpend7d || 0) > split.daily;
   const shouldShowAvailableBalance = hasReliableBalance && !isCreditCard;
   const shouldShowUnavailableBalance = !hasReliableBalance;
 
@@ -170,6 +190,7 @@ function BalanceCard({
       <div className="flex items-start justify-between mb-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
+            {isGoogle ? <GoogleAdsIcon size={14} /> : <MetaIcon size={14} />}
             <h3 className="text-sm font-semibold text-text-primary truncate">{balance.clientName}</h3>
           </div>
           <p className="text-[11px] text-text-secondary/60 mt-0.5 font-mono">ID: {balance.accountId}</p>
@@ -192,8 +213,15 @@ function BalanceCard({
       ) : shouldShowAvailableBalance ? (
         <div className="mb-3">
           <div className="flex justify-between text-sm mb-1">
-            <span className="text-text-secondary" title={isAccountBudget ? 'Limite aprovado do orçamento da conta menos o valor já veiculado.' : undefined}>
-              {isAccountBudget ? 'Restante do orçamento da conta' : 'Saldo'}
+            <span
+              className="text-text-secondary"
+              title={isAccountBudget
+                ? 'Limite aprovado do orçamento da conta menos o valor já veiculado.'
+                : isManualBalance
+                  ? `${formatCurrency(balance.informedBalance)} informado − ${formatCurrency(balance.spentSinceBalance)} gastos depois`
+                  : undefined}
+            >
+              {isAccountBudget ? 'Restante do orçamento da conta' : isManualBalance ? 'Saldo (informado − gasto)' : 'Saldo'}
             </span>
             <span className={`font-bold ${isZero ? 'text-danger' : isCritical ? 'text-warning' : isWarning ? 'text-orange-500' : 'text-success'}`}>
               {formatCurrency(balance.currentBalance)}
@@ -209,6 +237,7 @@ function BalanceCard({
               </div>
             </>
           )}
+          {canInformBalance && <GoogleBalanceEditor accountId={balance.accountId} manual={manualBalance} />}
         </div>
       ) : shouldShowUnavailableBalance ? (
         <div className="mb-3 rounded-lg border border-border/60 bg-bg/20 px-3 py-2">
@@ -216,8 +245,9 @@ function BalanceCard({
             <span className="text-text-secondary">Saldo disponível</span>
             {balance.balanceError
               ? <span className="font-medium text-danger">Erro ao consultar</span>
-              : <span className="font-medium text-text-secondary">Não disponível via API</span>}
+              : <span className="font-medium text-text-secondary">{canInformBalance ? 'Não informado' : 'Não disponível via API'}</span>}
           </div>
+          {canInformBalance && <GoogleBalanceEditor accountId={balance.accountId} manual={manualBalance} />}
           {balance.balanceError && (
             <p role="alert" className="text-[11px] text-danger/80 mt-1">{balance.balanceError}</p>
           )}
@@ -312,27 +342,42 @@ function BalanceCard({
           </>
         )}
 
-        {/* Próximo pagamento — só para Pix/Boleto quando há data e frequência */}
-        {showFrequency && nextPaymentDate && (
+        {/* Próximo pagamento — Pix/Boleto: último pagamento + frequência, ou data definida à mão */}
+        {showFrequency && (
           <div className={`flex justify-between items-center rounded-lg px-2.5 py-1.5 -mx-1 ${isPaymentOverdue ? 'bg-danger/10 border border-danger/30' : isPaymentSoon ? 'bg-warning/10 border border-warning/30' : 'bg-primary/5 border border-primary/20'}`}>
             <span className={`flex items-center gap-1 text-xs font-medium ${isPaymentOverdue ? 'text-danger' : isPaymentSoon ? 'text-warning' : 'text-text-secondary'}`}>
               <CalendarClock size={12} /> Próximo pagamento
             </span>
-            <div className="text-right">
-              <span className={`text-xs font-bold ${isPaymentOverdue ? 'text-danger' : isPaymentSoon ? 'text-warning' : 'text-primary-light'}`}>
-                {formatDateBR(nextPaymentDate)}
+            <NextPaymentEditor
+              accountId={balance.accountId}
+              computedDate={computedNextPayment}
+              overrideDate={overrideNextPayment}
+              onSave={setNextPaymentOverride}
+            />
+          </div>
+        )}
+
+        {/* Saldo dividido pelos dias até o próximo pagamento */}
+        {showFrequency && (
+          <div className="flex justify-between items-center">
+            <span className="text-text-secondary flex items-center gap-1"><Divide size={12} /> Disponível/dia até pgto</span>
+            {split ? (
+              <span
+                className={`text-right leading-tight font-bold ${splitOverBudget ? 'text-danger' : split.overdue ? 'text-warning' : 'text-success'}`}
+                title={split.overdue
+                  ? `Pagamento atrasado — saldo ${formatCurrency(balance.currentBalance)} dividido por 1 dia`
+                  : `${formatCurrency(balance.currentBalance)} ÷ ${split.divisor} dia${split.divisor === 1 ? '' : 's'} · gasto médio ${formatCurrency(balance.avgDailySpend7d || 0)}/dia`}
+              >
+                {formatCurrency(split.daily)}
+                <span className="block text-[10px] font-normal opacity-70">
+                  {split.overdue ? 'Atrasado' : split.days === 0 ? 'Hoje' : `÷ ${split.days} dia${split.days === 1 ? '' : 's'}`}
+                </span>
               </span>
-              <span className={`block text-[10px] ${isPaymentOverdue ? 'text-danger/80' : isPaymentSoon ? 'text-warning/80' : 'text-text-secondary'}`}>
-                {isPaymentOverdue
-                  ? `Atrasado ${Math.abs(daysUntilPayment)} dia${Math.abs(daysUntilPayment) !== 1 ? 's' : ''}`
-                  : daysUntilPayment === 0
-                    ? 'Hoje'
-                    : daysUntilPayment === 1
-                      ? 'Amanhã'
-                      : `Em ${daysUntilPayment} dias`
-                }
+            ) : (
+              <span className="text-xs text-text-secondary/70">
+                {!nextPaymentDate ? 'Defina o pagamento' : canInformBalance && !hasReliableBalance ? 'Informe o saldo' : '—'}
               </span>
-            </div>
+            )}
           </div>
         )}
       </div>
@@ -345,24 +390,17 @@ export default function MetaBalances() {
   return <BalancesView data={data} platform="meta" />;
 }
 
-const GOOGLE_SORT_OPTIONS = [
-  { value: 'spend_desc', label: 'Maior gasto mensal' },
-  { value: 'name', label: 'Nome (A-Z)' },
-];
+const PLATFORM_LABELS = { meta: 'Meta Ads', google: 'Google Ads' };
 
 /**
- * Com `onPlatformChange`, a tela vira a aba unificada "Saldos" e ganha o seletor
- * de plataforma no cabeçalho. Sem ele, segue como visão de uma plataforma só.
+ * Saldos de uma plataforma. Cada plataforma guarda as próprias preferências
+ * (Google usa as chaves com prefixo `google_`).
  */
-export function BalancesView({ data, platform = 'meta', onPlatformChange }) {
-  const { balances, loading, error, refreshData } = data;
+function PlatformBalances({ platform, data, sortBy, selectedAgency, showTitle }) {
+  const { balances, loading, error } = data;
   const isGoogle = platform === 'google';
-  const unified = typeof onPlatformChange === 'function';
-  const heading = unified ? 'Saldos' : (isGoogle ? 'Saldos Google Ads' : 'Saldos Meta Ads');
   const preferenceKey = key => isGoogle ? `google_${key}` : key;
-  const { agencies, accountAgencies } = useAgency();
-  const [sortBy, setSortBy] = useState(isGoogle ? 'spend_desc' : 'balance_asc');
-  const [selectedAgency, setSelectedAgency] = useState('all');
+  const { accountAgencies } = useAgency();
   const [paymentMethods, setPaymentMethodLocal] = useLocalStorageMap(preferenceKey('account_payment_methods'));
 
   // Sync payment method to Supabase for cron usage
@@ -376,7 +414,10 @@ export function BalancesView({ data, platform = 'meta', onPlatformChange }) {
   const [lastPayments, setLastPayment, mergeLastPayments] = useLocalStorageMap(preferenceKey('account_last_payments'));
   const [lastPaymentSources, setLastPaymentSource, mergeLastPaymentSources] = useLocalStorageMap(preferenceKey('account_last_payment_sources'));
   const [billingFrequencies, setBillingFrequency] = useLocalStorageMap(preferenceKey('account_billing_frequencies'));
+  const [nextPaymentOverrides, setNextPaymentOverrideRaw] = useLocalStorageMap(preferenceKey('account_next_payment_overrides'));
+  const setNextPaymentOverride = useCallback((accountId, value) => setNextPaymentOverrideRaw(accountId, value || null), [setNextPaymentOverrideRaw]);
   const [balanceSnapshots, , mergeBalanceSnapshots] = useLocalStorageMap(preferenceKey('meta_balance_snapshots'));
+  const manualBalances = useStoredMap(GOOGLE_MANUAL_BALANCES_KEY);
 
   useEffect(() => {
     if (isGoogle || balances.length === 0) return;
@@ -420,83 +461,87 @@ export function BalancesView({ data, platform = 'meta', onPlatformChange }) {
     }
   }, [isGoogle, balances, balanceSnapshots, paymentMethods, lastPayments, lastPaymentSources, mergeBalanceSnapshots, mergeLastPayments, mergeLastPaymentSources]);
 
-  const availableSortOptions = isGoogle ? GOOGLE_SORT_OPTIONS : sortOptions;
-  const effectiveSortBy = availableSortOptions.some(option => option.value === sortBy)
-    ? sortBy
-    : availableSortOptions[0].value;
-
   const sorted = useMemo(() => {
     const filtered = selectedAgency === 'all'
       ? balances
       : balances.filter(b => accountAgencies[b.accountId] === selectedAgency);
     const list = [...filtered];
+    const reliable = b => b.hasReliableBalance !== false;
     const compareReliableFirst = (a, b) => {
-      if (a.hasReliableBalance === b.hasReliableBalance) return 0;
-      return a.hasReliableBalance ? -1 : 1;
+      if (reliable(a) === reliable(b)) return 0;
+      return reliable(a) ? -1 : 1;
     };
-    switch (effectiveSortBy) {
-      case 'balance_asc': return list.sort((a, b) => compareReliableFirst(a, b) || a.currentBalance - b.currentBalance);
-      case 'balance_desc': return list.sort((a, b) => compareReliableFirst(a, b) || b.currentBalance - a.currentBalance);
+    const num = value => Number(value || 0);
+    switch (sortBy) {
+      case 'balance_asc': return list.sort((a, b) => compareReliableFirst(a, b) || num(a.currentBalance) - num(b.currentBalance));
+      case 'balance_desc': return list.sort((a, b) => compareReliableFirst(a, b) || num(b.currentBalance) - num(a.currentBalance));
       case 'name': return list.sort((a, b) => a.clientName.localeCompare(b.clientName));
-      case 'spend_desc': return list.sort((a, b) => b.spentThisMonth - a.spentThisMonth);
-      case 'days': return list.sort((a, b) => compareReliableFirst(a, b) || a.estimatedDaysRemaining - b.estimatedDaysRemaining);
+      case 'spend_desc': return list.sort((a, b) => num(b.spentThisMonth) - num(a.spentThisMonth));
+      case 'days': return list.sort((a, b) => compareReliableFirst(a, b) || num(a.estimatedDaysRemaining) - num(b.estimatedDaysRemaining));
       default: return list;
     }
-  }, [balances, effectiveSortBy, selectedAgency, accountAgencies]);
+  }, [balances, sortBy, selectedAgency, accountAgencies]);
 
-  if (loading) {
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-meta/10">
-              <Wallet size={24} className="text-meta" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-text-primary">{heading}</h1>
-            </div>
+  return (
+    <section className="space-y-3">
+      {showTitle && (
+        <div className="flex items-center gap-2">
+          {isGoogle ? <GoogleAdsIcon size={18} /> : <MetaIcon size={18} />}
+          <h2 className="text-base font-semibold text-text-primary">{PLATFORM_LABELS[platform]}</h2>
+          {!loading && <span className="text-xs text-text-secondary">{sorted.length} conta{sorted.length === 1 ? '' : 's'}</span>}
+        </div>
+      )}
+      {isGoogle && (
+        <p className="text-sm text-text-secondary">
+          A API do Google não informa o saldo pré-pago (Pix/boleto): clique em <strong>Informar saldo</strong> e digite o valor que aparece no Google. O painel desconta sozinho o gasto dos dias seguintes. Contas com orçamento de conta aprovado mostram o restante do limite automaticamente.
+        </p>
+      )}
+      {loading ? (
+        <div className="flex items-center justify-center h-32 text-text-secondary">Carregando dados de saldos...</div>
+      ) : (
+        <>
+          {error && <p role="alert" className="text-sm text-warning">{balances.length ? error : `Erro ao carregar os dados de saldos: ${error}`}</p>}
+          {!balances.length && !error && <p className="text-sm text-text-secondary">Nenhuma conta disponível. Confira as conexões em Configurações.</p>}
+          {balances.length > 0 && !sorted.length && <p className="text-sm text-text-secondary">Nenhuma conta desta agência.</p>}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {sorted.map(balance => (
+              <BalanceCard
+                key={balance.accountId}
+                balance={balance}
+                platform={platform}
+                paymentMethods={paymentMethods}
+                setPaymentMethod={setPaymentMethod}
+                lastPayments={lastPayments}
+                setLastPayment={setLastPayment}
+                lastPaymentSources={lastPaymentSources}
+                setLastPaymentSource={setLastPaymentSource}
+                billingFrequencies={billingFrequencies}
+                setBillingFrequency={setBillingFrequency}
+                nextPaymentOverrides={nextPaymentOverrides}
+                setNextPaymentOverride={setNextPaymentOverride}
+                manualBalance={isGoogle ? manualBalances[balance.accountId] : undefined}
+              />
+            ))}
           </div>
-          <button
-            disabled
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-surface border border-border text-text-secondary opacity-50"
-          >
-            <RefreshCw size={16} className="animate-spin" />
-            <span className="text-sm font-medium">Atualizando...</span>
-          </button>
-        </div>
-        <div className="flex items-center justify-center h-64 text-text-secondary">
-          Carregando dados de saldos...
-        </div>
-      </div>
-    );
-  }
+        </>
+      )}
+    </section>
+  );
+}
 
-  if (error && balances.length === 0) {
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-meta/10">
-              <Wallet size={24} className="text-meta" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-text-primary">{heading}</h1>
-            </div>
-          </div>
-          <button
-            onClick={refreshData}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-surface border border-border text-text-secondary hover:text-primary hover:border-primary/40 transition-all"
-          >
-            <RefreshCw size={16} />
-            <span className="text-sm font-medium">Atualizar Dados</span>
-          </button>
-        </div>
-        <div className="flex items-center justify-center h-64 text-danger">
-          Erro ao carregar os dados de saldos: {error}
-        </div>
-      </div>
-    );
-  }
+/**
+ * `sections`: [{ platform, data }]. Com `onPlatformChange`, vira a aba unificada
+ * "Saldos" com o seletor de plataforma (Todas, Meta ou Google) no cabeçalho.
+ */
+export function BalancesView({ sections, data, platform = 'meta', onPlatformChange }) {
+  const list = sections || [{ platform, data }];
+  const unified = typeof onPlatformChange === 'function';
+  const heading = unified ? 'Saldos' : `Saldos ${PLATFORM_LABELS[list[0].platform]}`;
+  const { agencies } = useAgency();
+  const [sortBy, setSortBy] = useState('balance_asc');
+  const [selectedAgency, setSelectedAgency] = useState('all');
+  const loading = list.some(section => section.data.loading);
+  const refreshAll = () => list.forEach(section => section.data.refreshData?.());
 
   return (
     <div className="space-y-6">
@@ -527,6 +572,7 @@ export function BalancesView({ data, platform = 'meta', onPlatformChange }) {
                   onChange={e => onPlatformChange(e.target.value)}
                   className={FILTER_CONTROL}
                 >
+                  <option value="all">Todas</option>
                   <option value="meta">Meta Ads</option>
                   <option value="google">Google Ads</option>
                 </select>
@@ -552,16 +598,16 @@ export function BalancesView({ data, platform = 'meta', onPlatformChange }) {
             <div className={FILTER_FIELD}>
               <label className={FILTER_LABEL}><ArrowUpDown size={12} /> Ordenar</label>
               <select
-                value={effectiveSortBy}
+                value={sortBy}
                 onChange={e => setSortBy(e.target.value)}
                 className={FILTER_CONTROL}
               >
-                {availableSortOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                {sortOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </div>
 
             <button
-              onClick={refreshData}
+              onClick={refreshAll}
               disabled={loading}
               className="group relative inline-flex items-center justify-center gap-2 px-5 rounded-xl font-semibold text-sm
                 bg-gradient-to-r from-primary to-primary-light text-white shadow-lg shadow-primary/25
@@ -577,25 +623,16 @@ export function BalancesView({ data, platform = 'meta', onPlatformChange }) {
         </div>
       </div>
 
-      {isGoogle && <p className="text-sm text-text-secondary">Os gastos são atualizados pelo Google. Contas com orçamento de conta aprovado (faturamento mensal) mostram o restante do limite; saldo pré-pago (Pix/boleto) não é exposto pela API do Google. Datas de pagamento são definidas por você.</p>}
-      {error && <p role="alert" className="text-sm text-warning">{error}</p>}
-      {!balances.length && <p className="text-sm text-text-secondary">Nenhuma conta disponível. Confira as conexões em Configurações.</p>}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {sorted.map(balance => (
-          <BalanceCard
-            key={balance.accountId}
-            balance={balance}
-            paymentMethods={paymentMethods}
-            setPaymentMethod={setPaymentMethod}
-            lastPayments={lastPayments}
-            setLastPayment={setLastPayment}
-            lastPaymentSources={lastPaymentSources}
-            setLastPaymentSource={setLastPaymentSource}
-            billingFrequencies={billingFrequencies}
-            setBillingFrequency={setBillingFrequency}
-          />
-        ))}
-      </div>
+      {list.map(section => (
+        <PlatformBalances
+          key={section.platform}
+          platform={section.platform}
+          data={section.data}
+          sortBy={sortBy}
+          selectedAgency={selectedAgency}
+          showTitle={list.length > 1}
+        />
+      ))}
     </div>
   );
 }

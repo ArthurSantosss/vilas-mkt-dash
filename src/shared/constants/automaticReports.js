@@ -1,10 +1,57 @@
 export const AUTOMATIC_REPORTS_KEY = 'automatic_slack_reports';
 export const REPORT_TIME_ZONE = 'America/Sao_Paulo';
 export const REPORT_RULES = [
-  { id: 'tagb', label: 'TAGB', format: 'visual' },
-  { id: 'gdm', label: 'GDM', format: 'text' },
-  { id: 'vilasmkt', label: 'VilasMKT', format: 'visual', includeText: true },
+  { id: 'tagb', label: 'TAGB' },
+  { id: 'gdm', label: 'GDM' },
+  { id: 'vilasmkt', label: 'VilasMKT' },
 ];
+
+export const REPORT_FORMATS = [
+  { id: 'visual', label: 'Visual' },
+  { id: 'text', label: 'Texto' },
+];
+
+export const REPORT_PLATFORMS = {
+  meta: {
+    label: 'Meta Ads',
+    objectives: [
+      { id: 'engagements', label: 'Engajamento' },
+      { id: 'clicks', label: 'Cliques no link' },
+      { id: 'messages', label: 'Mensagens' },
+    ],
+  },
+  google: {
+    label: 'Google Ads',
+    objectives: [
+      { id: 'clicks', label: 'Cliques' },
+      { id: 'conversions', label: 'Conversões' },
+    ],
+  },
+};
+
+/**
+ * Confere plataforma e, para cada conta marcada, o modelo e o formato escolhidos só para ela.
+ * Entrada: { platform, accounts: [{ id, objective, format }] }.
+ * Saída: { platform, accounts, accountIds, choices: { [id]: { objective, format } } }.
+ */
+export function validateReportSelection(value) {
+  const { platform, accounts } = value || {};
+  const config = REPORT_PLATFORMS[platform];
+  if (!config) throw new Error('Selecione Meta Ads ou Google Ads.');
+  if (!Array.isArray(accounts) || !accounts.length) throw new Error('Selecione ao menos uma conta.');
+  if (accounts.length > 200) throw new Error('Seleção de contas inválida.');
+  const pattern = platform === 'meta' ? /^act_\d+$/ : /^\d{10}$/;
+  const choices = {};
+  for (const account of accounts) {
+    const id = String(account?.id || '').trim();
+    if (!pattern.test(id) || choices[id]) throw new Error('Seleção de contas inválida.');
+    if (!config.objectives.some(item => item.id === account.objective)) throw new Error('Escolha o modelo de cada conta marcada.');
+    if (!REPORT_FORMATS.some(item => item.id === account.format)) throw new Error('Escolha o formato de cada conta marcada.');
+    choices[id] = { objective: account.objective, format: account.format };
+  }
+  const accountIds = Object.keys(choices);
+  return { platform, accounts: accountIds.map(id => ({ id, ...choices[id] })), accountIds, choices };
+}
 
 export function matchReportAgency(name) {
   const normalized = String(name || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
