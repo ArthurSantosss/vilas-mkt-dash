@@ -9,26 +9,33 @@ import { ACCOUNT_INSTAGRAM_KEY, readAccountInstagram, saveAccountInstagram } fro
  * Com `agency` definida, só lista os perfis do Instagram atribuídos a essa mesma agência.
  */
 export default function InstagramLinkSelect({ accountId, agency = '', accountAgencies = {}, className = '' }) {
-  const [value, setValue] = useState(() => readAccountInstagram()[accountId] || '');
+  const [links, setLinks] = useState(readAccountInstagram);
+  const value = links[accountId] || '';
   const accountsQuery = useQuery({
     queryKey: ['instagram-accounts'],
     queryFn: () => fetchInstagramAccounts(),
     staleTime: 10 * 60_000,
   });
   const allProfiles = accountsQuery.data?.accounts;
+  // Perfis já ligados a outra conta não aparecem: um Instagram pertence a uma conta só.
+  const takenByOthers = useMemo(
+    () => new Set(Object.entries(links).filter(([otherId]) => otherId !== accountId).map(([, igId]) => String(igId))),
+    [links, accountId],
+  );
   const profiles = useMemo(
-    () => filterAccountsByAgency(allProfiles || [], accountAgencies, agency || 'all'),
-    [allProfiles, accountAgencies, agency],
+    () => filterAccountsByAgency(allProfiles || [], accountAgencies, agency || 'all')
+      .filter(profile => profile.id === value || !takenByOthers.has(String(profile.id))),
+    [allProfiles, accountAgencies, agency, value, takenByOthers],
   );
 
   useEffect(() => {
     const sync = (event) => {
       if (event?.detail?.key && event.detail.key !== ACCOUNT_INSTAGRAM_KEY) return;
-      setValue(readAccountInstagram()[accountId] || '');
+      setLinks(readAccountInstagram());
     };
     window.addEventListener('local-storage-map-updated', sync);
     return () => window.removeEventListener('local-storage-map-updated', sync);
-  }, [accountId]);
+  }, []);
 
   // Vínculo salvo que ficou fora do filtro (outra agência) ou sem acesso continua visível para poder ser trocado.
   const linkedProfile = (allProfiles || []).find(profile => profile.id === value);
@@ -38,7 +45,7 @@ export default function InstagramLinkSelect({ accountId, agency = '', accountAge
   return (
     <select
       value={value}
-      onChange={e => { setValue(e.target.value); saveAccountInstagram(accountId, e.target.value); }}
+      onChange={e => setLinks(saveAccountInstagram(accountId, e.target.value))}
       disabled={accountsQuery.isLoading}
       title="Perfil do Instagram desta conta"
       aria-label="Perfil do Instagram desta conta"

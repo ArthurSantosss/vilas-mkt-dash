@@ -13,10 +13,15 @@ export function readAccountInstagram() {
   }
 }
 
+/** Cada perfil do Instagram fica ligado a uma conta só: vincular aqui solta o vínculo anterior. */
 export function saveAccountInstagram(accountId, igId) {
   const links = readAccountInstagram();
-  if (igId) links[accountId] = String(igId);
-  else delete links[accountId];
+  if (igId) {
+    for (const [otherId, linked] of Object.entries(links)) {
+      if (otherId !== accountId && String(linked) === String(igId)) delete links[otherId];
+    }
+    links[accountId] = String(igId);
+  } else delete links[accountId];
   try { localStorage.setItem(ACCOUNT_INSTAGRAM_KEY, JSON.stringify(links)); } catch { /* sem armazenamento */ }
   window.dispatchEvent(new CustomEvent('local-storage-map-updated', {
     detail: { key: ACCOUNT_INSTAGRAM_KEY, value: links },
