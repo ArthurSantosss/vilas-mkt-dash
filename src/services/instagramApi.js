@@ -11,3 +11,7 @@ export const fetchInstagramAccounts = ({ refresh = false } = {}) =>
 
 export const fetchInstagramOverview = ({ igId, start, end, refresh = false }) =>
   request('overview', { igId, inicio: start, fim: end, ...(refresh ? { refresh: '1' } : {}) });
+
+/** Resumo do perfil (seguidores, visitas, alcance) usado no relatório em texto. */
+export const fetchInstagramSummary = ({ igId, start, end }) =>
+  request('summary', { igId, inicio: start, fim: end });

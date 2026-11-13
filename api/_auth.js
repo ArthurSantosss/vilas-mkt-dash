@@ -4,7 +4,8 @@ import crypto from 'node:crypto';
 import { Buffer } from 'node:buffer';
 
 const AUTH_COOKIE_NAME = 'vilasmkt_auth_server';
-const AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 dias
+// Renovado a cada chamada autenticada (renewAuthCookie): só expira após 30 dias sem uso.
+const AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 30;
 
 function parseCookies(cookieHeader = '') {
   return cookieHeader
@@ -75,6 +76,23 @@ export function isAuthenticatedRequest(req) {
   }
 
   return false;
+}
+
+/** Acrescenta um Set-Cookie sem apagar os que a resposta já tem. */
+function appendSetCookie(res, cookie) {
+  const current = res.getHeader?.('Set-Cookie');
+  const list = current ? (Array.isArray(current) ? current : [String(current)]) : [];
+  res.setHeader('Set-Cookie', [...list.filter(item => !item.startsWith(`${AUTH_COOKIE_NAME}=`)), cookie]);
+}
+
+/**
+ * Sessão deslizante: se a requisição está autenticada, estende o cookie por mais 30 dias.
+ * Retorna se a requisição está autenticada (substitui isAuthenticatedRequest nos handlers).
+ */
+export function renewAuthCookie(req, res) {
+  if (!isAuthenticatedRequest(req)) return false;
+  appendSetCookie(res, buildCookieParts(createSessionToken(), AUTH_COOKIE_MAX_AGE).join('; '));
+  return true;
 }
 
 export function setAuthCookie(res) {

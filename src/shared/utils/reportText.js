@@ -91,16 +91,13 @@ function entityLineOf(d, showCampaignName, campaignNames) {
   return showCampaignName && d.campaignName ? `📌 Campanha: ${d.campaignName}\n` : '';
 }
 
-/** Bloco do Instagram vinculado à conta. Só mostra o que a API entregou. */
-function instagramBlock(instagram) {
+/** Linhas do Instagram vinculado, dentro de "Alcance e entrega". Só mostra o que a API entregou. */
+function instagramLines(instagram) {
   if (!instagram) return '';
   const lines = [];
-  if (instagram.followers != null) lines.push(`➡️ Seguidores: ${formatNumber(instagram.followers)}`);
-  if (instagram.gained > 0) lines.push(`➡️ Novos seguidores no período: +${formatNumber(instagram.gained)}`);
+  if (instagram.gained > 0) lines.push(`➡️ Novos seguidores no perfil: +${formatNumber(instagram.gained)}`);
   if (instagram.profileViews?.current > 0) lines.push(`➡️ Visitas ao perfil: ${formatNumber(instagram.profileViews.current)}`);
-  if (instagram.reach?.current > 0) lines.push(`➡️ Contas alcançadas no perfil: ${formatNumber(instagram.reach.current)}`);
-  if (!lines.length) return '';
-  return `\n📸 Instagram${instagram.username ? ` (@${instagram.username})` : ''}\n${lines.join('\n')}\n`;
+  return lines.map(line => `${line}\n`).join('');
 }
 
 function footer({ reading, nextStep, weekly, agencyName }) {
@@ -165,7 +162,7 @@ ${metaResultLines(d, objective).join('\n')}
 ➡️ Frequência: ${formatFrequency(d.frequency)}
 ➡️ CTR: ${formatPercentValue(d.ctr)}
 ➡️ CPM: ${formatCurrency(d.cpm)}
-${instagramBlock(instagram)}${footer({
+${instagramLines(instagram)}${footer({
     reading: buildPositiveReading({ ...readingInput, daily, instagram }),
     nextStep: buildNextStep(readingInput),
     weekly, agencyName,
@@ -199,7 +196,7 @@ ${results.join('\n')}
 👀 Visibilidade
 ➡️ Impressões: ${formatNumber(d.impressions || 0)}
 ➡️ CTR: ${formatPercentValue(d.ctr)}
-${instagramBlock(instagram)}${footer({
+${instagramLines(instagram)}${footer({
     reading: buildPositiveReading({ ...readingInput, daily, instagram, currency: d.currency }),
     nextStep: buildNextStep(readingInput),
     weekly, agencyName,

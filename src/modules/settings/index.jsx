@@ -1004,7 +1004,6 @@ export default function Settings() {
                         )}
                       </div>
 
-                      <InstagramLinkSelect accountId={accountId} agency={accountAgencies[accountId] || ''} accountAgencies={accountAgencies} className="sm:w-[150px]" />
                       {agencies.length > 0 && (
                         <select
                           value={accountAgencies[accountId] || ''}

@@ -1,7 +1,7 @@
-import { isAuthenticatedRequest } from './_auth.js';
+import { renewAuthCookie } from './_auth.js';
 import { addDays, previousRange, todayIn } from './_traffic-report-data.js';
 import { validateRange } from './traffic-report.js';
-import { listInstagramAccounts, collectInstagramOverview } from './_instagram-data.js';
+import { listInstagramAccounts, collectInstagramOverview, collectInstagramSummary } from './_instagram-data.js';
 
 const cache = new Map();
 const CACHE_LIMIT = 100;
@@ -31,7 +31,8 @@ async function handleAccounts(req, res) {
   return res.status(200).json(payload);
 }
 
-async function handleOverview(req, res) {
+// Visão completa (aba Instagram) ou resumo (relatório em texto), com o mesmo período e cache.
+async function handleRange(req, res, kind, collect) {
   const igId = String(req.query.igId || '');
   if (!/^\d+$/.test(igId)) return res.status(400).json({ error: 'Conta do Instagram inválida.' });
   const today = todayIn();
@@ -39,14 +40,14 @@ async function handleOverview(req, res) {
   if (rangeError) return res.status(400).json({ error: rangeError });
 
   const range = { start: req.query.inicio, end: req.query.fim };
-  const cacheKey = `overview|${igId}|${range.start}|${range.end}`;
+  const cacheKey = `${kind}|${igId}|${range.start}|${range.end}`;
   const cached = req.query.refresh ? null : readCache(cacheKey);
   if (cached) return res.status(200).json(cached);
 
   const ranges = { current: range, previous: previousRange(range) };
   let data;
   try {
-    data = await collectInstagramOverview(igId, ranges, today);
+    data = await collect(igId, ranges, today);
   } catch (error) {
     return res.status(403).json({ error: error.message });
   }
@@ -60,10 +61,11 @@ export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   req.query = req.query || Object.fromEntries(new URL(req.url, 'http://x').searchParams.entries());
   if (req.method !== 'GET') return res.status(405).json({ error: 'Método não permitido' });
-  if (!isAuthenticatedRequest(req)) return res.status(401).json({ error: 'Unauthorized' });
+  if (!renewAuthCookie(req, res)) return res.status(401).json({ error: 'Unauthorized' });
   try {
     if (req.query.action === 'accounts') return await handleAccounts(req, res);
-    if (req.query.action === 'overview') return await handleOverview(req, res);
+    if (req.query.action === 'overview') return await handleRange(req, res, 'overview', collectInstagramOverview);
+    if (req.query.action === 'summary') return await handleRange(req, res, 'summary', collectInstagramSummary);
     return res.status(400).json({ error: 'Ação desconhecida.' });
   } catch (error) {
     console.error('[instagram] Error:', error);

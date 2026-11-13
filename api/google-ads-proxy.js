@@ -2,7 +2,7 @@
 
 import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
-import { getConfiguredAuth, isAuthenticatedRequest } from './_auth.js';
+import { getConfiguredAuth, renewAuthCookie } from './_auth.js';
 import { googleAdsError, describeGoogleAdsError, canRetryGoogleAdsAccess } from './_google-ads-errors.js';
 
 const GOOGLE_ADS_API_VERSION = 'v25';
@@ -82,7 +82,9 @@ function redirectUri() {
 }
 
 function setOAuthCookie(res, state, maxAge) {
-  res.setHeader('Set-Cookie', `${OAUTH_COOKIE}=${state}; Path=/api/google-ads-proxy; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
+  const current = res.getHeader?.('Set-Cookie');
+  const kept = (current ? (Array.isArray(current) ? current : [String(current)]) : []).filter(item => !item.startsWith(`${OAUTH_COOKIE}=`));
+  res.setHeader('Set-Cookie', [...kept, `${OAUTH_COOKIE}=${state}; Path=/api/google-ads-proxy; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`]);
 }
 
 async function startOAuth(req, res) {
@@ -204,28 +206,97 @@ async function exchangeCodeForTokens(code, redirectUri, verifier) {
   return payload;
 }
 
-async function refreshAccessToken(refreshToken) {
-  const { clientId, clientSecret } = getGoogleAdsCredentials();
+// Tokens de acesso valem ~1h. Reaproveitá-los evita uma ida ao OAuth por conta consultada,
+// que no carregamento do painel (várias contas em paralelo) estourava o limite do Google.
+const accessTokenCache = new Map();
+const TOKEN_SAFETY_MS = 5 * 60_000;
+const TRANSIENT_STATUS = new Set([408, 429, 500, 502, 503, 504]);
+const TRANSIENT_GOOGLE_STATUS = new Set(['RESOURCE_EXHAUSTED', 'UNAVAILABLE', 'INTERNAL', 'DEADLINE_EXCEEDED', 'ABORTED']);
+const RETRY_DELAYS_MS = [800, 2000, 5000];
 
-  const response = await fetch(GOOGLE_OAUTH_TOKEN_URL, {
-    method: 'POST',
-    signal: AbortSignal.timeout(20_000),
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
-      refresh_token: refreshToken,
-      grant_type: 'refresh_token',
-    }),
-  });
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const tokenKey = refreshToken => crypto.createHash('sha256').update(String(refreshToken)).digest('hex');
 
-  const payload = await response.json();
-  if (!response.ok) {
-    if (payload.error === 'invalid_grant') throw new Error('Acesso expirado ou revogado (invalid_grant). Adicione novamente este perfil Google.');
-    throw new Error(payload.error_description || payload.error || 'Falha ao renovar token do Google Ads.');
+/** Erro passageiro (limite de taxa, instabilidade, rede): vale tentar de novo. */
+export function isTransientGoogleError(error) {
+  if (!error) return false;
+  if (error.transient) return true;
+  if (TRANSIENT_STATUS.has(error.status)) return true;
+  if (error.name === 'TimeoutError' || error.name === 'AbortError') return true;
+  // fetch do Node lança TypeError("fetch failed") em queda de conexão/DNS.
+  return error instanceof TypeError && /fetch failed|network|socket|ECONNRESET|ETIMEDOUT/i.test(`${error.message} ${error.cause?.code || ''}`);
+}
+
+/** Executa `run` repetindo em erros passageiros, com espera crescente. */
+export async function withGoogleRetry(run, { delays = RETRY_DELAYS_MS, wait = sleep } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await run(attempt);
+    } catch (error) {
+      if (attempt >= delays.length || !isTransientGoogleError(error)) throw error;
+      await wait(delays[attempt] + Math.floor(Math.random() * 300));
+    }
   }
+}
 
-  return payload.access_token;
+async function readJson(response) {
+  return response.json().catch(() => ({}));
+}
+
+async function requestAccessToken(refreshToken) {
+  const { clientId, clientSecret } = getGoogleAdsCredentials();
+  return withGoogleRetry(async () => {
+    const response = await fetch(GOOGLE_OAUTH_TOKEN_URL, {
+      method: 'POST',
+      signal: AbortSignal.timeout(20_000),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: refreshToken,
+        grant_type: 'refresh_token',
+      }),
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      if (payload.error === 'invalid_grant') throw new Error('Acesso expirado ou revogado (invalid_grant). Adicione novamente este perfil Google.');
+      const error = new Error(payload.error_description || payload.error || 'Falha ao renovar token do Google Ads.');
+      error.status = response.status;
+      throw error;
+    }
+    return payload;
+  });
+}
+
+export async function refreshAccessToken(refreshToken) {
+  const key = tokenKey(refreshToken);
+  const cached = accessTokenCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.token;
+  // Pedidos simultâneos do mesmo perfil compartilham a mesma renovação.
+  if (cached?.pending) return cached.pending;
+  const pending = requestAccessToken(refreshToken).then(payload => {
+    const lifetimeMs = Math.max(0, Number(payload.expires_in || 3600) * 1000 - TOKEN_SAFETY_MS);
+    accessTokenCache.set(key, { token: payload.access_token, expiresAt: Date.now() + lifetimeMs });
+    return payload.access_token;
+  }).catch(error => {
+    accessTokenCache.delete(key);
+    throw error;
+  });
+  accessTokenCache.set(key, { pending, expiresAt: 0 });
+  return pending;
+}
+
+/** Descarta o token em cache (ex.: o Google respondeu 401 com ele). */
+function forgetAccessToken(accessToken) {
+  for (const [key, value] of accessTokenCache) if (value.token === accessToken) accessTokenCache.delete(key);
+}
+
+/** Resposta de erro da Google Ads API → erro com diagnóstico, marcado se for passageiro. */
+function googleAdsFailure(payload, response, accessToken) {
+  const error = googleAdsError(payload, response);
+  if (response.status === 401) forgetAccessToken(accessToken);
+  if (TRANSIENT_GOOGLE_STATUS.has(payload.error?.status)) error.transient = true;
+  return error;
 }
 
 function buildGoogleAdsHeaders(accessToken, loginCustomerId) {
@@ -243,40 +314,34 @@ function buildGoogleAdsHeaders(accessToken, loginCustomerId) {
 }
 
 async function googleAdsGet(path, accessToken, loginCustomerId) {
-  const response = await fetch(`${GOOGLE_ADS_API_BASE}${path}`, {
-    headers: buildGoogleAdsHeaders(accessToken, loginCustomerId),
-    signal: AbortSignal.timeout(20_000),
+  return withGoogleRetry(async () => {
+    const response = await fetch(`${GOOGLE_ADS_API_BASE}${path}`, {
+      headers: buildGoogleAdsHeaders(accessToken, loginCustomerId),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const payload = await readJson(response);
+    if (!response.ok) throw googleAdsFailure(payload, response, accessToken);
+    return payload;
   });
-
-  const payload = await response.json();
-  if (!response.ok) {
-    throw googleAdsError(payload, response);
-  }
-
-  return payload;
 }
 
-const isTimeout = (error) => error?.name === 'TimeoutError' || error?.name === 'AbortError';
-
+// Leituras repetem sozinhas em erros passageiros (limite de taxa, 5xx, timeout, rede).
+// `timeoutRetries` é mantido por compatibilidade: amplia as tentativas além do padrão.
 export async function googleAdsSearch(customerId, query, accessToken, loginCustomerId, { timeoutMs = 20_000, timeoutRetries = 0 } = {}) {
   const results = [];
   let pageToken;
   const seen = new Set();
+  const delays = timeoutRetries > RETRY_DELAYS_MS.length ? [...RETRY_DELAYS_MS, ...Array(timeoutRetries - RETRY_DELAYS_MS.length).fill(5000)] : RETRY_DELAYS_MS;
   do {
-    let response;
-    for (let attempt = 0; ; attempt++) {
-      try {
-        response = await fetch(`${GOOGLE_ADS_API_BASE}/customers/${String(customerId).replace(/-/g, '')}/googleAds:search`, {
-          method: 'POST', signal: AbortSignal.timeout(timeoutMs), headers: buildGoogleAdsHeaders(accessToken, loginCustomerId),
-          body: JSON.stringify({ query, ...(pageToken ? { pageToken } : {}) }),
-        });
-        break;
-      } catch (error) {
-        if (!isTimeout(error) || attempt >= timeoutRetries) throw error;
-      }
-    }
-    const payload = await response.json();
-    if (!response.ok) throw googleAdsError(payload, response);
+    const payload = await withGoogleRetry(async () => {
+      const response = await fetch(`${GOOGLE_ADS_API_BASE}/customers/${String(customerId).replace(/-/g, '')}/googleAds:search`, {
+        method: 'POST', signal: AbortSignal.timeout(timeoutMs), headers: buildGoogleAdsHeaders(accessToken, loginCustomerId),
+        body: JSON.stringify({ query, ...(pageToken ? { pageToken } : {}) }),
+      });
+      const body = await readJson(response);
+      if (!response.ok) throw googleAdsFailure(body, response, accessToken);
+      return body;
+    }, { delays });
     results.push(...(payload.results || []));
     pageToken = payload.nextPageToken;
     if (pageToken && seen.has(pageToken)) throw new Error('Paginação repetida retornada pelo Google Ads.');
@@ -290,8 +355,8 @@ async function googleAdsMutate(customerId, resource, operations, accessToken, lo
     method: 'POST', signal: AbortSignal.timeout(20_000), headers: buildGoogleAdsHeaders(accessToken, loginCustomerId),
     body: JSON.stringify({ operations, partialFailure: false, validateOnly: false }),
   });
-  const payload = await response.json();
-  if (!response.ok) throw googleAdsError(payload, response);
+  const payload = await readJson(response);
+  if (!response.ok) throw googleAdsFailure(payload, response, accessToken);
   return payload;
 }
 
@@ -755,7 +820,7 @@ async function handleDisconnect(_req, res, body) {
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return json(res, 405, { error: 'Method Not Allowed' });
-  if (!isAuthenticatedRequest(req)) return json(res, 401, { error: 'Sua sessão expirou. Saia da plataforma e entre novamente.' });
+  if (!renewAuthCookie(req, res)) return json(res, 401, { error: 'Sua sessão expirou. Saia da plataforma e entre novamente.' });
   // Reject browser requests from other origins; never trust client-provided redirect URLs.
   try {
     if (req.headers.origin && req.headers.origin !== new URL(redirectUri()).origin) return json(res, 403, { error: 'Origem não autorizada.' });

@@ -183,11 +183,12 @@ test('fluxo OAuth usa cookie, PKCE, state único e adiciona dois perfis sem subs
     expectedVerifier = tables.google_ads_oauth_states[0].verifier;
     assert.equal(authUrl.searchParams.get('code_challenge'), crypto.createHash('sha256').update(expectedVerifier).digest('base64url'));
     assert.equal(authUrl.searchParams.get('code_challenge_method'), 'S256');
-    assert.match(start.headers['Set-Cookie'], /HttpOnly/);
+    const oauthSetCookie = [].concat(start.headers['Set-Cookie']).find(item => item.startsWith('google_ads_oauth='));
+    assert.match(oauthSetCookie, /HttpOnly/);
     const before = exchangeCount;
     const rejected = await call({ action: 'oauth-exchange', state, code: 'code' }, cookie);
     assert.equal(rejected.statusCode, 400); assert.equal(exchangeCount, before);
-    const oauthCookie = `${cookie}; ${start.headers['Set-Cookie'].split(';')[0]}`;
+    const oauthCookie = `${cookie}; ${oauthSetCookie.split(';')[0]}`;
     const finished = await call({ action: 'oauth-exchange', state, code: 'code', redirectUri: 'https://attacker.test' }, oauthCookie);
     assert.equal(finished.statusCode, 200, JSON.stringify(finished.body));
     assert.doesNotMatch(JSON.stringify(finished.body), /refresh-one|refresh-two/);

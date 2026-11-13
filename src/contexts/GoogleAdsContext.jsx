@@ -130,7 +130,20 @@ export function GoogleAdsProvider({ children }) {
     error: accountsError,
   } = useQuery({
     queryKey: ['googleAds', 'accounts'],
-    queryFn: syncGoogleAdsAccounts,
+    // Se a sincronização com o Google falhar, fica com a lista já salva no servidor
+    // em vez de esvaziar o painel.
+    queryFn: () => syncGoogleAdsAccounts().catch(async (syncError) => {
+      const snapshot = await getGoogleAdsStatus().catch(() => null);
+      if (snapshot?.accounts?.length) return snapshot.accounts;
+      const stored = loadStoredGoogleAdsAccounts();
+      if (stored.length) return stored;
+      throw syncError;
+    }),
+    initialData: () => {
+      const stored = loadStoredGoogleAdsAccounts();
+      return stored.length ? stored : undefined;
+    },
+    initialDataUpdatedAt: 0,
     enabled: hasConnection,
     staleTime: 5 * 60 * 1000,
   });

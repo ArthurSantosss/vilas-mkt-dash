@@ -47,9 +47,8 @@ test('Instagram vinculado entra com seguidores e destaque de novos seguidores', 
   const instagram = { username: 'clinica', followers: 12345, gained: 87, gainedPrevious: 40,
     profileViews: { current: 300, previous: 200 }, reach: { current: 5000, previous: 7000 } };
   const text = buildReportText(meta(), { prev: meta(), showCampaignName: false, instagram });
-  assert.match(text, /📸 Instagram \(@clinica\)/);
-  assert.match(text, /Seguidores: 12\.345/);
-  assert.match(text, /Novos seguidores no período: \+87/);
+  assert.match(text, /➡️ CPM: .*\n➡️ Novos seguidores no perfil: \+87\n➡️ Visitas ao perfil: /);
+  assert.doesNotMatch(text, /📸 Instagram|Seguidores: 12\.345|Contas alcançadas/);
   assert.match(readingOf(text), /@clinica ganhou 87 novos seguidores, 118% a mais/);
   assert.match(readingOf(text), /visitas ao perfil do Instagram cresceram 50%/);
   assert.doesNotMatch(readingOf(text), /alcançadas/);

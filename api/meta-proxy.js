@@ -1,7 +1,7 @@
 /* global process */
 
 // api/meta-proxy.js
-import { isAuthenticatedRequest } from './_auth.js';
+import { renewAuthCookie } from './_auth.js';
 import {
     collectRegistryAccounts,
     normalizeAdAccountId,
@@ -76,7 +76,7 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Unsupported Meta API path' });
     }
 
-    const authenticated = isAuthenticatedRequest(req);
+    const authenticated = renewAuthCookie(req, res);
     const serverToken = process.env.META_ACCESS_TOKEN || process.env.VITE_META_ACCESS_TOKEN;
     const clientToken = headerToken || queryToken;
 

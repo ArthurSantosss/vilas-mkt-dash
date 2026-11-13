@@ -9,6 +9,8 @@ import { FileText, Copy, Check, Loader2, Sparkles } from 'lucide-react';
 import PeriodSelector from '../../shared/components/PeriodSelector';
 import { getPreviousPeriodRange } from '../../services/metaApi';
 import { buildReportFromInsights, buildReportText } from '../../shared/utils/reportText';
+import { readAccountInstagram } from '../../shared/utils/accountInstagram';
+import { fetchInstagramSummary } from '../../services/instagramApi';
 
 import { PRESETS } from '../../shared/utils/dateUtils';
 import { FILTER_ROW, FILTER_FIELD, FILTER_LABEL, FILTER_CONTROL } from '../../shared/constants/filterStyles';
@@ -26,6 +28,19 @@ function formatPeriodLabel(period) {
     return { start: fmt(range.startDate), end: fmt(range.endDate) };
   }
   return { start: '??/??', end: '??/??' };
+}
+
+// Instagram vinculado à conta (Configurações). Falha ou ausência de vínculo só deixa o bloco de fora.
+async function loadLinkedInstagram(account, platform, period) {
+  if (!account || period?.type !== 'custom') return null;
+  const igId = readAccountInstagram()[platform === 'google' ? String(account.accountId) : account.id];
+  if (!igId) return null;
+  try {
+    return await fetchInstagramSummary({ igId, start: period.startDate, end: period.endDate });
+  } catch (err) {
+    console.warn('Instagram indisponível para o relatório:', err.message);
+    return null;
+  }
 }
 
 export default function ReportText() {
@@ -103,9 +118,12 @@ function ReportTextContent() {
     try {
       if (platform === 'google') {
         const account = accounts.find(a => a.id === selectedAccount);
-        const { current, previous, period } = await requests.fetchGoogleReport(account, selectedPeriod, selectedCampaignIds);
+        const [{ current, previous, period }, instagram] = await Promise.all([
+          requests.fetchGoogleReport(account, selectedPeriod, selectedCampaignIds),
+          loadLinkedInstagram(account, platform, selectedPeriod),
+        ]);
         const make = (metrics, name) => googleTextData(metrics, name, period, account.currency);
-        setReportData({ report: make(current.totals, account.clientName), prevReport: make(previous.totals, ''), agencyName: signatureAgency,
+        setReportData({ report: make(current.totals, account.clientName), prevReport: make(previous.totals, ''), agencyName: signatureAgency, instagram,
           campaignNames: accountCampaigns.filter(c => selectedCampaignIds.includes(c.id)).map(c => c.name) });
         return;
       }
@@ -113,18 +131,19 @@ function ReportTextContent() {
       const agencyName = signatureAgency;
 
       const previousPeriod = getPreviousPeriodRange(selectedPeriod);
-      const [insights, prevInsights] = await Promise.all([
+      const account = accounts.find(a => a.id === selectedAccount);
+      const [insights, prevInsights, instagram] = await Promise.all([
         requests.fetchAccountInsights(selectedAccount, selectedPeriod, selectedCampaignIds),
         requests.fetchAccountInsights(selectedAccount, previousPeriod, selectedCampaignIds).catch(() => null),
+        loadLinkedInstagram(account, platform, selectedPeriod),
       ]);
       if (!insights) {
         setReportData({ error: 'Sem dados para o período e campanhas selecionados.' });
         return;
       }
-      const account = accounts.find(a => a.id === selectedAccount);
       const report = buildReportFromInsights(insights, account?.clientName || 'Conta', periodDates);
       const prevReport = prevInsights ? buildReportFromInsights(prevInsights, '', periodDates) : null;
-      setReportData({ report, prevReport, agencyName,
+      setReportData({ report, prevReport, agencyName, instagram,
         campaignNames: accountCampaigns.filter(c => selectedCampaignIds.includes(c.id)).map(c => c.name) });
     } catch (err) {
       console.error('Erro ao gerar relatório:', err);
@@ -144,6 +163,7 @@ function ReportTextContent() {
         campaignNames: reportData.campaignNames,
         prev: reportData.prevReport,
         agencyName: reportData.agencyName,
+        instagram: reportData.instagram,
       }),
       label: reportData.campaignNames?.length ? 'Relatório das campanhas selecionadas' : 'Relatório geral da conta',
     }];
