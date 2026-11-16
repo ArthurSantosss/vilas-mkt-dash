@@ -5,6 +5,9 @@ import { supabase } from '../../services/supabase';
 import PlatformFilter from '../../shared/components/PlatformFilter';
 import ReportFormatSelector from '../../shared/components/ReportFormatSelector';
 import { googleVisualData } from '../../shared/utils/googleReports';
+import { instagramFollowerFields } from '../../shared/utils/visualReportData';
+import { readAccountInstagram } from '../../shared/utils/accountInstagram';
+import { fetchInstagramFollowers } from '../../services/instagramApi';
 import { useAgency } from '../../contexts/AgencyContext';
 import { Image, Download, Loader2, Sparkles, Copy, Check, CheckCircle2, Target, Link2, X, Trash2, Pencil } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -91,7 +94,21 @@ const OBJECTIVE_OPTIONS = [
   { id: 'messages', label: 'Mensagens' },
   { id: 'clicks', label: 'Cliques no link' },
   { id: 'engagements', label: 'Engajamentos' },
+  { id: 'followers', label: 'Seguidores' },
 ];
+
+// Instagram vinculado à conta (Configurações) para o modelo Seguidores.
+// Falha nunca derruba o relatório: os números do Instagram viram "—" com o motivo.
+async function loadLinkedInstagram(accountId, period) {
+  const igId = readAccountInstagram()[accountId];
+  if (!igId) return { instagram: null, instagramError: 'Nenhum perfil do Instagram vinculado a esta conta (Configurações).' };
+  if (period?.type !== 'custom') return { instagram: null, instagramError: 'Período inválido para o Instagram.' };
+  try {
+    return { instagram: await fetchInstagramFollowers({ igId, start: period.startDate, end: period.endDate }), instagramError: null };
+  } catch (err) {
+    return { instagram: null, instagramError: `Instagram indisponível: ${err.message}` };
+  }
+}
 
 function aggregateCampaignMetrics(campaigns = []) {
   const summary = campaigns.reduce((acc, campaign) => {
@@ -652,6 +669,8 @@ function getExportCacheKey(reportData) {
     clicks: reportData.clicks,
     engagements: reportData.engagements,
     igProfileVisits: reportData.igProfileVisits,
+    followersGained: reportData.followersGained,
+    profileVisits: reportData.profileVisits,
     agencyLogoB64: reportData.agencyLogoB64?.slice(0, 64),
     metaLogoB64: reportData.metaLogoB64?.slice(0, 64),
     clientLogoExportSrc: reportData.clientLogoExportSrc,
@@ -866,6 +885,7 @@ function ReportVisualContent() {
         });
         return;
       }
+      const instagramPromise = loadLinkedInstagram(selectedAccount, selectedPeriod);
       const prevPeriod = getPreviousPeriodRange(selectedPeriod);
       let spend = 0;
       let impressions = 0;
@@ -1029,6 +1049,7 @@ function ReportVisualContent() {
           : Promise.resolve(null),
       ]);
       const clientLogoExportSrc = getSafeExportLogoSrc(clientLogoUrl, clientLogoRasterizedB64);
+      const { instagram, instagramError } = await instagramPromise;
       if (clientLogoUrl) {
         console.info('[client-logo] URL configurada:', clientLogoUrl);
         if (!clientLogoRasterizedB64) {
@@ -1049,6 +1070,8 @@ function ReportVisualContent() {
         costPerLead, costPerEngagement, costPerClick, ctr,
         diffs,
         dailyLeads, dailyClicks, dailyEngagements,
+        ...instagramFollowerFields(instagram, spend),
+        instagramError,
         agencyLogoB64, metaLogoB64,
         clientLogoExportSrc,
         clientLogoUrl,
@@ -1457,6 +1480,12 @@ function ReportVisualContent() {
                 Escala {Math.round(previewScale * 100)}%
               </span>
             </div>
+            {d.objective === 'followers' && (
+              <p role="status" className={`mb-3 px-1 text-xs sm:px-2 ${d.instagramError ? 'text-warning' : 'text-text-secondary'}`}>
+                {d.instagramError
+                  || `Seguidores, visitas e série diária do perfil${d.instagramUsername ? ` @${d.instagramUsername}` : ''} no Instagram (orgânico + anúncios), não só das campanhas filtradas.`}
+              </p>
+            )}
             <div
               ref={previewFrameRef}
               className="overflow-x-auto rounded-2xl border border-border/50 bg-[#0a1018] p-3 sm:p-4"

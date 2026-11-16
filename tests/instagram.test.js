@@ -97,3 +97,24 @@ test('filtro de contas por agência', () => {
   assert.deepEqual(filterAccountsByAgency(accounts, map, NO_AGENCY).map(a => a.id), ['3']);
   assert.deepEqual(filterAccountsByAgency(accounts, {}, 'Vilas'), []);
 });
+
+test('modelo Seguidores: custo por seguidor, série diária e ausência de Instagram', async () => {
+  const { instagramFollowerFields } = await import('../src/shared/utils/visualReportData.js');
+  const fields = instagramFollowerFields({
+    username: 'perfil', followers: 1200, gained: 40, profileViews: { current: 300, previous: 200 },
+    dailyFollowers: [{ date: '2026-11-10', value: 12 }], dailyFollowersPartial: true,
+  }, 200);
+  assert.equal(fields.costPerFollower, 5);
+  assert.equal(fields.profileVisits, 300);
+  assert.equal(fields.totalFollowers, 1200);
+  assert.deepEqual(fields.dailyFollowers, [{ date: '10/11', followers: 12 }]);
+  assert.equal(fields.dailyFollowersPartial, true);
+
+  const none = instagramFollowerFields(null, 200);
+  assert.equal(none.hasInstagram, false);
+  assert.equal(none.followersGained, null);
+  assert.equal(none.costPerFollower, null);
+  assert.deepEqual(none.dailyFollowers, []);
+
+  assert.equal(instagramFollowerFields({ gained: 0 }, 200).costPerFollower, null);
+});

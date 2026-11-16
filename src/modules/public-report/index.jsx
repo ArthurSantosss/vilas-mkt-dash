@@ -30,6 +30,8 @@ const OBJECTIVE_OPTIONS = [
   { id: 'messages', label: 'Mensagens' },
   { id: 'clicks', label: 'Cliques no link' },
   { id: 'engagements', label: 'Engajamento' },
+  // Só aparece nos links criados com o modelo Seguidores (o servidor manda os dados do Instagram).
+  { id: 'followers', label: 'Seguidores', onlyWith: 'hasInstagram' },
 ];
 
 function normalizeHost(hostname) {
@@ -454,7 +456,7 @@ function ClassicPublicReport({ shareKey: shareKeyProp = null }) {
                 aria-label="Selecionar objetivo"
                 className="inline-flex h-[42px] items-center rounded-xl border border-border bg-surface p-1"
               >
-                {OBJECTIVE_OPTIONS.map(opt => {
+                {OBJECTIVE_OPTIONS.filter(opt => !opt.onlyWith || data?.[opt.onlyWith] !== undefined).map(opt => {
                   const active = selectedObjective === opt.id;
                   return (
                     <button

@@ -191,13 +191,19 @@ async function fetchDailyMetric(igUserId, metric, range, token) {
   return [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, value]) => ({ date, value }));
 }
 
-async function fetchSeries(igUserId, range, token, today) {
+/** follower_count por dia só existe nos últimos 30 dias e até ontem. */
+function followerSeriesRange(range, today) {
   const oldestFollowers = addDays(today, -30);
   const yesterday = addDays(today, -1);
-  const followerRange = {
+  return {
     start: range.start < oldestFollowers ? oldestFollowers : range.start,
     end: range.end > yesterday ? yesterday : range.end,
   };
+}
+
+async function fetchSeries(igUserId, range, token, today) {
+  const oldestFollowers = addDays(today, -30);
+  const followerRange = followerSeriesRange(range, today);
   const [reach, followers] = await Promise.all([
     settle(fetchDailyMetric(igUserId, 'reach', range, token)),
     followerRange.start <= followerRange.end
@@ -335,9 +341,13 @@ const SUMMARY_METRICS = [
  * Números do Instagram que entram no relatório em texto da conta de anúncio vinculada.
  * Cada leitura é independente: o que a API recusar volta como null e simplesmente não aparece.
  */
-export async function collectInstagramSummary(igUserId, ranges, today) {
+export async function collectInstagramSummary(igUserId, ranges, today, { daily = false } = {}) {
   const { token, profile } = await resolveInstagramToken(igUserId, []);
-  const [movement, ...metrics] = await Promise.all([
+  const followerRange = followerSeriesRange(ranges.current, today);
+  const [dailyFollowers, movement, ...metrics] = await Promise.all([
+    daily && followerRange.start <= followerRange.end
+      ? settle(fetchDailyMetric(igUserId, 'follower_count', followerRange, token))
+      : Promise.resolve({ value: null, error: null }),
     settle(fetchFollowerMovement(igUserId, ranges, token, today)),
     ...SUMMARY_METRICS.map(({ metric }) => Promise.all([
       settle(fetchAccountMetric(igUserId, metric, ranges.current, token)),
@@ -354,6 +364,11 @@ export async function collectInstagramSummary(igUserId, ranges, today) {
     followers: optionalNum(profile?.followers_count),
     gained,
     gainedPrevious,
+    // Novos seguidores por dia (relatório visual); a API só libera os últimos 30 dias.
+    ...(daily ? {
+      dailyFollowers: dailyFollowers.value || [],
+      dailyFollowersPartial: ranges.current.start < followerRange.start || Boolean(dailyFollowers.error),
+    } : {}),
     ...Object.fromEntries(SUMMARY_METRICS.map(({ key }, index) => [key, {
       current: metrics[index][0].value, previous: metrics[index][1].value,
     }])),

@@ -66,6 +66,9 @@ export default async function handler(req, res) {
     if (req.query.action === 'accounts') return await handleAccounts(req, res);
     if (req.query.action === 'overview') return await handleRange(req, res, 'overview', collectInstagramOverview);
     if (req.query.action === 'summary') return await handleRange(req, res, 'summary', collectInstagramSummary);
+    if (req.query.action === 'followers') {
+      return await handleRange(req, res, 'followers', (igId, ranges, today) => collectInstagramSummary(igId, ranges, today, { daily: true }));
+    }
     return res.status(400).json({ error: 'Ação desconhecida.' });
   } catch (error) {
     console.error('[instagram] Error:', error);

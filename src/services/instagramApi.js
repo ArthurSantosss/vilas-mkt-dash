@@ -15,3 +15,7 @@ export const fetchInstagramOverview = ({ igId, start, end, refresh = false }) =>
 /** Resumo do perfil (seguidores, visitas, alcance) usado no relatório em texto. */
 export const fetchInstagramSummary = ({ igId, start, end }) =>
   request('summary', { igId, inicio: start, fim: end });
+
+/** Resumo com novos seguidores por dia, usado no modelo Seguidores do relatório visual. */
+export const fetchInstagramFollowers = ({ igId, start, end }) =>
+  request('followers', { igId, inicio: start, fim: end });

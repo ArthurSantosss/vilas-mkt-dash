@@ -2,6 +2,10 @@
 
 import { normalizeAdAccountId } from './_meta-tokens.js';
 import { metaGet, resolveWorkingToken } from './_meta-graph.js';
+import { collectInstagramSummary } from './_instagram-data.js';
+import { todayIn } from './_traffic-report-data.js';
+import { ACCOUNT_INSTAGRAM_KEY } from '../src/shared/utils/accountInstagram.js';
+import { instagramFollowerFields } from '../src/shared/utils/visualReportData.js';
 
 const LEAD_ACTION_TYPES = [
   'onsite_conversion.messaging_conversation_started_7d',
@@ -172,6 +176,38 @@ async function fetchShare(shareId, supabaseUrl, supabaseAnonKey) {
   return Array.isArray(rows) ? rows[0] || null : null;
 }
 
+// Lê um mapa salvo em app_preferences (com prefixo do e-mail, ou a chave antiga sem prefixo).
+async function fetchPreferenceMap(key, supabaseUrl, supabaseAnonKey) {
+  const email = (process.env.VITE_AUTH_EMAIL || '').trim().toLowerCase();
+  const prefixedKey = email ? `${email}_${key}` : '';
+  const keysToTry = prefixedKey ? [prefixedKey, key] : [key];
+  const inParam = keysToTry.map(k => encodeURIComponent(k)).join(',');
+  const res = await fetch(`${supabaseUrl}/rest/v1/app_preferences?select=key,value&key=in.(${inParam})`, {
+    headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}` },
+  });
+  if (!res.ok) return {};
+  const rows = await res.json();
+  if (!Array.isArray(rows) || !rows.length) return {};
+  const found = rows.find(row => row.key === prefixedKey) || rows[0];
+  return found?.value && typeof found.value === 'object' ? found.value : {};
+}
+
+// Modelo Seguidores: resumo do Instagram vinculado à conta. Falha só deixa os números em "—".
+async function fetchLinkedInstagram(accountIds, range, prevRange, supabaseUrl, supabaseAnonKey) {
+  try {
+    const links = await fetchPreferenceMap(ACCOUNT_INSTAGRAM_KEY, supabaseUrl, supabaseAnonKey);
+    const igId = accountIds.map(id => links[id]).find(Boolean);
+    if (!igId || !/^\d+$/.test(String(igId))) return null;
+    return await collectInstagramSummary(String(igId), {
+      current: { start: range.startDate, end: range.endDate },
+      previous: { start: prevRange.startDate, end: prevRange.endDate },
+    }, todayIn(), { daily: true });
+  } catch (err) {
+    console.warn('[public-report] Instagram indisponível:', err.message);
+    return null;
+  }
+}
+
 async function fetchClientLogo(accountId, supabaseUrl, supabaseAnonKey) {
   try {
     const email = (process.env.VITE_AUTH_EMAIL || '').trim().toLowerCase();
@@ -229,6 +265,9 @@ export default async function handler(req, res) {
     const range = resolveRange(period);
     const prevRange = getPreviousRange(range);
     const objective = share.objective || 'messages';
+    const instagramPromise = objective === 'followers'
+      ? fetchLinkedInstagram([share.account_id, accountId], range, prevRange, supabaseUrl, supabaseAnonKey)
+      : Promise.resolve(undefined);
     const campaignFilter = Array.isArray(share.campaign_ids) && share.campaign_ids.length > 0
       ? new Set(share.campaign_ids)
       : null;
@@ -326,7 +365,10 @@ export default async function handler(req, res) {
     }
 
     const accountName = share.client_label || metaAccountName || 'Conta';
-    const clientLogoUrl = await fetchClientLogo(share.account_id, supabaseUrl, supabaseAnonKey);
+    const [clientLogoUrl, instagram] = await Promise.all([
+      fetchClientLogo(share.account_id, supabaseUrl, supabaseAnonKey),
+      instagramPromise,
+    ]);
 
     return res.status(200).json({
       empty: false,
@@ -358,6 +400,7 @@ export default async function handler(req, res) {
         igProfileVisits: calcDiff(metrics.igProfileVisits, prevMetrics.igProfileVisits),
       },
       dailyLeads, dailyClicks, dailyEngagements,
+      ...(instagram === undefined ? {} : instagramFollowerFields(instagram, metrics.spend)),
     });
   } catch (err) {
     console.error('[public-report] Error:', err);

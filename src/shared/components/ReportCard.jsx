@@ -72,7 +72,13 @@ function ClientLogo({ src }) {
   );
 }
 
+const DASH = '—';
+const isNum = (value) => typeof value === 'number' && Number.isFinite(value);
+const numberOrDash = (value) => (isNum(value) ? formatNumber(value) : DASH);
+const currencyOrDash = (value) => (isNum(value) ? formatCurrency(value) : DASH);
+
 function formatCompact(value) {
+  if (!isNum(value)) return DASH;
   if (value >= 1000000) return `${(value / 1000000).toFixed(1).replace('.0', '')} mi`;
   if (value >= 1000) return `${(value / 1000).toFixed(1).replace('.0', '')} mil`;
   return formatNumber(value);
@@ -101,6 +107,8 @@ function KpiIcon({ name, color = '#94A3B8', size = 16 }) {
       return (<svg {...common}><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>);
     case 'percent':
       return (<svg {...common}><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>);
+    case 'user-plus':
+      return (<svg {...common}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>);
     case 'instagram':
       return (<svg {...common}><rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>);
     default:
@@ -165,6 +173,26 @@ const OBJECTIVES = {
       { label: 'Impressões', value: d.impressions, widthPct: 100, color: '#0C4A6E' },
       { label: 'Alcance', value: d.reach, widthPct: Math.max(40, Math.min(82, (d.reach / Math.max(d.impressions, 1)) * 100)), color: '#0369A1' },
       { label: 'Engajamentos', value: d.engagements, widthPct: Math.max(16, Math.min(46, (d.engagements / Math.max(d.reach, 1)) * 100 + 12)), color: '#22D3EE' },
+    ],
+  },
+  followers: {
+    label: 'Seguidores',
+    metricLabel: 'Novos seguidores',
+    metricLabelSingular: 'seguidor',
+    dailyKey: 'followers',
+    dailyTitle: (d) => (d.dailyFollowersPartial ? 'Novos seguidores por dia (últimos 30 dias)' : 'Novos seguidores por dia'),
+    buildKpis: (d) => [
+      { label: 'Investimento',      value: formatCurrency(d.spend),            color: '#22D3EE', icon: 'wallet' },
+      { label: 'Novos seguidores',  value: numberOrDash(d.followersGained),    color: '#38BDF8', icon: 'user-plus' },
+      { label: 'Custo / Seguidor',  value: currencyOrDash(d.costPerFollower),  color: '#F59E0B', icon: 'coins' },
+      { label: 'Visitas ao perfil', value: numberOrDash(d.profileVisits),      color: '#A78BFA', icon: 'eye' },
+      { label: 'Seguidores',        value: numberOrDash(d.totalFollowers),     color: '#34D399', icon: 'instagram' },
+    ],
+    buildFunnel: (d) => [
+      { label: 'Impressões', value: d.impressions, widthPct: 100, color: '#0C4A6E' },
+      { label: 'Alcance', value: d.reach, widthPct: Math.max(40, Math.min(82, (d.reach / Math.max(d.impressions, 1)) * 100)), color: '#0369A1' },
+      { label: 'Visitas ao perfil', value: d.profileVisits, widthPct: Math.max(24, Math.min(50, ((d.profileVisits || 0) / Math.max(d.reach, 1)) * 100 + 20)), color: '#0EA5E9' },
+      { label: 'Novos seguidores', value: d.followersGained, widthPct: Math.max(14, Math.min(30, ((d.followersGained || 0) / Math.max(d.profileVisits || 0, 1)) * 100 + 10)), color: '#22D3EE' },
     ],
   },
 };
@@ -518,7 +546,7 @@ const ReportCard = function ReportCard({
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <div style={{ width: 8, height: 8, borderRadius: 2, background: 'linear-gradient(135deg, #00F2FE, #38BDF8)', boxShadow: '0 0 12px rgba(56,189,248,0.6)' }} />
-                <span style={{ fontSize: 12, color: '#94A3B8', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{config.dailyTitle}</span>
+                <span style={{ fontSize: 12, color: '#94A3B8', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{typeof config.dailyTitle === 'function' ? config.dailyTitle(d) : config.dailyTitle}</span>
               </div>
               {dailyAvg > 0 && (
                 <div style={{

@@ -42,3 +42,24 @@ export function toVisualReportData(report) {
 export function reportCardObjective(report) {
   return report.objective || (report.platform === 'google' ? 'conversions' : 'messages');
 }
+
+const isNum = value => typeof value === 'number' && Number.isFinite(value);
+
+/**
+ * Campos do modelo Seguidores a partir do resumo do Instagram vinculado à conta
+ * (`/api/instagram?action=followers`). Sem Instagram, tudo vira null e o card mostra "—".
+ * Os números são do perfil inteiro (orgânico + anúncios), não só das campanhas filtradas.
+ */
+export function instagramFollowerFields(instagram, spend) {
+  const gained = isNum(instagram?.gained) ? instagram.gained : null;
+  return {
+    hasInstagram: Boolean(instagram),
+    instagramUsername: instagram?.username || null,
+    followersGained: gained,
+    costPerFollower: gained > 0 && isNum(spend) ? spend / gained : null,
+    profileVisits: isNum(instagram?.profileViews?.current) ? instagram.profileViews.current : null,
+    totalFollowers: isNum(instagram?.followers) ? instagram.followers : null,
+    dailyFollowers: (instagram?.dailyFollowers || []).map(point => ({ date: dayLabel(point.date), followers: point.value })),
+    dailyFollowersPartial: Boolean(instagram?.dailyFollowersPartial),
+  };
+}
